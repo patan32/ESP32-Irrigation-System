@@ -10,6 +10,7 @@ substitutions:
   dev1_zone6: Lawn Zone6
   dev1_zone7: Lawn Zone7
   dev1_zone8: Lawn Zone8
+  master_valve_pin: GPIO27  # Master valve control (like Hunter Pro-C) - optional
   software_revision: V2.1
   date_revision: 2025 01 23
   sensor_update_frequency: 1s
@@ -145,11 +146,11 @@ esp32:
 # Enable Home Assistant API
 api:
   encryption:
-    key: "xxxxxxxxxxxxxxx"
+    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ota:
   - platform: esphome
-    password: "xxxxxxxxxxxxxxx"
+    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -180,6 +181,10 @@ globals:
     type: long
     restore_value: True
     initial_value: '0'
+  - id: master_valve_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'false'  # Optional feature, off by default
   - id: cycle_soak_enabled
     type: bool
     restore_value: True
@@ -222,6 +227,10 @@ globals:
     type: int
     restore_value: True
     initial_value: '0'
+  - id: zone1_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'  # 0=AM, 1=PM
   
   - id: zone2_start_hour
     type: int
@@ -231,6 +240,10 @@ globals:
     type: int
     restore_value: True
     initial_value: '15'
+  - id: zone2_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'
   
   - id: zone3_start_hour
     type: int
@@ -240,6 +253,10 @@ globals:
     type: int
     restore_value: True
     initial_value: '30'
+  - id: zone3_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'
   
   - id: zone4_start_hour
     type: int
@@ -249,12 +266,20 @@ globals:
     type: int
     restore_value: True
     initial_value: '45'
+  - id: zone4_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'
   
   - id: zone5_start_hour
     type: int
     restore_value: True
     initial_value: '7'
   - id: zone5_start_minute
+    type: int
+    restore_value: True
+    initial_value: '0'
+  - id: zone5_am_pm
     type: int
     restore_value: True
     initial_value: '0'
@@ -267,6 +292,10 @@ globals:
     type: int
     restore_value: True
     initial_value: '15'
+  - id: zone6_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'
   
   - id: zone7_start_hour
     type: int
@@ -276,6 +305,10 @@ globals:
     type: int
     restore_value: True
     initial_value: '30'
+  - id: zone7_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'
   
   - id: zone8_start_hour
     type: int
@@ -285,6 +318,10 @@ globals:
     type: int
     restore_value: True
     initial_value: '45'
+  - id: zone8_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'
   # Zone schedule enable flags
   - id: zone1_schedule_enabled
     type: bool
@@ -318,6 +355,41 @@ globals:
     type: bool
     restore_value: True
     initial_value: 'false'       
+    
+  # Master Valve per-zone enable (Hunter Pro-C style)
+  - id: zone1_master_valve_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'  # Default ON for all zones
+  - id: zone2_master_valve_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'
+  - id: zone3_master_valve_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'
+  - id: zone4_master_valve_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'
+  - id: zone5_master_valve_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'
+  - id: zone6_master_valve_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'
+  - id: zone7_master_valve_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'
+  - id: zone8_master_valve_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'
+    
   - id: manual_rain_delay_override
     type: bool
     restore_value: True
@@ -501,6 +573,28 @@ globals:
     initial_value: 'false'
 
   # one-slot queue: 0=none, 1=program, 2=zone, 3=normal mode
+  # Queue system - supports up to 3 items (Hunter-style)
+  - id: queue_types
+    type: int[3]
+    restore_value: False
+  - id: queue_programs
+    type: int[3]
+    restore_value: False
+  - id: queue_zones
+    type: int[3]
+    restore_value: False
+  - id: queue_durations
+    type: int[3]
+    restore_value: False
+  - id: queue_add_delays
+    type: bool[3]
+    restore_value: False
+  - id: queue_count
+    type: int
+    restore_value: False
+    initial_value: '0'
+  
+  # Legacy queue variables (kept for backward compatibility during transition)
   - id: queued_type
     type: int
     restore_value: False
@@ -717,9 +811,9 @@ time:
                 }
               }
       
-# Check every hour if it's time to start programs
+# Check every minute if it's time to start programs
       - seconds: 0
-        minutes: 0
+        # NO minutes filter - check EVERY minute!
         then:
           # Check Program A
           - if:
@@ -762,16 +856,16 @@ time:
                   // Check schedule type
                   int schedule_type = id(program_a_schedule_type);
                   int day_of_month = time.day_of_month;
-                  int day_of_week = time.day_of_week;
+                  int day_of_week = time.day_of_week;  // 1=Sun, 2=Mon, 3=Tue, 4=Wed, 5=Thu, 6=Fri, 7=Sat
                   
                   if (schedule_type == 0) {  // Specific days
-                    return (day_of_week == 1 && id(program_a_monday).state) ||
-                           (day_of_week == 2 && id(program_a_tuesday).state) ||
-                           (day_of_week == 3 && id(program_a_wednesday).state) ||
-                           (day_of_week == 4 && id(program_a_thursday).state) ||
-                           (day_of_week == 5 && id(program_a_friday).state) ||
-                           (day_of_week == 6 && id(program_a_saturday).state) ||
-                           (day_of_week == 0 && id(program_a_sunday).state);
+                    return (day_of_week == 2 && id(program_a_monday).state) ||
+                           (day_of_week == 3 && id(program_a_tuesday).state) ||
+                           (day_of_week == 4 && id(program_a_wednesday).state) ||
+                           (day_of_week == 5 && id(program_a_thursday).state) ||
+                           (day_of_week == 6 && id(program_a_friday).state) ||
+                           (day_of_week == 7 && id(program_a_saturday).state) ||
+                           (day_of_week == 1 && id(program_a_sunday).state);
                   } else if (schedule_type == 1) {  // Odd days
                     return (day_of_month % 2 == 1);
                   } else if (schedule_type == 2) {  // Even days
@@ -783,6 +877,9 @@ time:
                   }
                   return false;
               then:
+                - logger.log:
+                    format: "🔔 PROGRAM A TRIGGERED at %d:%02d - Starting irrigation"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute' ]
                 - script.execute:
                     id: request_program_start
                     program: 1
@@ -826,16 +923,16 @@ time:
                   
                   int schedule_type = id(program_b_schedule_type);
                   int day_of_month = time.day_of_month;
-                  int day_of_week = time.day_of_week;
+                  int day_of_week = time.day_of_week;  // 1=Sun, 2=Mon, 3=Tue, 4=Wed, 5=Thu, 6=Fri, 7=Sat
                   
                   if (schedule_type == 0) {  // Specific Days
-                    return (day_of_week == 1 && id(program_b_monday).state) ||
-                           (day_of_week == 2 && id(program_b_tuesday).state) ||
-                           (day_of_week == 3 && id(program_b_wednesday).state) ||
-                           (day_of_week == 4 && id(program_b_thursday).state) ||
-                           (day_of_week == 5 && id(program_b_friday).state) ||
-                           (day_of_week == 6 && id(program_b_saturday).state) ||
-                           (day_of_week == 0 && id(program_b_sunday).state);
+                    return (day_of_week == 2 && id(program_b_monday).state) ||
+                           (day_of_week == 3 && id(program_b_tuesday).state) ||
+                           (day_of_week == 4 && id(program_b_wednesday).state) ||
+                           (day_of_week == 5 && id(program_b_thursday).state) ||
+                           (day_of_week == 6 && id(program_b_friday).state) ||
+                           (day_of_week == 7 && id(program_b_saturday).state) ||
+                           (day_of_week == 1 && id(program_b_sunday).state);
                   } else if (schedule_type == 1) {  // Odd days
                     return (day_of_month % 2 == 1);
                   } else if (schedule_type == 2) {
@@ -847,6 +944,9 @@ time:
                   }
                   return false;
               then:
+                - logger.log:
+                    format: "🔔 PROGRAM B TRIGGERED at %d:%02d - Starting irrigation"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute' ]
                 - script.execute:
                     id: request_program_start
                     program: 2
@@ -890,16 +990,16 @@ time:
                   
                   int schedule_type = id(program_c_schedule_type);
                   int day_of_month = time.day_of_month;
-                  int day_of_week = time.day_of_week;
+                  int day_of_week = time.day_of_week;  // 1=Sun, 2=Mon, 3=Tue, 4=Wed, 5=Thu, 6=Fri, 7=Sat
                   
                   if (schedule_type == 0) {  // Specific Days
-                    return (day_of_week == 1 && id(program_c_monday).state) ||
-                           (day_of_week == 2 && id(program_c_tuesday).state) ||
-                           (day_of_week == 3 && id(program_c_wednesday).state) ||
-                           (day_of_week == 4 && id(program_c_thursday).state) ||
-                           (day_of_week == 5 && id(program_c_friday).state) ||
-                           (day_of_week == 6 && id(program_c_saturday).state) ||
-                           (day_of_week == 0 && id(program_c_sunday).state);
+                    return (day_of_week == 2 && id(program_c_monday).state) ||
+                           (day_of_week == 3 && id(program_c_tuesday).state) ||
+                           (day_of_week == 4 && id(program_c_wednesday).state) ||
+                           (day_of_week == 5 && id(program_c_thursday).state) ||
+                           (day_of_week == 6 && id(program_c_friday).state) ||
+                           (day_of_week == 7 && id(program_c_saturday).state) ||
+                           (day_of_week == 1 && id(program_c_sunday).state);
                   } else if (schedule_type == 1) {  // Odd days
                     return (day_of_month % 2 == 1);
                   } else if (schedule_type == 2) {
@@ -911,6 +1011,9 @@ time:
                   }
                   return false;
               then:
+                - logger.log:
+                    format: "🔔 PROGRAM C TRIGGERED at %d:%02d - Starting irrigation"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute' ]
                 - script.execute:
                     id: request_program_start
                     program: 3
@@ -956,9 +1059,9 @@ time:
               id($devicename1).set_multiplier(multiplier);
               ESP_LOGI("irrigation", "Multiplier set to %.1f (temp: %.1f°C)", multiplier, temp);
 
-# Check every 15 minutes for individual zone schedules
+# Check every minute for individual zone schedules
       - seconds: 0
-        minutes: /15
+        # NO minutes filter - check EVERY minute!
         then:
           # Zone 1 Schedule
           - if:
@@ -983,9 +1086,32 @@ time:
                   
                   // Time restriction window (12h + AM-PM) with manual override
                   if (id(is_time_restricted)) return false;
-                  return time.hour == id(zone1_start_hour) && time.minute == id(zone1_start_minute);
+                  
+                  // Convert 12-hour + AM/PM to 24-hour for comparison
+                  int hour_12 = id(zone1_start_hour);
+                  int hour_24 = hour_12;
+                  if (id(zone1_am_pm) == 1) {  // PM
+                    hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;
+                  } else {  // AM
+                    hour_24 = (hour_12 == 12) ? 0 : hour_12;
+                  }
+                  
+                  // Debug logging every minute when zone schedule is enabled
+                  if (id(zone1_schedule_enabled)) {
+                    ESP_LOGD("irrigation", "Zone 1 Check: Now=%02d:%02d, Set=%d:%02d %s (24h=%02d:%02d), Match=%d",
+                             time.hour, time.minute,
+                             hour_12, id(zone1_start_minute), id(zone1_am_pm) == 0 ? "AM" : "PM",
+                             hour_24, id(zone1_start_minute),
+                             (time.hour == hour_24 && time.minute == id(zone1_start_minute)) ? 1 : 0);
+                  }
+                  
+                  return time.hour == hour_24 && time.minute == id(zone1_start_minute);
               then:
-                - logger.log: "Starting Zone 1 scheduled watering"
+                - logger.log:
+                    format: "🔔 ZONE 1 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
+                            'id(zone1_start_hour)', 'id(zone1_start_minute)',
+                            'id(zone1_am_pm) == 0 ? "AM" : "PM"' ]
                 - script.execute:
                     id: request_zone_start
                     zone: 0
@@ -1016,9 +1142,23 @@ time:
                   
                   // Time restriction window (12h + AM-PM) with manual override
                   if (id(is_time_restricted)) return false;
-                  return time.hour == id(zone2_start_hour) && time.minute == id(zone2_start_minute);
+                  
+                  // Convert 12-hour + AM/PM to 24-hour for comparison
+                  int hour_12 = id(zone2_start_hour);
+                  int hour_24 = hour_12;
+                  if (id(zone2_am_pm) == 1) {  // PM
+                    hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;
+                  } else {  // AM
+                    hour_24 = (hour_12 == 12) ? 0 : hour_12;
+                  }
+                  
+                  return time.hour == hour_24 && time.minute == id(zone2_start_minute);
               then:
-                - logger.log: "Starting Zone 2 scheduled watering"
+                - logger.log:
+                    format: "🔔 ZONE 2 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
+                            'id(zone2_start_hour)', 'id(zone2_start_minute)',
+                            'id(zone2_am_pm) == 0 ? "AM" : "PM"' ]
                 - script.execute:
                     id: request_zone_start
                     zone: 1
@@ -1048,9 +1188,23 @@ time:
 
                   // Time restriction window (12h + AM-PM) with manual override
                   if (id(is_time_restricted)) return false;
-                  return time.hour == id(zone3_start_hour) && time.minute == id(zone3_start_minute);
+                  
+                  // Convert 12-hour + AM/PM to 24-hour for comparison
+                  int hour_12 = id(zone3_start_hour);
+                  int hour_24 = hour_12;
+                  if (id(zone3_am_pm) == 1) {  // PM
+                    hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;
+                  } else {  // AM
+                    hour_24 = (hour_12 == 12) ? 0 : hour_12;
+                  }
+                  
+                  return time.hour == hour_24 && time.minute == id(zone3_start_minute);
               then:
-                - logger.log: "Starting Zone 3 scheduled watering"
+                - logger.log:
+                    format: "🔔 ZONE 3 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
+                            'id(zone3_start_hour)', 'id(zone3_start_minute)',
+                            'id(zone3_am_pm) == 0 ? "AM" : "PM"' ]
                 - script.execute:
                     id: request_zone_start
                     zone: 2
@@ -1079,9 +1233,23 @@ time:
 
                   // Time restriction window (12h + AM-PM) with manual override
                   if (id(is_time_restricted)) return false;
-                  return time.hour == id(zone4_start_hour) && time.minute == id(zone4_start_minute);
+                  
+                  // Convert 12-hour + AM/PM to 24-hour for comparison
+                  int hour_12 = id(zone4_start_hour);
+                  int hour_24 = hour_12;
+                  if (id(zone4_am_pm) == 1) {  // PM
+                    hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;
+                  } else {  // AM
+                    hour_24 = (hour_12 == 12) ? 0 : hour_12;
+                  }
+                  
+                  return time.hour == hour_24 && time.minute == id(zone4_start_minute);
               then:
-                - logger.log: "Starting Zone 4 scheduled watering"
+                - logger.log:
+                    format: "🔔 ZONE 4 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
+                            'id(zone4_start_hour)', 'id(zone4_start_minute)',
+                            'id(zone4_am_pm) == 0 ? "AM" : "PM"' ]
                 - script.execute:
                     id: request_zone_start
                     zone: 3
@@ -1111,9 +1279,23 @@ time:
 
                   // Time restriction window (12h + AM-PM) with manual override
                   if (id(is_time_restricted)) return false;
-                  return time.hour == id(zone5_start_hour) && time.minute == id(zone5_start_minute);
+                  
+                  // Convert 12-hour + AM/PM to 24-hour for comparison
+                  int hour_12 = id(zone5_start_hour);
+                  int hour_24 = hour_12;
+                  if (id(zone5_am_pm) == 1) {  // PM
+                    hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;
+                  } else {  // AM
+                    hour_24 = (hour_12 == 12) ? 0 : hour_12;
+                  }
+                  
+                  return time.hour == hour_24 && time.minute == id(zone5_start_minute);
               then:
-                - logger.log: "Starting Zone 5 scheduled watering"
+                - logger.log:
+                    format: "🔔 ZONE 5 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
+                            'id(zone5_start_hour)', 'id(zone5_start_minute)',
+                            'id(zone5_am_pm) == 0 ? "AM" : "PM"' ]
                 - script.execute:
                     id: request_zone_start
                     zone: 4
@@ -1143,9 +1325,23 @@ time:
 
                   // Time restriction window (12h + AM-PM) with manual override
                   if (id(is_time_restricted)) return false;
-                  return time.hour == id(zone6_start_hour) && time.minute == id(zone6_start_minute);
+                  
+                  // Convert 12-hour + AM/PM to 24-hour for comparison
+                  int hour_12 = id(zone6_start_hour);
+                  int hour_24 = hour_12;
+                  if (id(zone6_am_pm) == 1) {  // PM
+                    hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;
+                  } else {  // AM
+                    hour_24 = (hour_12 == 12) ? 0 : hour_12;
+                  }
+                  
+                  return time.hour == hour_24 && time.minute == id(zone6_start_minute);
               then:
-                - logger.log: "Starting Zone 6 scheduled watering"
+                - logger.log:
+                    format: "🔔 ZONE 6 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
+                            'id(zone6_start_hour)', 'id(zone6_start_minute)',
+                            'id(zone6_am_pm) == 0 ? "AM" : "PM"' ]
                 - script.execute:
                     id: request_zone_start
                     zone: 5
@@ -1176,9 +1372,23 @@ time:
 
                   // Time restriction window (12h + AM-PM) with manual override
                   if (id(is_time_restricted)) return false;
-                  return time.hour == id(zone7_start_hour) && time.minute == id(zone7_start_minute);
+                  
+                  // Convert 12-hour + AM/PM to 24-hour for comparison
+                  int hour_12 = id(zone7_start_hour);
+                  int hour_24 = hour_12;
+                  if (id(zone7_am_pm) == 1) {  // PM
+                    hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;
+                  } else {  // AM
+                    hour_24 = (hour_12 == 12) ? 0 : hour_12;
+                  }
+                  
+                  return time.hour == hour_24 && time.minute == id(zone7_start_minute);
               then:
-                - logger.log: "Starting Zone 7 scheduled watering"
+                - logger.log:
+                    format: "🔔 ZONE 7 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
+                            'id(zone7_start_hour)', 'id(zone7_start_minute)',
+                            'id(zone7_am_pm) == 0 ? "AM" : "PM"' ]
                 - script.execute:
                     id: request_zone_start
                     zone: 6
@@ -1208,15 +1418,111 @@ time:
 
                   // Time restriction window (12h + AM-PM) with manual override
                   if (id(is_time_restricted)) return false;
-                  return time.hour == id(zone8_start_hour) && time.minute == id(zone8_start_minute);
+                  
+                  // Convert 12-hour + AM/PM to 24-hour for comparison
+                  int hour_12 = id(zone8_start_hour);
+                  int hour_24 = hour_12;
+                  if (id(zone8_am_pm) == 1) {  // PM
+                    hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;
+                  } else {  // AM
+                    hour_24 = (hour_12 == 12) ? 0 : hour_12;
+                  }
+                  
+                  return time.hour == hour_24 && time.minute == id(zone8_start_minute);
               then:
-                - logger.log: "Starting Zone 8 scheduled watering"
+                - logger.log:
+                    format: "🔔 ZONE 8 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
+                            'id(zone8_start_hour)', 'id(zone8_start_minute)',
+                            'id(zone8_am_pm) == 0 ? "AM" : "PM"' ]
                 - script.execute:
                     id: request_zone_start
                     zone: 7
                     duration: !lambda "return id(Lawn_irrigation_controller_8_duration).state * 60;"
                     add_delay: true
                     allow_queue: true
+
+          # Weekly Schedule (Schedule 1-7: Monday-Sunday)
+          # Like Hunter Pro-C: Runs ALL enabled zones at set time on selected days
+          - if:
+              condition:
+                lambda: |-
+                  // Must have irrigation system enabled
+                  if (!id(irrigation_system_enable).state) return false;
+                  
+                  // Must have weekly schedule enabled
+                  if (!id(weekly_schedule_switch).state) return false;
+                  
+                  auto time = id(homeassistant_time).now();
+                  if (!time.is_valid()) {
+                    ESP_LOGW("irrigation", "Weekly schedule: Time not synchronized");
+                    return false;
+                  }
+                  
+                  // Check rain delay
+                  if (id(rain_delay_end_time) > time.timestamp) {
+                    ESP_LOGD("irrigation", "Weekly schedule blocked - rain delay active");
+                    return false;
+                  }
+                  
+                  // Weather check
+                  std::string w = id(weather_condition_raw).state;
+                  if (!w.empty() && w != "unknown" && w != "unavailable") {
+                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                      ESP_LOGD("irrigation", "Weekly schedule blocked - bad weather: %s", w.c_str());
+                      return false;
+                    }
+                  }
+                  
+                  // Time restriction check
+                  if (id(is_time_restricted)) {
+                    ESP_LOGD("irrigation", "Weekly schedule blocked - time restricted");
+                    return false;
+                  }
+                  
+                  // Get scheduled time
+                  int hour_12 = (int)id(schedule_start_hour).state;
+                  int minute = (int)id(schedule_start_minute).state;
+                  int hour_24 = hour_12;
+                  
+                  // Convert 12-hour + AM/PM to 24-hour
+                  std::string am_pm = id(schedule_am_pm).current_option();
+                  if (am_pm == "PM") {
+                    hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;
+                  } else {  // AM
+                    hour_24 = (hour_12 == 12) ? 0 : hour_12;
+                  }
+                  
+                  // Check if current time matches scheduled time
+                  if (time.hour != hour_24 || time.minute != minute) return false;
+                  
+                  // Check if today is a scheduled day
+                  // ESPHome day_of_week: 1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday, 7=Saturday
+                  int day_of_week = time.day_of_week;
+                  
+                  bool day_enabled = (day_of_week == 2 && id(schedule_monday).state) ||
+                                     (day_of_week == 3 && id(schedule_tuesday).state) ||
+                                     (day_of_week == 4 && id(schedule_wednesday).state) ||
+                                     (day_of_week == 5 && id(schedule_thursday).state) ||
+                                     (day_of_week == 6 && id(schedule_friday).state) ||
+                                     (day_of_week == 7 && id(schedule_saturday).state) ||
+                                     (day_of_week == 1 && id(schedule_sunday).state);
+                  
+                  if (!day_enabled) {
+                    ESP_LOGD("irrigation", "Weekly schedule: Today not scheduled (day_of_week=%d)", day_of_week);
+                  }
+                  
+                  return day_enabled;
+              then:
+                - logger.log:
+                    format: "🔔 WEEKLY SCHEDULE TRIGGERED at %d:%02d - Starting ALL enabled zones (Hunter Pro-C mode)"
+                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute' ]
+                # Enable auto-advance to run zones in sequence
+                - switch.turn_on: dev1_auto_advance
+                - logger.log: "✅ Auto Advance ENABLED - zones will run in sequence"
+                # Start full cycle (all enabled zones)
+                - sprinkler.start_full_cycle: $devicename1
+
 interval:
   - interval: 500ms
     then:
@@ -1261,6 +1567,70 @@ interval:
   - interval: 2s
     then:
       - lambda: |-
+          // ====================================================================
+          // MASTER VALVE CONTROL (Hunter Pro-C Style)
+          // ====================================================================
+          // Master valve opens ONLY if:
+          // 1. Master valve system is enabled globally
+          // 2. A zone is currently active
+          // 3. That specific zone has MV enabled for it
+          
+          if (id(master_valve_enabled)) {
+            auto active_valve = id($devicename1).active_valve();
+            bool any_zone_active = active_valve.has_value();
+            bool master_should_be_on = false;
+            
+            if (any_zone_active) {
+              int zone = active_valve.value();  // 0-7
+              
+              // Check if this specific zone has master valve enabled
+              bool zone_mv_enabled = false;
+              switch(zone) {
+                case 0: zone_mv_enabled = id(zone1_master_valve_enabled); break;
+                case 1: zone_mv_enabled = id(zone2_master_valve_enabled); break;
+                case 2: zone_mv_enabled = id(zone3_master_valve_enabled); break;
+                case 3: zone_mv_enabled = id(zone4_master_valve_enabled); break;
+                case 4: zone_mv_enabled = id(zone5_master_valve_enabled); break;
+                case 5: zone_mv_enabled = id(zone6_master_valve_enabled); break;
+                case 6: zone_mv_enabled = id(zone7_master_valve_enabled); break;
+                case 7: zone_mv_enabled = id(zone8_master_valve_enabled); break;
+              }
+              
+              master_should_be_on = zone_mv_enabled;
+              
+              // Log zone MV status (debug level to avoid spam)
+              static int last_logged_zone = -1;
+              static bool last_logged_mv_state = false;
+              if (zone != last_logged_zone || zone_mv_enabled != last_logged_mv_state) {
+                ESP_LOGD("irrigation", "Zone %d active - MV for this zone: %s", 
+                         zone + 1, zone_mv_enabled ? "ENABLED" : "DISABLED");
+                last_logged_zone = zone;
+                last_logged_mv_state = zone_mv_enabled;
+              }
+            }
+            
+            bool master_is_on = id(master_valve_relay).state;
+            
+            // Control master valve based on zone requirements
+            if (master_should_be_on && !master_is_on) {
+              id(master_valve_relay).turn_on();
+              if (any_zone_active) {
+                auto active = id($devicename1).active_valve();
+                ESP_LOGI("irrigation", "✅ Master Valve OPENED (Zone %d active, MV enabled for this zone)", 
+                         active.value() + 1);
+              }
+            } else if (!master_should_be_on && master_is_on) {
+              id(master_valve_relay).turn_off();
+              ESP_LOGI("irrigation", "🔒 Master Valve CLOSED (no zones active or zone MV disabled)");
+            }
+          } else {
+            // Master valve system disabled - ensure it's off
+            if (id(master_valve_relay).state) {
+              id(master_valve_relay).turn_off();
+              ESP_LOGD("irrigation", "Master valve turned off (system disabled)");
+            }
+          }
+          
           // Update soak countdown if currently soaking
           if (id(cycle_soak_is_soaking) && id(cycle_soak_soak_end_time) > 0) {
             long now = id(homeassistant_time).now().timestamp;
@@ -1460,6 +1830,153 @@ text_sensor:
     name: $esphome_name ESPHome Version
     hide_timestamp: false
     internal: true
+
+# Current Time and Day Display
+  - platform: template
+    id: current_time_display
+    name: "Current Time"
+    icon: "mdi:clock-digital"
+    update_interval: 1s
+    lambda: |-
+      auto time = id(homeassistant_time).now();
+      if (!time.is_valid()) return {"Time not synced"};
+      
+      int hour_12 = time.hour;
+      std::string am_pm = "AM";
+      
+      if (hour_12 >= 12) {
+        am_pm = "PM";
+        if (hour_12 > 12) hour_12 -= 12;
+      }
+      if (hour_12 == 0) hour_12 = 12;
+      
+      char buffer[20];
+      sprintf(buffer, "%d:%02d %s", hour_12, time.minute, am_pm.c_str());
+      return {std::string(buffer)};
+
+  - platform: template
+    id: current_day_display
+    name: "Current Day"
+    icon: "mdi:calendar-today"
+    update_interval: 60s
+    lambda: |-
+      auto time = id(homeassistant_time).now();
+      if (!time.is_valid()) return {"Day unknown"};
+      
+      const char* days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+      // ESPHome: 1=Sunday, 2=Monday, 3=Tuesday, 4=Wednesday, 5=Thursday, 6=Friday, 7=Saturday
+      int day_index = time.day_of_week - 1;
+      if (day_index < 0 || day_index > 6) return {"Error"};
+      
+      return {std::string(days[day_index])};
+
+  - platform: template
+    id: current_datetime_display
+    name: "Current Date & Time"
+    icon: "mdi:calendar-clock"
+    update_interval: 1s
+    lambda: |-
+      auto time = id(homeassistant_time).now();
+      if (!time.is_valid()) return {"Not synced"};
+      
+      const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+      int day_index = time.day_of_week - 1;
+      
+      int hour_12 = time.hour;
+      std::string am_pm = "AM";
+      if (hour_12 >= 12) {
+        am_pm = "PM";
+        if (hour_12 > 12) hour_12 -= 12;
+      }
+      if (hour_12 == 0) hour_12 = 12;
+      
+      char buffer[50];
+      sprintf(buffer, "%s %d/%d/%d %d:%02d %s", 
+              days[day_index], time.day_of_month, time.month, time.year,
+              hour_12, time.minute, am_pm.c_str());
+      return {std::string(buffer)};
+
+# Master Valve Status Display (Hunter Pro-C Style)
+  - platform: template
+    id: master_valve_status
+    name: "Master Valve Status"
+    icon: "mdi:valve"
+    update_interval: 2s
+    lambda: |-
+      if (!id(master_valve_enabled)) {
+        return {"System Disabled"};
+      }
+      
+      bool mv_is_on = id(master_valve_relay).state;
+      auto active_valve = id($devicename1).active_valve();
+      
+      if (!active_valve.has_value()) {
+        if (mv_is_on) {
+          return std::string("⚠️ ON (no zone active)");
+        } else {
+          return std::string("Closed (Standby)");
+        }
+      }
+      
+      int zone = active_valve.value();
+      bool zone_mv_enabled = false;
+      
+      switch(zone) {
+        case 0: zone_mv_enabled = id(zone1_master_valve_enabled); break;
+        case 1: zone_mv_enabled = id(zone2_master_valve_enabled); break;
+        case 2: zone_mv_enabled = id(zone3_master_valve_enabled); break;
+        case 3: zone_mv_enabled = id(zone4_master_valve_enabled); break;
+        case 4: zone_mv_enabled = id(zone5_master_valve_enabled); break;
+        case 5: zone_mv_enabled = id(zone6_master_valve_enabled); break;
+        case 6: zone_mv_enabled = id(zone7_master_valve_enabled); break;
+        case 7: zone_mv_enabled = id(zone8_master_valve_enabled); break;
+      }
+      
+      char buffer[80];
+      if (zone_mv_enabled) {
+        sprintf(buffer, "✅ OPEN - Zone %d (MV Enabled)", zone + 1);
+      } else {
+        sprintf(buffer, "🔒 Closed - Zone %d (MV Disabled)", zone + 1);
+      }
+      return {std::string(buffer)};
+
+# Weekly Schedule Status (Hunter Pro-C Style)
+  - platform: template
+    id: weekly_schedule_status
+    name: "Weekly Schedule Status"
+    icon: "mdi:calendar-clock"
+    update_interval: 30s
+    lambda: |-
+      if (!id(weekly_schedule_switch).state) {
+        return {"Disabled"};
+      }
+      
+      // Build list of enabled days
+      std::string days = "";
+      if (id(schedule_monday).state) days += "Mon ";
+      if (id(schedule_tuesday).state) days += "Tue ";
+      if (id(schedule_wednesday).state) days += "Wed ";
+      if (id(schedule_thursday).state) days += "Thu ";
+      if (id(schedule_friday).state) days += "Fri ";
+      if (id(schedule_saturday).state) days += "Sat ";
+      if (id(schedule_sunday).state) days += "Sun ";
+      
+      if (days.empty()) {
+        return {"Enabled - No days selected!"};
+      }
+      
+      // Remove trailing space
+      if (!days.empty()) days.pop_back();
+      
+      // Get scheduled time
+      int hour = (int)id(schedule_start_hour).state;
+      int minute = (int)id(schedule_start_minute).state;
+      std::string am_pm = id(schedule_am_pm).current_option();
+      
+      char buffer[150];
+      sprintf(buffer, "✓ Active: %s @ %d:%02d %s (All enabled zones)", 
+              days.c_str(), hour, minute, am_pm.c_str());
+      return {std::string(buffer)};
 
 # Program status sensors
   - platform: template
@@ -1763,24 +2280,6 @@ text_sensor:
       }
       
       return {"Idle"};
-
-# Soak Countdown Timer
-  - platform: template
-    id: soak_countdown_display
-    name: "Soak Countdown"
-    icon: "mdi:timer-sand"
-    update_interval: 1s
-    lambda: |-
-      if (id(cycle_soak_is_soaking) && id(soak_countdown_seconds) > 0) {
-        int total_sec = id(soak_countdown_seconds);
-        int minutes = total_sec / 60;
-        int seconds = total_sec % 60;
-        
-        char buffer[20];
-        sprintf(buffer, "%d:%02d", minutes, seconds);
-        return {std::string(buffer)};
-      }
-      return {"--:--"};
 
 # Zone 1 Last Watered
   - platform: template
@@ -2105,6 +2604,20 @@ number:
     optimistic: true
     restore_value: true  
 
+# Schedule start minute
+  - platform: template
+    id: schedule_start_minute
+    name: "Schedule Start Minute"
+    min_value: 0
+    max_value: 59
+    step: 1
+    initial_value: 0
+    icon: "mdi:clock-start"
+    mode: box
+    unit_of_measurement: "min"
+    optimistic: true
+    restore_value: true
+
 # Cycle duration
   - platform: template
     id: cycle_duration_input
@@ -2205,8 +2718,8 @@ number:
   - platform: template
     id: zone1_schedule_hour
     name: "Zone 1 Schedule Hour"
-    min_value: 0
-    max_value: 23
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
@@ -2219,8 +2732,8 @@ number:
     id: zone1_schedule_minute
     name: "Zone 1 Schedule Minute"
     min_value: 0
-    max_value: 45
-    step: 15
+    max_value: 59
+    step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
@@ -2228,12 +2741,12 @@ number:
     set_action:
       - lambda: "id(zone1_start_minute) = x;"
 
-  # Zone 2 Schedule Time
+# Zone 2 Schedule Time
   - platform: template
     id: zone2_schedule_hour
     name: "Zone 2 Schedule Hour"
-    min_value: 0
-    max_value: 23
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
@@ -2246,8 +2759,8 @@ number:
     id: zone2_schedule_minute
     name: "Zone 2 Schedule Minute"
     min_value: 0
-    max_value: 45
-    step: 15
+    max_value: 59
+    step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
@@ -2259,8 +2772,8 @@ number:
   - platform: template
     id: zone3_schedule_hour
     name: "Zone 3 Schedule Hour"
-    min_value: 0
-    max_value: 23
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
@@ -2273,8 +2786,8 @@ number:
     id: zone3_schedule_minute
     name: "Zone 3 Schedule Minute"
     min_value: 0
-    max_value: 45
-    step: 15
+    max_value: 59
+    step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
@@ -2286,8 +2799,8 @@ number:
   - platform: template
     id: zone4_schedule_hour
     name: "Zone 4 Schedule Hour"
-    min_value: 0
-    max_value: 23
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
@@ -2300,8 +2813,8 @@ number:
     id: zone4_schedule_minute
     name: "Zone 4 Schedule Minute"
     min_value: 0
-    max_value: 45
-    step: 15
+    max_value: 59
+    step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
@@ -2313,8 +2826,8 @@ number:
   - platform: template
     id: zone5_schedule_hour
     name: "Zone 5 Schedule Hour"
-    min_value: 0
-    max_value: 23
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
@@ -2327,8 +2840,8 @@ number:
     id: zone5_schedule_minute
     name: "Zone 5 Schedule Minute"
     min_value: 0
-    max_value: 45
-    step: 15
+    max_value: 59
+    step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
@@ -2340,8 +2853,8 @@ number:
   - platform: template
     id: zone6_schedule_hour
     name: "Zone 6 Schedule Hour"
-    min_value: 0
-    max_value: 23
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
@@ -2354,8 +2867,8 @@ number:
     id: zone6_schedule_minute
     name: "Zone 6 Schedule Minute"
     min_value: 0
-    max_value: 45
-    step: 15
+    max_value: 59
+    step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
@@ -2367,8 +2880,8 @@ number:
   - platform: template
     id: zone7_schedule_hour
     name: "Zone 7 Schedule Hour"
-    min_value: 0
-    max_value: 23
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
@@ -2381,8 +2894,8 @@ number:
     id: zone7_schedule_minute
     name: "Zone 7 Schedule Minute"
     min_value: 0
-    max_value: 45
-    step: 15
+    max_value: 59
+    step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
@@ -2394,8 +2907,8 @@ number:
   - platform: template
     id: zone8_schedule_hour
     name: "Zone 8 Schedule Hour"
-    min_value: 0
-    max_value: 23
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
@@ -2408,8 +2921,8 @@ number:
     id: zone8_schedule_minute
     name: "Zone 8 Schedule Minute"
     min_value: 0
-    max_value: 45
-    step: 15
+    max_value: 59
+    step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
@@ -2763,7 +3276,7 @@ script:
 
   # Handle cycle & soak for a zone with station delay
   - id: run_zone_with_cycles
-    mode: restart  # CRITICAL: Must be 'single' not 'restart' to prevent soak interruption
+    mode: single  # CRITICAL: Must be 'single' not 'restart' to prevent soak interruption
     parameters:
       zone: int
       duration: int
@@ -3468,6 +3981,119 @@ select:
       - lambda: |-
           id(program_c_am_pm) = (x == "AM") ? 0 : 1;
 
+  # Zone Schedule AM-PM Selectors
+  - platform: template
+    id: zone1_schedule_am_pm
+    name: "Zone 1 Schedule AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(zone1_am_pm) = (x == "AM") ? 0 : 1;
+
+  - platform: template
+    id: zone2_schedule_am_pm
+    name: "Zone 2 Schedule AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(zone2_am_pm) = (x == "AM") ? 0 : 1;
+
+  - platform: template
+    id: zone3_schedule_am_pm
+    name: "Zone 3 Schedule AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(zone3_am_pm) = (x == "AM") ? 0 : 1;
+
+  - platform: template
+    id: zone4_schedule_am_pm
+    name: "Zone 4 Schedule AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(zone4_am_pm) = (x == "AM") ? 0 : 1;
+
+  - platform: template
+    id: zone5_schedule_am_pm
+    name: "Zone 5 Schedule AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(zone5_am_pm) = (x == "AM") ? 0 : 1;
+
+  - platform: template
+    id: zone6_schedule_am_pm
+    name: "Zone 6 Schedule AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(zone6_am_pm) = (x == "AM") ? 0 : 1;
+
+  - platform: template
+    id: zone7_schedule_am_pm
+    name: "Zone 7 Schedule AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(zone7_am_pm) = (x == "AM") ? 0 : 1;
+
+  - platform: template
+    id: zone8_schedule_am_pm
+    name: "Zone 8 Schedule AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(zone8_am_pm) = (x == "AM") ? 0 : 1;
+
   # Zone program assignment selects
   - platform: template
     id: zone1_program_select
@@ -3639,6 +4265,11 @@ sprinkler:
             if (!in_cycle_soak) {
               ESP_LOGI("irrigation", "Main switch OFF - stopping run_zone_with_cycles (normal mode)");
               id(run_zone_with_cycles).stop();
+              
+              // Reset soak countdown when stopping
+              id(cycle_soak_is_soaking) = false;
+              id(cycle_soak_soak_end_time) = 0;
+              id(soak_countdown_seconds) = 0;
             } else {
               ESP_LOGI("irrigation", "Main switch OFF - NOT stopping script (in cycle/soak, cycle %d/%d)", 
                        id(current_cycle), id(total_cycles));
@@ -3808,6 +4439,36 @@ button:
   - platform: restart
     name: "Restart $esphome_comment"
     icon: "mdi:restart"
+
+  # Manual Master Valve Test Button
+  - platform: template
+    name: "Manual Master Valve Test"
+    icon: "mdi:valve"
+    on_press:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(master_valve_enabled);'
+            then:
+              - lambda: |-
+                  ESP_LOGI("irrigation", "========================================");
+                  ESP_LOGI("irrigation", "MANUAL MASTER VALVE TEST");
+                  if (id(master_valve_relay).state) {
+                    ESP_LOGI("irrigation", "Closing master valve manually");
+                    id(master_valve_relay).turn_off();
+                  } else {
+                    ESP_LOGI("irrigation", "Opening master valve manually for 10 seconds");
+                    id(master_valve_relay).turn_on();
+                  }
+                  ESP_LOGI("irrigation", "========================================");
+              - delay: 10s
+              - lambda: |-
+                  if (id(master_valve_relay).state && !id($devicename1).active_valve().has_value()) {
+                    ESP_LOGI("irrigation", "Closing master valve (manual test complete, no zones active)");
+                    id(master_valve_relay).turn_off();
+                  }
+            else:
+              - logger.log: "⚠️ Master valve system is DISABLED - enable it first"
 
   # Start All Zones - NORMAL MODE
   - platform: template
@@ -4148,6 +4809,9 @@ button:
                   then:
                     - logger.log: "Rain delay active - watering blocked"
                   else:
+                    # Turn ON cycle and soak mode
+                    - switch.turn_on: cycle_soak_switch
+                    - logger.log: "Cycle & Soak Mode enabled - starting all zones"
                     - script.execute: run_all_zones_cycle_soak_script
 
   - platform: template
@@ -4299,6 +4963,36 @@ switch:
       - lambda: "id(cycle_soak_enabled) = true;"
     turn_off_action:
       - lambda: "id(cycle_soak_enabled) = false;"
+
+  # Master Valve Enable (Optional - Hunter Pro-C Style)
+  # Global enable/disable for entire master valve system
+  - platform: template
+    name: "Enable Master Valve"
+    id: master_valve_enable_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(master_valve_enabled);"
+    turn_on_action:
+      - lambda: |-
+          id(master_valve_enabled) = true;
+          ESP_LOGI("irrigation", "========================================");
+          ESP_LOGI("irrigation", "MASTER VALVE SYSTEM ENABLED");
+          ESP_LOGI("irrigation", "Will open when zones with MV enabled run");
+          ESP_LOGI("irrigation", "Check per-zone MV settings if needed");
+          ESP_LOGI("irrigation", "========================================");
+    turn_off_action:
+      - lambda: |-
+          id(master_valve_enabled) = false;
+          // Immediately close master valve
+          if (id(master_valve_relay).state) {
+            id(master_valve_relay).turn_off();
+            ESP_LOGI("irrigation", "Master valve closed (system disabled)");
+          }
+          ESP_LOGI("irrigation", "========================================");
+          ESP_LOGI("irrigation", "MASTER VALVE SYSTEM DISABLED");
+          ESP_LOGI("irrigation", "Zones will operate without master valve");
+          ESP_LOGI("irrigation", "========================================");
 
   # Time Restriction Override
   - platform: template
@@ -4487,6 +5181,108 @@ switch:
       - lambda: "id(zone8_schedule_enabled) = true;"
     turn_off_action:
       - lambda: "id(zone8_schedule_enabled) = false;"   
+
+# Master Valve per-zone enable (Hunter Pro-C style)
+# Each zone can independently enable/disable master valve usage
+  - platform: template
+    name: "Zone 1 - Use Master Valve"
+    id: zone1_mv_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone1_master_valve_enabled);"
+    turn_on_action:
+      - lambda: |-
+          id(zone1_master_valve_enabled) = true;
+          ESP_LOGI("irrigation", "Zone 1: Master Valve ENABLED");
+    turn_off_action:
+      - lambda: |-
+          id(zone1_master_valve_enabled) = false;
+          ESP_LOGI("irrigation", "Zone 1: Master Valve DISABLED");
+          
+  - platform: template
+    name: "Zone 2 - Use Master Valve"
+    id: zone2_mv_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone2_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone2_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone2_master_valve_enabled) = false;"
+      
+  - platform: template
+    name: "Zone 3 - Use Master Valve"
+    id: zone3_mv_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone3_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone3_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone3_master_valve_enabled) = false;"
+      
+  - platform: template
+    name: "Zone 4 - Use Master Valve"
+    id: zone4_mv_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone4_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone4_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone4_master_valve_enabled) = false;"
+      
+  - platform: template
+    name: "Zone 5 - Use Master Valve"
+    id: zone5_mv_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone5_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone5_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone5_master_valve_enabled) = false;"
+      
+  - platform: template
+    name: "Zone 6 - Use Master Valve"
+    id: zone6_mv_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone6_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone6_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone6_master_valve_enabled) = false;"
+      
+  - platform: template
+    name: "Zone 7 - Use Master Valve"
+    id: zone7_mv_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone7_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone7_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone7_master_valve_enabled) = false;"
+      
+  - platform: template
+    name: "Zone 8 - Use Master Valve"
+    id: zone8_mv_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone8_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone8_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone8_master_valve_enabled) = false;"
 
 # Program enable switches
   - platform: template
@@ -4876,4 +5672,15 @@ switch:
             ESP_LOGI("irrigation", "Zone 8 watering completed (%ld seconds) - timestamp saved", duration);
           }
     pin: GPIO26
+    inverted: true
+
+# Master Valve (Optional - like Hunter Pro-C)
+# Can be enabled/disabled via "Enable Master Valve" switch
+# Automatically opens when any zone is active (if enabled)
+  - platform: gpio
+    restore_mode: ALWAYS_OFF
+    internal: true
+    id: master_valve_relay
+    name: "Master Valve Relay"
+    pin: $master_valve_pin
     inverted: true
