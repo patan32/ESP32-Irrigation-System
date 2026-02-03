@@ -26,7 +26,7 @@ substitutions:
   esphome_comment: Irrigation Control System
   esphome_project_name: AG.Irrigation Control System
   esphome_project_version: ICS, $software_revision
-  uom: Min # this overrides the uom in sprinkler -> run_duration 
+  uom: Min # this overrides the uom in sprinkler -> run_duration
 
 #Define Project Details and ESP Board Type
 esphome:
@@ -45,16 +45,22 @@ esphome:
           state: "Idle"
       # reset multiplier at reboot
       - lambda: |-
-          // --- FIX: clear run-lock + queue state on every boot ---
+          // === 3-ITEM QUEUE SYSTEM INITIALIZATION ===
             id(irrigation_busy) = false;
             id(in_program_run) = false;
-            id(queued_type) = 0;
-            id(queued_program) = 0;
-            id(queued_zone) = 0;
-            id(queued_zone_duration) = 0;
-            id(queued_zone_add_delay) = false;
+            
+            // Initialize queue arrays
+            id(queue_count) = 0;
+            for (int i = 0; i < 3; i++) {
+              id(queue_types)[i] = 0;
+              id(queue_programs)[i] = 0;
+              id(queue_zones)[i] = 0;
+              id(queue_durations)[i] = 0;
+              id(queue_add_delays)[i] = false;
+            }
+            ESP_LOGI("irrigation", "🔄 BOOT: 3-slot queue initialized (Hunter Pro-C style)");
 
-      - sprinkler.set_multiplier: 
+      - sprinkler.set_multiplier:
           id: $devicename1
           multiplier: 1
 # Set smart multiplier on boot based on temperature and season
@@ -143,26 +149,23 @@ esp32:
   framework:
     type: esp-idf
 
-# Enable Home Assistant API
 api:
   encryption:
-    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ota:
   - platform: esphome
-    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-
-  # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
     ssid: "Irrigation-Controller"
     password: "uaRTa8vRL7uc"
 
 captive_portal:
-    
+
 logger:
   level: ${log_level}
   logs:
@@ -216,7 +219,7 @@ globals:
   - id: station_delay_seconds
     type: int
     restore_value: True
-    initial_value: '5'  # Default 5 seconds between zones 
+    initial_value: '5'  # Default 5 seconds between zones
 
   # Zone-specific schedule times
   - id: zone1_start_hour
@@ -354,7 +357,7 @@ globals:
   - id: zone8_schedule_enabled
     type: bool
     restore_value: True
-    initial_value: 'false'       
+    initial_value: 'false'
     
   # Master Valve per-zone enable (Hunter Pro-C style)
   - id: zone1_master_valve_enabled
@@ -393,7 +396,19 @@ globals:
   - id: manual_rain_delay_override
     type: bool
     restore_value: True
-    initial_value: 'false' 
+    initial_value: 'false'
+  - id: manual_weather_override
+    type: bool
+    restore_value: True
+    initial_value: 'false'
+  - id: last_weather_log_time
+    type: long
+    restore_value: False
+    initial_value: '0'
+  - id: last_time_restriction_log
+    type: long
+    restore_value: False
+    initial_value: '0'
   - id: vacation_mode_active
     type: bool
     restore_value: True
@@ -401,7 +416,7 @@ globals:
   - id: normal_multiplier
     type: float
     restore_value: True
-    initial_value: '1.0'  
+    initial_value: '1.0'
 # Last watered timestamps for each zone
   - id: zone1_last_watered
     type: long
@@ -434,7 +449,7 @@ globals:
   - id: zone8_last_watered
     type: long
     restore_value: True
-    initial_value: '0'      
+    initial_value: '0'
 # Zone start times (for duration tracking)
   - id: zone1_start_time
     type: long
@@ -789,7 +804,7 @@ time:
           - lambda: |-
               // Only auto-manage rain delay if manual override is OFF
               if (!id(manual_rain_delay_override)) {
-                std::string weather = id(weather_condition_raw).state;
+                std::string weather = id(weather_forecast_home).state;
                 if (weather.empty() || weather == "unknown" || weather == "unavailable") {
                   ESP_LOGW("irrigation", "Weather state unavailable - skipping scheduled rain delay update");
                   return;
@@ -800,7 +815,7 @@ time:
                   id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (86400 * 2); // 2 day delay
                   id(rain_delay_days) = 2;
                   ESP_LOGI("irrigation", "Auto rain delay activated - weather is %s", weather.c_str());
-                } 
+                }
                 // Clear rain delay if weather is good
                 else if (weather == "sunny" || weather == "clear" || weather == "partlycloudy" || weather == "cloudy") {
                   if (id(rain_delay_end_time) > id(homeassistant_time).now().timestamp) {
@@ -830,17 +845,32 @@ time:
                   
                   if (id(rain_delay_end_time) > time.timestamp) return false;
 
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Program A blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        // Only log once per hour to reduce spam
+                        long now = id(homeassistant_time).now().timestamp;
+                        if (now - id(last_weather_log_time) >= 3600) {
+                          ESP_LOGW("irrigation", "⛈️ SCHEDULES BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                          id(last_weather_log_time) = now;
+                        }
+                        return false;
+                      }
                     }
                   }
                   
                   // Time restriction check
-                  if (id(is_time_restricted)) return false;
+                  if (id(is_time_restricted)) {
+                    // Only log once per hour to reduce spam
+                    long now = id(homeassistant_time).now().timestamp;
+                    if (now - id(last_time_restriction_log) >= 3600) {
+                      ESP_LOGW("irrigation", "⏰ SCHEDULES BLOCKED - Time restriction active (outside allowed hours)");
+                      id(last_time_restriction_log) = now;
+                    }
+                    return false;
+                  }
                   
                   // Convert 12-hour to 24-hour
                   int start_hour = id(program_a_start_hour);
@@ -877,9 +907,31 @@ time:
                   }
                   return false;
               then:
-                - logger.log:
-                    format: "🔔 PROGRAM A TRIGGERED at %d:%02d - Starting irrigation"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    
+                    // Count zones in Program A
+                    int zone_count = 0;
+                    std::string zones_list = "";
+                    if (id(zone1_program) == 1 && id(zone1_enable).state) { zone_count++; zones_list += "Z1 "; }
+                    if (id(zone2_program) == 1 && id(zone2_enable).state) { zone_count++; zones_list += "Z2 "; }
+                    if (id(zone3_program) == 1 && id(zone3_enable).state) { zone_count++; zones_list += "Z3 "; }
+                    if (id(zone4_program) == 1 && id(zone4_enable).state) { zone_count++; zones_list += "Z4 "; }
+                    if (id(zone5_program) == 1 && id(zone5_enable).state) { zone_count++; zones_list += "Z5 "; }
+                    if (id(zone6_program) == 1 && id(zone6_enable).state) { zone_count++; zones_list += "Z6 "; }
+                    if (id(zone7_program) == 1 && id(zone7_enable).state) { zone_count++; zones_list += "Z7 "; }
+                    if (id(zone8_program) == 1 && id(zone8_enable).state) { zone_count++; zones_list += "Z8 "; }
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  ⏰ PROGRAM A TRIGGERED                                    ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Time: %02d:%02d                                             ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Zones: %d (%s)                                  ║",
+                             zone_count, zones_list.c_str());
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_program_start
                     program: 1
@@ -899,17 +951,26 @@ time:
                   
                   if (id(rain_delay_end_time) > time.timestamp) return false;
 
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Program B blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        // Only log once per hour to reduce spam
+                        long now = id(homeassistant_time).now().timestamp;
+                        if (now - id(last_weather_log_time) >= 3600) {
+                          ESP_LOGW("irrigation", "⛈️ SCHEDULES BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                          id(last_weather_log_time) = now;
+                        }
+                        return false;
+                      }
                     }
                   }
                   
-                  // Time restriction window (12h + AM-PM) with manual override                 
-                  if (id(is_time_restricted)) return false;
+                  // Time restriction window (12h + AM-PM) with manual override
+                  if (id(is_time_restricted)) {
+                    return false;  // Block silently, logged once per hour by programs
+                  }
                   
                   int current_hour = time.hour;
                   int start_hour = id(program_b_start_hour);
@@ -944,9 +1005,31 @@ time:
                   }
                   return false;
               then:
-                - logger.log:
-                    format: "🔔 PROGRAM B TRIGGERED at %d:%02d - Starting irrigation"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    
+                    // Count zones in Program B
+                    int zone_count = 0;
+                    std::string zones_list = "";
+                    if (id(zone1_program) == 2 && id(zone1_enable).state) { zone_count++; zones_list += "Z1 "; }
+                    if (id(zone2_program) == 2 && id(zone2_enable).state) { zone_count++; zones_list += "Z2 "; }
+                    if (id(zone3_program) == 2 && id(zone3_enable).state) { zone_count++; zones_list += "Z3 "; }
+                    if (id(zone4_program) == 2 && id(zone4_enable).state) { zone_count++; zones_list += "Z4 "; }
+                    if (id(zone5_program) == 2 && id(zone5_enable).state) { zone_count++; zones_list += "Z5 "; }
+                    if (id(zone6_program) == 2 && id(zone6_enable).state) { zone_count++; zones_list += "Z6 "; }
+                    if (id(zone7_program) == 2 && id(zone7_enable).state) { zone_count++; zones_list += "Z7 "; }
+                    if (id(zone8_program) == 2 && id(zone8_enable).state) { zone_count++; zones_list += "Z8 "; }
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  ⏰ PROGRAM B TRIGGERED                                    ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Time: %02d:%02d                                             ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Zones: %d (%s)                                  ║",
+                             zone_count, zones_list.c_str());
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_program_start
                     program: 2
@@ -966,17 +1049,26 @@ time:
                   
                   if (id(rain_delay_end_time) > time.timestamp) return false;
 
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Program C blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        // Only log once per hour to reduce spam
+                        long now = id(homeassistant_time).now().timestamp;
+                        if (now - id(last_weather_log_time) >= 3600) {
+                          ESP_LOGW("irrigation", "⛈️ SCHEDULES BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                          id(last_weather_log_time) = now;
+                        }
+                        return false;
+                      }
                     }
                   }
                   
-                  // Time restriction window (12h + AM-PM) with manual override                  
-                  if (id(is_time_restricted)) return false;
+                  // Time restriction window (12h + AM-PM) with manual override
+                  if (id(is_time_restricted)) {
+                    return false;  // Block silently, logged once per hour by programs
+                  }
                   
                   int current_hour = time.hour;
                   int start_hour = id(program_c_start_hour);
@@ -1011,9 +1103,31 @@ time:
                   }
                   return false;
               then:
-                - logger.log:
-                    format: "🔔 PROGRAM C TRIGGERED at %d:%02d - Starting irrigation"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    
+                    // Count zones in Program C
+                    int zone_count = 0;
+                    std::string zones_list = "";
+                    if (id(zone1_program) == 3 && id(zone1_enable).state) { zone_count++; zones_list += "Z1 "; }
+                    if (id(zone2_program) == 3 && id(zone2_enable).state) { zone_count++; zones_list += "Z2 "; }
+                    if (id(zone3_program) == 3 && id(zone3_enable).state) { zone_count++; zones_list += "Z3 "; }
+                    if (id(zone4_program) == 3 && id(zone4_enable).state) { zone_count++; zones_list += "Z4 "; }
+                    if (id(zone5_program) == 3 && id(zone5_enable).state) { zone_count++; zones_list += "Z5 "; }
+                    if (id(zone6_program) == 3 && id(zone6_enable).state) { zone_count++; zones_list += "Z6 "; }
+                    if (id(zone7_program) == 3 && id(zone7_enable).state) { zone_count++; zones_list += "Z7 "; }
+                    if (id(zone8_program) == 3 && id(zone8_enable).state) { zone_count++; zones_list += "Z8 "; }
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  ⏰ PROGRAM C TRIGGERED                                    ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Time: %02d:%02d                                             ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Zones: %d (%s)                                  ║",
+                             zone_count, zones_list.c_str());
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_program_start
                     program: 3
@@ -1075,17 +1189,20 @@ time:
                   if (!id(zone1_schedule_enabled)) return false;
                   if (id(rain_delay_end_time) > time.timestamp) return false;
                   
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Zone 1 blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        return false;  // Block silently, logged once per hour by programs
+                      }
                     }
                   }
                   
                   // Time restriction window (12h + AM-PM) with manual override
-                  if (id(is_time_restricted)) return false;
+                  if (id(is_time_restricted)) {
+                    return false;  // Block silently, logged once per hour by programs
+                  }
                   
                   // Convert 12-hour + AM/PM to 24-hour for comparison
                   int hour_12 = id(zone1_start_hour);
@@ -1107,11 +1224,25 @@ time:
                   
                   return time.hour == hour_24 && time.minute == id(zone1_start_minute);
               then:
-                - logger.log:
-                    format: "🔔 ZONE 1 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
-                            'id(zone1_start_hour)', 'id(zone1_start_minute)',
-                            'id(zone1_am_pm) == 0 ? "AM" : "PM"' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    int duration_min = (int)id(Lawn_irrigation_controller_1_duration).state;
+                    int hour_12 = id(zone1_start_hour);
+                    int minute = id(zone1_start_minute);
+                    const char* ampm = (id(zone1_am_pm) == 0) ? "AM" : "PM";
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  💧 ZONE 1 SCHEDULE TRIGGERED                            ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Scheduled: %d:%02d %s                                    ║",
+                             hour_12, minute, ampm);
+                    ESP_LOGI("irrigation", "║  Started: %02d:%02d                                          ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Duration: %d minutes                                      ║",
+                             duration_min);
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_zone_start
                     zone: 0
@@ -1131,17 +1262,20 @@ time:
                   if (!id(zone2_schedule_enabled)) return false;
                   if (id(rain_delay_end_time) > time.timestamp) return false;
 
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Zone 2 blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        return false;  // Block silently, logged once per hour by programs
+                      }
                     }
                   }
                   
                   // Time restriction window (12h + AM-PM) with manual override
-                  if (id(is_time_restricted)) return false;
+                  if (id(is_time_restricted)) {
+                    return false;  // Block silently, logged once per hour by programs
+                  }
                   
                   // Convert 12-hour + AM/PM to 24-hour for comparison
                   int hour_12 = id(zone2_start_hour);
@@ -1154,11 +1288,25 @@ time:
                   
                   return time.hour == hour_24 && time.minute == id(zone2_start_minute);
               then:
-                - logger.log:
-                    format: "🔔 ZONE 2 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
-                            'id(zone2_start_hour)', 'id(zone2_start_minute)',
-                            'id(zone2_am_pm) == 0 ? "AM" : "PM"' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    int duration_min = (int)id(Lawn_irrigation_controller_2_duration).state;
+                    int hour_12 = id(zone2_start_hour);
+                    int minute = id(zone2_start_minute);
+                    const char* ampm = (id(zone2_am_pm) == 0) ? "AM" : "PM";
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  💧 ZONE 2 SCHEDULE TRIGGERED                            ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Scheduled: %d:%02d %s                                    ║",
+                             hour_12, minute, ampm);
+                    ESP_LOGI("irrigation", "║  Started: %02d:%02d                                          ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Duration: %d minutes                                      ║",
+                             duration_min);
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_zone_start
                     zone: 1
@@ -1177,17 +1325,20 @@ time:
                   if (!id(zone3_schedule_enabled)) return false;
                   if (id(rain_delay_end_time) > time.timestamp) return false;
 
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Zone 3 blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        return false;  // Block silently, logged once per hour by programs
+                      }
                     }
                   }
 
                   // Time restriction window (12h + AM-PM) with manual override
-                  if (id(is_time_restricted)) return false;
+                  if (id(is_time_restricted)) {
+                    return false;  // Block silently, logged once per hour by programs
+                  }
                   
                   // Convert 12-hour + AM/PM to 24-hour for comparison
                   int hour_12 = id(zone3_start_hour);
@@ -1200,11 +1351,25 @@ time:
                   
                   return time.hour == hour_24 && time.minute == id(zone3_start_minute);
               then:
-                - logger.log:
-                    format: "🔔 ZONE 3 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
-                            'id(zone3_start_hour)', 'id(zone3_start_minute)',
-                            'id(zone3_am_pm) == 0 ? "AM" : "PM"' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    int duration_min = (int)id(Lawn_irrigation_controller_3_duration).state;
+                    int hour_12 = id(zone3_start_hour);
+                    int minute = id(zone3_start_minute);
+                    const char* ampm = (id(zone3_am_pm) == 0) ? "AM" : "PM";
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  💧 ZONE 3 SCHEDULE TRIGGERED                            ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Scheduled: %d:%02d %s                                    ║",
+                             hour_12, minute, ampm);
+                    ESP_LOGI("irrigation", "║  Started: %02d:%02d                                          ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Duration: %d minutes                                      ║",
+                             duration_min);
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_zone_start
                     zone: 2
@@ -1222,17 +1387,20 @@ time:
 
                   if (!id(zone4_schedule_enabled)) return false;
                   if (id(rain_delay_end_time) > time.timestamp) return false;
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Zone 4 blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        return false;  // Block silently, logged once per hour by programs
+                      }
                     }
                   }
 
                   // Time restriction window (12h + AM-PM) with manual override
-                  if (id(is_time_restricted)) return false;
+                  if (id(is_time_restricted)) {
+                    return false;  // Block silently, logged once per hour by programs
+                  }
                   
                   // Convert 12-hour + AM/PM to 24-hour for comparison
                   int hour_12 = id(zone4_start_hour);
@@ -1245,11 +1413,25 @@ time:
                   
                   return time.hour == hour_24 && time.minute == id(zone4_start_minute);
               then:
-                - logger.log:
-                    format: "🔔 ZONE 4 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
-                            'id(zone4_start_hour)', 'id(zone4_start_minute)',
-                            'id(zone4_am_pm) == 0 ? "AM" : "PM"' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    int duration_min = (int)id(Lawn_irrigation_controller_4_duration).state;
+                    int hour_12 = id(zone4_start_hour);
+                    int minute = id(zone4_start_minute);
+                    const char* ampm = (id(zone4_am_pm) == 0) ? "AM" : "PM";
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  💧 ZONE 4 SCHEDULE TRIGGERED                            ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Scheduled: %d:%02d %s                                    ║",
+                             hour_12, minute, ampm);
+                    ESP_LOGI("irrigation", "║  Started: %02d:%02d                                          ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Duration: %d minutes                                      ║",
+                             duration_min);
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_zone_start
                     zone: 3
@@ -1268,17 +1450,20 @@ time:
                   if (!id(zone5_schedule_enabled)) return false;
                   if (id(rain_delay_end_time) > time.timestamp) return false;
 
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Zone 5 blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        return false;  // Block silently, logged once per hour by programs
+                      }
                     }
                   }
 
                   // Time restriction window (12h + AM-PM) with manual override
-                  if (id(is_time_restricted)) return false;
+                  if (id(is_time_restricted)) {
+                    return false;  // Block silently, logged once per hour by programs
+                  }
                   
                   // Convert 12-hour + AM/PM to 24-hour for comparison
                   int hour_12 = id(zone5_start_hour);
@@ -1291,11 +1476,25 @@ time:
                   
                   return time.hour == hour_24 && time.minute == id(zone5_start_minute);
               then:
-                - logger.log:
-                    format: "🔔 ZONE 5 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
-                            'id(zone5_start_hour)', 'id(zone5_start_minute)',
-                            'id(zone5_am_pm) == 0 ? "AM" : "PM"' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    int duration_min = (int)id(Lawn_irrigation_controller_5_duration).state;
+                    int hour_12 = id(zone5_start_hour);
+                    int minute = id(zone5_start_minute);
+                    const char* ampm = (id(zone5_am_pm) == 0) ? "AM" : "PM";
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  💧 ZONE 5 SCHEDULE TRIGGERED                            ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Scheduled: %d:%02d %s                                    ║",
+                             hour_12, minute, ampm);
+                    ESP_LOGI("irrigation", "║  Started: %02d:%02d                                          ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Duration: %d minutes                                      ║",
+                             duration_min);
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_zone_start
                     zone: 4
@@ -1314,17 +1513,20 @@ time:
                   if (!id(zone6_schedule_enabled)) return false;
                   if (id(rain_delay_end_time) > time.timestamp) return false;
 
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Zone 6 blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        return false;  // Block silently, logged once per hour by programs
+                      }
                     }
                   }
 
                   // Time restriction window (12h + AM-PM) with manual override
-                  if (id(is_time_restricted)) return false;
+                  if (id(is_time_restricted)) {
+                    return false;  // Block silently, logged once per hour by programs
+                  }
                   
                   // Convert 12-hour + AM/PM to 24-hour for comparison
                   int hour_12 = id(zone6_start_hour);
@@ -1337,11 +1539,25 @@ time:
                   
                   return time.hour == hour_24 && time.minute == id(zone6_start_minute);
               then:
-                - logger.log:
-                    format: "🔔 ZONE 6 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
-                            'id(zone6_start_hour)', 'id(zone6_start_minute)',
-                            'id(zone6_am_pm) == 0 ? "AM" : "PM"' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    int duration_min = (int)id(Lawn_irrigation_controller_6_duration).state;
+                    int hour_12 = id(zone6_start_hour);
+                    int minute = id(zone6_start_minute);
+                    const char* ampm = (id(zone6_am_pm) == 0) ? "AM" : "PM";
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  💧 ZONE 6 SCHEDULE TRIGGERED                            ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Scheduled: %d:%02d %s                                    ║",
+                             hour_12, minute, ampm);
+                    ESP_LOGI("irrigation", "║  Started: %02d:%02d                                          ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Duration: %d minutes                                      ║",
+                             duration_min);
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_zone_start
                     zone: 5
@@ -1361,12 +1577,13 @@ time:
                   if (!id(zone7_schedule_enabled)) return false;
                   if (id(rain_delay_end_time) > time.timestamp) return false;
 
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Zone 7 blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        return false;  // Block silently, logged once per hour by programs
+                      }
                     }
                   }
 
@@ -1384,11 +1601,25 @@ time:
                   
                   return time.hour == hour_24 && time.minute == id(zone7_start_minute);
               then:
-                - logger.log:
-                    format: "🔔 ZONE 7 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
-                            'id(zone7_start_hour)', 'id(zone7_start_minute)',
-                            'id(zone7_am_pm) == 0 ? "AM" : "PM"' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    int duration_min = (int)id(Lawn_irrigation_controller_7_duration).state;
+                    int hour_12 = id(zone7_start_hour);
+                    int minute = id(zone7_start_minute);
+                    const char* ampm = (id(zone7_am_pm) == 0) ? "AM" : "PM";
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  💧 ZONE 7 SCHEDULE TRIGGERED                            ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Scheduled: %d:%02d %s                                    ║",
+                             hour_12, minute, ampm);
+                    ESP_LOGI("irrigation", "║  Started: %02d:%02d                                          ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Duration: %d minutes                                      ║",
+                             duration_min);
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_zone_start
                     zone: 6
@@ -1407,12 +1638,13 @@ time:
                   if (!id(zone8_schedule_enabled)) return false;
                   if (id(rain_delay_end_time) > time.timestamp) return false;
 
-                  // Weather check - only block if we KNOW it's bad weather
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Zone 8 blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check - only block if we KNOW it's bad weather (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        return false;  // Block silently, logged once per hour by programs
+                      }
                     }
                   }
 
@@ -1430,11 +1662,25 @@ time:
                   
                   return time.hour == hour_24 && time.minute == id(zone8_start_minute);
               then:
-                - logger.log:
-                    format: "🔔 ZONE 8 SCHEDULE TRIGGERED at %d:%02d (set for %d:%02d %s)"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute', 
-                            'id(zone8_start_hour)', 'id(zone8_start_minute)',
-                            'id(zone8_am_pm) == 0 ? "AM" : "PM"' ]
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    int duration_min = (int)id(Lawn_irrigation_controller_8_duration).state;
+                    int hour_12 = id(zone8_start_hour);
+                    int minute = id(zone8_start_minute);
+                    const char* ampm = (id(zone8_am_pm) == 0) ? "AM" : "PM";
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  💧 ZONE 8 SCHEDULE TRIGGERED                            ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Scheduled: %d:%02d %s                                    ║",
+                             hour_12, minute, ampm);
+                    ESP_LOGI("irrigation", "║  Started: %02d:%02d                                          ║",
+                             time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Duration: %d minutes                                      ║",
+                             duration_min);
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
                 - script.execute:
                     id: request_zone_start
                     zone: 7
@@ -1465,19 +1711,19 @@ time:
                     return false;
                   }
                   
-                  // Weather check
-                  std::string w = id(weather_condition_raw).state;
-                  if (!w.empty() && w != "unknown" && w != "unavailable") {
-                    if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                      ESP_LOGD("irrigation", "Weekly schedule blocked - bad weather: %s", w.c_str());
-                      return false;
+                  // Weather check (unless override active)
+                  if (!id(manual_weather_override)) {
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                        return false;  // Block silently, logged once per hour by programs
+                      }
                     }
                   }
                   
                   // Time restriction check
                   if (id(is_time_restricted)) {
-                    ESP_LOGD("irrigation", "Weekly schedule blocked - time restricted");
-                    return false;
+                    return false;  // Block silently, logged once per hour by programs
                   }
                   
                   // Get scheduled time
@@ -1514,14 +1760,61 @@ time:
                   
                   return day_enabled;
               then:
-                - logger.log:
-                    format: "🔔 WEEKLY SCHEDULE TRIGGERED at %d:%02d - Starting ALL enabled zones (Hunter Pro-C mode)"
-                    args: [ 'id(homeassistant_time).now().hour', 'id(homeassistant_time).now().minute' ]
-                # Enable auto-advance to run zones in sequence
-                - switch.turn_on: dev1_auto_advance
-                - logger.log: "✅ Auto Advance ENABLED - zones will run in sequence"
-                # Start full cycle (all enabled zones)
-                - sprinkler.start_full_cycle: $devicename1
+                - lambda: |-
+                    auto time = id(homeassistant_time).now();
+                    const char* day_names[] = {"", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+                    int dow = time.day_of_week;
+                    
+                    // Count enabled zones
+                    int enabled_count = 0;
+                    std::string zones_list = "";
+                    if (id(zone1_enable).state) { enabled_count++; zones_list += "Z1 "; }
+                    if (id(zone2_enable).state) { enabled_count++; zones_list += "Z2 "; }
+                    if (id(zone3_enable).state) { enabled_count++; zones_list += "Z3 "; }
+                    if (id(zone4_enable).state) { enabled_count++; zones_list += "Z4 "; }
+                    if (id(zone5_enable).state) { enabled_count++; zones_list += "Z5 "; }
+                    if (id(zone6_enable).state) { enabled_count++; zones_list += "Z6 "; }
+                    if (id(zone7_enable).state) { enabled_count++; zones_list += "Z7 "; }
+                    if (id(zone8_enable).state) { enabled_count++; zones_list += "Z8 "; }
+                    
+                    ESP_LOGI("irrigation", "");
+                    ESP_LOGI("irrigation", "╔════════════════════════════════════════════════════════════╗");
+                    ESP_LOGI("irrigation", "║  🔔 WEEKLY SCHEDULE TRIGGERED                              ║");
+                    ESP_LOGI("irrigation", "╠════════════════════════════════════════════════════════════╣");
+                    ESP_LOGI("irrigation", "║  Day: %-20s @ %02d:%02d                       ║",
+                             day_names[dow], time.hour, time.minute);
+                    ESP_LOGI("irrigation", "║  Zones: %d (%s)                                        ║",
+                             enabled_count, zones_list.c_str());
+                    ESP_LOGI("irrigation", "║  Mode: Hunter Pro-C (full cycle with auto-advance)        ║");
+                    ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
+                    ESP_LOGI("irrigation", "");
+                    
+                    // Check if system is busy
+                    bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
+                    
+                    if (busy) {
+                      // Queue as type 3 (full cycle)
+                      if (id(queue_count) < 3) {
+                        int pos = id(queue_count);
+                        id(queue_types)[pos] = 3;  // 3 = Full Cycle (Weekly Schedule)
+                        id(queue_programs)[pos] = 0;
+                        id(queue_zones)[pos] = 0;
+                        id(queue_durations)[pos] = 0;
+                        id(queue_add_delays)[pos] = false;
+                        id(queue_count)++;
+                        
+                        ESP_LOGI("irrigation", "📋 QUEUED Weekly Schedule → Slot %d/3 (%d zones will run when idle)",
+                                 pos + 1, enabled_count);
+                      } else {
+                        ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Weekly Schedule will NOT run!");
+                      }
+                    } else {
+                      ESP_LOGI("irrigation", "▶️ STARTING Weekly Schedule immediately (system idle)");
+                      // Start immediately
+                      id(pending_normal_start) = true;
+                      id(normal_start_attempts) = 0;
+                      id(normal_last_attempt_ms) = 0;
+                    }
 
 interval:
   - interval: 500ms
@@ -1602,7 +1895,7 @@ interval:
               static int last_logged_zone = -1;
               static bool last_logged_mv_state = false;
               if (zone != last_logged_zone || zone_mv_enabled != last_logged_mv_state) {
-                ESP_LOGD("irrigation", "Zone %d active - MV for this zone: %s", 
+                ESP_LOGD("irrigation", "Zone %d active - MV for this zone: %s",
                          zone + 1, zone_mv_enabled ? "ENABLED" : "DISABLED");
                 last_logged_zone = zone;
                 last_logged_mv_state = zone_mv_enabled;
@@ -1616,7 +1909,7 @@ interval:
               id(master_valve_relay).turn_on();
               if (any_zone_active) {
                 auto active = id($devicename1).active_valve();
-                ESP_LOGI("irrigation", "✅ Master Valve OPENED (Zone %d active, MV enabled for this zone)", 
+                ESP_LOGI("irrigation", "✅ Master Valve OPENED (Zone %d active, MV enabled for this zone)",
                          active.value() + 1);
               }
             } else if (!master_should_be_on && master_is_on) {
@@ -1645,7 +1938,7 @@ interval:
           // 1. Cycle & soak is active (total_duration > 0)
           // 2. Not finished yet (elapsed < total)
           // 3. NOT paused
-          if (id(cycle_soak_total_duration) > 0 && 
+          if (id(cycle_soak_total_duration) > 0 &&
               id(cycle_soak_elapsed_time) < id(cycle_soak_total_duration) &&
               !id(is_paused)) {
             
@@ -1666,7 +1959,7 @@ interval:
               static int log_counter = 0;
               log_counter++;
               if (log_counter >= 5) {  // Every 10 seconds (5 * 2s intervals)
-                ESP_LOGD("irrigation", "Progress: %d/%d sec (valve=%d, soaking=%d)", 
+                ESP_LOGD("irrigation", "Progress: %d/%d sec (valve=%d, soaking=%d)",
                          id(cycle_soak_elapsed_time), id(cycle_soak_total_duration),
                          valve_active, is_soaking);
                 log_counter = 0;
@@ -1825,7 +2118,7 @@ interval:
 ###############################################
 # Text sensors with general information
 ###############################################
-text_sensor: 
+text_sensor:
   - platform: version
     name: $esphome_name ESPHome Version
     hide_timestamp: false
@@ -1891,7 +2184,7 @@ text_sensor:
       if (hour_12 == 0) hour_12 = 12;
       
       char buffer[50];
-      sprintf(buffer, "%s %d/%d/%d %d:%02d %s", 
+      sprintf(buffer, "%s %d/%d/%d %d:%02d %s",
               days[day_index], time.day_of_month, time.month, time.year,
               hour_12, time.minute, am_pm.c_str());
       return {std::string(buffer)};
@@ -1974,7 +2267,7 @@ text_sensor:
       std::string am_pm = id(schedule_am_pm).current_option();
       
       char buffer[150];
-      sprintf(buffer, "✓ Active: %s @ %d:%02d %s (All enabled zones)", 
+      sprintf(buffer, "✓ Active: %s @ %d:%02d %s (All enabled zones)",
               days.c_str(), hour, minute, am_pm.c_str());
       return {std::string(buffer)};
 
@@ -1996,7 +2289,7 @@ text_sensor:
       int hour = id(program_a_start_hour);
       std::string am_pm = (id(program_a_am_pm) == 0) ? "AM" : "PM";
       
-      return {"Enabled - " + schedule + " at " + std::to_string(hour) + ":" + 
+      return {"Enabled - " + schedule + " at " + std::to_string(hour) + ":" +
               (id(program_a_start_minute) < 10 ? "0" : "") + std::to_string(id(program_a_start_minute)) + " " + am_pm};
 
   - platform: template
@@ -2016,7 +2309,7 @@ text_sensor:
       int hour = id(program_b_start_hour);
       std::string am_pm = (id(program_b_am_pm) == 0) ? "AM" : "PM";
       
-      return {"Enabled - " + schedule + " at " + std::to_string(hour) + ":" + 
+      return {"Enabled - " + schedule + " at " + std::to_string(hour) + ":" +
               (id(program_b_start_minute) < 10 ? "0" : "") + std::to_string(id(program_b_start_minute)) + " " + am_pm};
 
   - platform: template
@@ -2036,7 +2329,7 @@ text_sensor:
       int hour = id(program_c_start_hour);
       std::string am_pm = (id(program_c_am_pm) == 0) ? "AM" : "PM";
       
-      return {"Enabled - " + schedule + " at " + std::to_string(hour) + ":" + 
+      return {"Enabled - " + schedule + " at " + std::to_string(hour) + ":" +
               (id(program_c_start_minute) < 10 ? "0" : "") + std::to_string(id(program_c_start_minute)) + " " + am_pm};
 
 # Vacation Mode Status
@@ -2119,8 +2412,8 @@ text_sensor:
 
 # Weather state from Home Assistant
   - platform: homeassistant
-    id: weather_condition_raw
-    entity_id: weather.home
+    id: weather_forecast_home
+    entity_id: weather.forecast_home
     internal: true
     on_value:
       then:
@@ -2139,7 +2432,7 @@ text_sensor:
                 id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (86400 * 2); // 2 day delay
                 id(rain_delay_days) = 2;
                 ESP_LOGI("irrigation", "Auto rain delay activated immediately - weather changed to %s", weather.c_str());
-              } 
+              }
               // Clear rain delay if weather improves
               else if (weather == "sunny" || weather == "clear" || weather == "partlycloudy" || weather == "cloudy") {
                 if (id(rain_delay_end_time) > id(homeassistant_time).now().timestamp) {
@@ -2211,10 +2504,10 @@ text_sensor:
     name: "Weather Condition"
     icon: "mdi:weather-partly-cloudy"
     lambda: |-
-      if (id(weather_condition_raw).state.empty() || id(weather_condition_raw).state == "unknown" || id(weather_condition_raw).state == "unavailable") {
+      if (id(weather_forecast_home).state.empty() || id(weather_forecast_home).state == "unknown" || id(weather_forecast_home).state == "unavailable") {
         return {"clear"};  // Default to clear if no data
       }
-      return id(weather_condition_raw).state;
+      return id(weather_forecast_home).state;
 
 
 # Next scheduled watering day
@@ -2256,8 +2549,8 @@ text_sensor:
         // Check if a valve is currently watering
         if (id($devicename1).active_valve().has_value()) {
           int valve = id($devicename1).active_valve().value();
-          return {"Zone " + std::to_string(valve + 1) + " - Cycle " + 
-                  std::to_string(id(current_cycle)) + "/" + 
+          return {"Zone " + std::to_string(valve + 1) + " - Cycle " +
+                  std::to_string(id(current_cycle)) + "/" +
                   std::to_string(id(total_cycles)) + " - Watering"};
         } else {
           // No valve active but we're tracking - must be soaking
@@ -2266,8 +2559,8 @@ text_sensor:
             int countdown_min = countdown_sec / 60;
             int countdown_sec_remaining = countdown_sec % 60;
             
-            return {"Zone " + std::to_string(id(active_zone_number) + 1) + 
-                    " - Soaking (" + std::to_string(countdown_min) + "m " + 
+            return {"Zone " + std::to_string(id(active_zone_number) + 1) +
+                    " - Soaking (" + std::to_string(countdown_min) + "m " +
                     std::to_string(countdown_sec_remaining) + "s remaining)"};
           }
         }
@@ -2465,22 +2758,47 @@ text_sensor:
         return {std::to_string(minutes) + " minutes ago"};
       }
 
+  # Queue Status Display (Hunter Pro-C style)
+  - platform: template
+    id: queue_status_display
+    name: "Queue Status"
+    icon: "mdi:format-list-numbered"
+    update_interval: 2s
+    lambda: |-
+      if (id(queue_count) == 0) {
+        return {"Empty (0/3)"};
+      }
+      
+      std::string result = std::to_string(id(queue_count)) + "/3: ";
+      for (int i = 0; i < id(queue_count) && i < 3; i++) {
+        if (i > 0) result += ", ";
+        int type = id(queue_types)[i];
+        if (type == 1) {
+          // Program
+          result += "Prg " + std::string(1, 'A' + id(queue_programs)[i] - 1);
+        } else if (type == 2) {
+          // Zone
+          result += "Zone " + std::to_string(id(queue_zones)[i] + 1);
+        }
+      }
+      return {result};
+
 sensor:
   # Uptime sensor
   - platform: uptime
     name: $upper_devicename1 Uptime
-    internal: true    
+    internal: true
 
   # Internal sensors from Home Assistant (no template.publish here)
   - platform: homeassistant
     id: ha_temperature
-    entity_id: weather.home
+    entity_id: weather.forecast_home
     attribute: temperature
     internal: true
 
   - platform: homeassistant
     id: ha_humidity
-    entity_id: weather.home
+    entity_id: weather.forecast_home
     attribute: humidity
     internal: true
 
@@ -2515,7 +2833,7 @@ sensor:
     name: "Rain Delay Days Remaining"
     icon: "mdi:timer-sand"
     unit_of_measurement: "days"
-    accuracy_decimals: 0    
+    accuracy_decimals: 0
     update_interval: 3600s
     lambda: |-
       if (id(rain_delay_end_time) == 0) return 0;
@@ -2539,8 +2857,8 @@ sensor:
       return id($devicename1).multiplier();
 
 ###############################################
-# Configuration to set multiplier via number 
-############################################### 
+# Configuration to set multiplier via number
+###############################################
 number:
   # Manual multiplier override
   - platform: template
@@ -2588,7 +2906,7 @@ number:
     mode: slider
     unit_of_measurement: "min"
     optimistic: true
-    restore_value: true    
+    restore_value: true
 
 # Schedule start hour (12-hour format)
   - platform: template
@@ -2602,7 +2920,7 @@ number:
     mode: box
     unit_of_measurement: "h"
     optimistic: true
-    restore_value: true  
+    restore_value: true
 
 # Schedule start minute
   - platform: template
@@ -3093,24 +3411,27 @@ script:
             - delay: 250ms
       - script.execute: drain_queue
 
-  # Drain queued scheduled start once controller becomes idle
+  # Drain queued items from 3-item queue (Hunter Pro-C style)
   - id: drain_queue
     mode: restart
     then:
       - lambda: |-
-          // Empty?
-          if (id(queued_type) == 0) {
-            ESP_LOGD("irrigation", "✓ Queue empty");
+          // === 3-ITEM QUEUE DRAINING SYSTEM ===
+          
+          // Check if queue is empty
+          if (id(queue_count) == 0) {
+            ESP_LOGD("irrigation", "✅ Queue empty (0/3 items)");
             return;
           }
 
-          // Hold if paused
+          // Hold queue if system is paused
           if (id(is_paused)) {
-            ESP_LOGW("irrigation", "⏸ Paused — queue held");
+            ESP_LOGW("irrigation", "⏸ PAUSED - Holding queue (%d/%d items waiting)",
+                     id(queue_count), 3);
             return;
           }
 
-          // If anything is still active/stopping, defer draining
+          // Check if system is truly idle
           const bool valve_active = id($devicename1).active_valve().has_value();
           const bool scripts_running =
               id(run_zone_with_cycles).is_running() ||
@@ -3119,60 +3440,80 @@ script:
           const bool soaking = id(cycle_soak_is_soaking);
 
           if (valve_active || scripts_running || soaking || id(irrigation_busy)) {
-            ESP_LOGI("irrigation", "⏳ Not idle yet — will drain when clear (type=%d)", id(queued_type));
-            // Kick the idle-waiter (safe to call repeatedly; mode=restart)
+            ESP_LOGI("irrigation", "⏳ NOT IDLE - Queue waiting (%d/%d) | valve=%d script=%d soak=%d busy=%d",
+                     id(queue_count), 3, valve_active, scripts_running, soaking, id(irrigation_busy));
             id(wait_until_idle_then_drain).execute();
             return;
           }
 
-          ESP_LOGI("irrigation", "→ Draining queue now (type=%d)", id(queued_type));
-
-      # --- TYPE 3: Normal full cycle ---
-      - if:
-          condition:
-            lambda: "return id(queued_type) == 3;"
-          then:
-            - lambda: |-
-                id(queued_type) = 0;
-                id(irrigation_busy) = true;
-                id(in_program_run) = false;
-                ESP_LOGI("irrigation", "▶ Starting queued NORMAL full cycle");
-            - sprinkler.start_full_cycle: $devicename1
-
-      # --- TYPE 1: Program ---
-      - if:
-          condition:
-            lambda: "return id(queued_type) == 1;"
-          then:
-            - lambda: |-
-                const int p = id(queued_program);
-                id(irrigation_busy) = true;
-                id(in_program_run) = true;
-                id(queued_type) = 0;
-                id(queued_program) = 0;
-                ESP_LOGI("irrigation", "▶ Starting queued Program %c", 'A' + p - 1);
-                id(run_program).execute(p);
-
-      # --- TYPE 2: Zone ---
-      - if:
-          condition:
-            lambda: "return id(queued_type) == 2;"
-          then:
-            - lambda: |-
-                const int z = id(queued_zone);
-                const int d = id(queued_zone_duration);
-                const bool ad = id(queued_zone_add_delay);
-
-                id(irrigation_busy) = true;
-                id(in_program_run) = false;
-
-                id(queued_type) = 0;
-                id(queued_zone) = 0;
-                id(queued_zone_duration) = 0;
-                id(queued_zone_add_delay) = false;
-
-                ESP_LOGI("irrigation", "▶ Starting queued Zone %d", z + 1);
-                id(run_zone_with_cycles).execute(z, d, ad, false);
+          // === DRAIN FIRST ITEM FROM QUEUE ===
+          int type = id(queue_types)[0];
+          int program = id(queue_programs)[0];
+          int zone = id(queue_zones)[0];
+          int duration = id(queue_durations)[0];
+          bool add_delay = id(queue_add_delays)[0];
+          
+          // Build queue contents for logging
+          std::string queue_contents = "";
+          for (int i = 0; i < id(queue_count) && i < 3; i++) {
+            if (i > 0) queue_contents += ", ";
+            if (id(queue_types)[i] == 1) {
+              queue_contents += "Prg";
+              queue_contents += (char)('A' + id(queue_programs)[i] - 1);
+            } else if (id(queue_types)[i] == 2) {
+              queue_contents += "Z";
+              queue_contents += std::to_string(id(queue_zones)[i] + 1);
+            } else if (id(queue_types)[i] == 3) {
+              queue_contents += "Weekly";
+            }
+          }
+          
+          ESP_LOGI("irrigation", "📤 DRAINING queue [%s] → Starting item 1/%d",
+                   queue_contents.c_str(), id(queue_count));
+          
+          // Shift queue forward (remove first item)
+          for (int i = 0; i < 2; i++) {
+            id(queue_types)[i] = id(queue_types)[i + 1];
+            id(queue_programs)[i] = id(queue_programs)[i + 1];
+            id(queue_zones)[i] = id(queue_zones)[i + 1];
+            id(queue_durations)[i] = id(queue_durations)[i + 1];
+            id(queue_add_delays)[i] = id(queue_add_delays)[i + 1];
+          }
+          
+          // Clear last slot
+          id(queue_types)[2] = 0;
+          id(queue_programs)[2] = 0;
+          id(queue_zones)[2] = 0;
+          id(queue_durations)[2] = 0;
+          id(queue_add_delays)[2] = false;
+          
+          id(queue_count)--;
+          
+          // Start the appropriate item type
+          if (type == 1) {
+            // PROGRAM
+            ESP_LOGI("irrigation", "▶️ STARTING queued Program %c | Queue now: %d/3 items",
+                     'A' + program - 1, id(queue_count));
+            id(irrigation_busy) = true;
+            id(in_program_run) = true;
+            id(run_program).execute(program);
+            
+          } else if (type == 2) {
+            // ZONE
+            ESP_LOGI("irrigation", "▶️ STARTING queued Zone %d (%ds) | Queue now: %d/3 items",
+                     zone + 1, duration, id(queue_count));
+            id(irrigation_busy) = true;
+            id(in_program_run) = false;
+            id(run_zone_with_cycles).execute(zone, duration, add_delay, false);
+            
+          } else if (type == 3) {
+            // FULL CYCLE (Weekly Schedule)
+            ESP_LOGI("irrigation", "▶️ STARTING queued Weekly Schedule (Full Cycle) | Queue now: %d/3 items",
+                     id(queue_count));
+            id(pending_normal_start) = true;
+            id(normal_start_attempts) = 0;
+            id(normal_last_attempt_ms) = 0;
+          }
 
   # Run all zones in normal mode – production safe
   - id: run_all_zones_normal_script
@@ -3208,32 +3549,48 @@ script:
       allow_queue: bool
     then:
       - lambda: |-
+          // Check if paused
           if (id(is_paused)) {
-            ESP_LOGW("irrigation", "Paused - cannot start Program %c", 'A' + program - 1);
+            ESP_LOGW("irrigation", "⏸ Program %c BLOCKED - system paused", 'A' + program - 1);
             return;
           }
 
-          if (id(irrigation_busy) || id($devicename1).active_valve().has_value()) {
+          bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
+          
+          if (busy) {
             if (allow_queue) {
-              // Only queue if queue is empty AND it's a PROGRAM request
-              if (id(queued_type) == 0) {
-                id(queued_type) = 1;
-                id(queued_program) = program;
-                ESP_LOGI("irrigation", "Queued scheduled Program %c (one program already running)", 'A' + program - 1);
-              } else if (id(queued_type) == 1) {
-                // Queue already has a program - REPLACE it with this one
-                ESP_LOGI("irrigation", "Replacing queued Program %c with Program %c", 'A' + id(queued_program) - 1, 'A' + program - 1);
-                id(queued_program) = program;
+              // === 3-ITEM QUEUE SYSTEM ===
+              if (id(queue_count) < 3) {
+                int pos = id(queue_count);
+                id(queue_types)[pos] = 1;  // 1 = Program
+                id(queue_programs)[pos] = program;
+                id(queue_zones)[pos] = 0;
+                id(queue_durations)[pos] = 0;
+                id(queue_add_delays)[pos] = false;
+                id(queue_count)++;
+                
+                // Build queue status for logging
+                std::string q_status = "";
+                for (int i = 0; i < id(queue_count); i++) {
+                  if (i > 0) q_status += ", ";
+                  if (id(queue_types)[i] == 1) q_status += "Prg" + std::string(1, 'A' + id(queue_programs)[i] - 1);
+                  else if (id(queue_types)[i] == 2) q_status += "Z" + std::to_string(id(queue_zones)[i] + 1);
+                  else if (id(queue_types)[i] == 3) q_status += "Weekly";
+                }
+                
+                ESP_LOGI("irrigation", "📋 QUEUED Program %c → Slot %d/3 | Queue: [%s]",
+                         'A' + program - 1, pos + 1, q_status.c_str());
               } else {
-                // Queue has a zone - don't allow program to override zone
-                ESP_LOGW("irrigation", "Queue already has a zone - cannot queue Program %c", 'A' + program - 1);
+                ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Program %c will NOT run!", 'A' + program - 1);
               }
             } else {
-              ESP_LOGW("irrigation", "Busy - manual Program %c start blocked", 'A' + program - 1);
+              ESP_LOGW("irrigation", "🚫 BUSY - Manual Program %c blocked", 'A' + program - 1);
             }
             return;
           }
-          // Not busy - start immediately
+          
+          // System is idle - start immediately
+          ESP_LOGI("irrigation", "▶️ STARTING Program %c immediately (system idle)", 'A' + program - 1);
           id(irrigation_busy) = true;
           id(in_program_run) = true;
           id(run_program).execute(program);
@@ -3248,31 +3605,85 @@ script:
       allow_queue: bool
     then:
       - lambda: |-
-          if (id(is_paused)) {
-            ESP_LOGW("irrigation", "Paused - cannot start Zone %d", zone + 1);
+          // CRITICAL: Check if irrigation system is enabled
+          if (!id(irrigation_system_enable).state) {
+            ESP_LOGW("irrigation", "🚫 Zone %d BLOCKED - Irrigation system is DISABLED", zone + 1);
             return;
+          }
+          
+          if (id(is_paused)) {
+            ESP_LOGW("irrigation", "⏸ Paused - cannot start Zone %d", zone + 1);
+            return;
+          }
+
+          // CRITICAL: Check if zone is enabled
+          bool zone_enabled = false;
+          switch(zone) {
+            case 0: zone_enabled = id(zone1_enable).state; break;
+            case 1: zone_enabled = id(zone2_enable).state; break;
+            case 2: zone_enabled = id(zone3_enable).state; break;
+            case 3: zone_enabled = id(zone4_enable).state; break;
+            case 4: zone_enabled = id(zone5_enable).state; break;
+            case 5: zone_enabled = id(zone6_enable).state; break;
+            case 6: zone_enabled = id(zone7_enable).state; break;
+            case 7: zone_enabled = id(zone8_enable).state; break;
+          }
+          if (!zone_enabled) {
+            ESP_LOGW("irrigation", "🚫 Zone %d is DISABLED - will not run", zone + 1);
+            return;
+          }
+          ESP_LOGI("irrigation", "✓ Zone %d is ENABLED - proceeding", zone + 1);
+
+          // CRITICAL: Check weather for ALL zone requests (unless override active)
+          if (!id(manual_weather_override)) {
+            std::string weather = id(weather_forecast_home).state;
+            if (!weather.empty() && weather != "unknown" && weather != "unavailable") {
+              if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
+                ESP_LOGW("irrigation", "⛈️ Zone %d BLOCKED - Bad weather: %s (Enable Weather Override to force)", 
+                         zone + 1, weather.c_str());
+                return;
+              }
+            }
+            ESP_LOGI("irrigation", "☀️ Weather check PASSED for Zone %d", zone + 1);
+          } else {
+            ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Skipping weather check for Zone %d", zone + 1);
+          }
+
+          // CRITICAL: Check time restriction (for manual runs only)
+          if (!allow_queue) {
+            if (id(is_time_restricted)) {
+              ESP_LOGW("irrigation", "⏰ Zone %d blocked - time restriction active", zone + 1);
+              return;
+            }
+            ESP_LOGI("irrigation", "✓ Time restriction check PASSED for Zone %d", zone + 1);
           }
 
           if (id(irrigation_busy) || id($devicename1).active_valve().has_value()) {
             if (allow_queue) {
-              if (id(queued_type) == 0) {
-                id(queued_type) = 2;
-                id(queued_zone) = zone;
-                id(queued_zone_duration) = duration;
-                id(queued_zone_add_delay) = add_delay;
-                ESP_LOGI("irrigation", "Queued scheduled Zone %d", zone + 1);
+              // 3-item queue
+              if (id(queue_count) < 3) {
+                int pos = id(queue_count);
+                id(queue_types)[pos] = 2;  // 2 = Zone
+                id(queue_programs)[pos] = 0;
+                id(queue_zones)[pos] = zone;
+                id(queue_durations)[pos] = duration;
+                id(queue_add_delays)[pos] = add_delay;
+                id(queue_count)++;
+                ESP_LOGI("irrigation", "📋 Queued Zone %d in slot %d/3 (%d items queued)",
+                         zone + 1, pos + 1, id(queue_count));
               } else {
-                ESP_LOGI("irrigation", "Queue already has an item - ignoring additional scheduled trigger");
+                ESP_LOGW("irrigation", "⚠️ Queue FULL (3/3) - Zone %d will NOT run!", zone + 1);
               }
             } else {
-              ESP_LOGW("irrigation", "Busy - manual Zone %d start blocked", zone + 1);
+              ESP_LOGW("irrigation", "🚫 Busy - manual Zone %d start blocked", zone + 1);
             }
             return;
           }
 
+          ESP_LOGI("irrigation", "▶️ Starting Zone %d immediately (system idle)", zone + 1);
           id(irrigation_busy) = true;
           id(in_program_run) = false;
-          id(run_zone_with_cycles).execute(zone, duration, add_delay, false); 
+          id(run_zone_with_cycles).execute(zone, duration, add_delay, false);
 
   # Handle cycle & soak for a zone with station delay
   - id: run_zone_with_cycles
@@ -3287,17 +3698,19 @@ script:
           ESP_LOGI("irrigation", "🚀 run_zone_with_cycles STARTED - mode should be SINGLE (not restart)");
           id(irrigation_busy) = true;
           
-          ESP_LOGI("irrigation", "Starting zone %d (force_normal=%d, cycle_soak_switch=%d)", 
-                   zone, force_normal, id(cycle_soak_switch).state);
-          
-          // Decide mode and apply multiplier
+          // Get multiplier first
           float multiplier = id($devicename1).multiplier();
+          
+          ESP_LOGI("irrigation", "🌊 ZONE %d START | Mode: %s | Duration: %ds | Multiplier: %.2f",
+                   zone + 1,
+                   (force_normal || !id(cycle_soak_switch).state) ? "NORMAL" : "CYCLE&SOAK",
+                   duration, multiplier);
           
           if (force_normal || !id(cycle_soak_switch).state) {
             // NORMAL MODE
             int adjusted_duration = (int)(duration * multiplier);
             
-            ESP_LOGI("irrigation", "==> NORMAL MODE - running %d seconds (base=%d, multiplier=%.2f)", 
+            ESP_LOGI("irrigation", "==> NORMAL MODE - running %d seconds (base=%d, multiplier=%.2f)",
                      adjusted_duration, duration, multiplier);
             
             id(cycle_soak_total_duration) = 0;
@@ -3305,6 +3718,27 @@ script:
             id(active_zone_number) = -1;
             id(total_cycles) = 0;
             id(current_cycle) = 0;
+            
+            // CRITICAL: Final zone enable check before relay activation
+            bool zone_enabled_now = false;
+            switch(zone) {
+              case 0: zone_enabled_now = id(zone1_enable).state; break;
+              case 1: zone_enabled_now = id(zone2_enable).state; break;
+              case 2: zone_enabled_now = id(zone3_enable).state; break;
+              case 3: zone_enabled_now = id(zone4_enable).state; break;
+              case 4: zone_enabled_now = id(zone5_enable).state; break;
+              case 5: zone_enabled_now = id(zone6_enable).state; break;
+              case 6: zone_enabled_now = id(zone7_enable).state; break;
+              case 7: zone_enabled_now = id(zone8_enable).state; break;
+            }
+            
+            if (!zone_enabled_now) {
+              ESP_LOGW("irrigation", "🚫 RELAY BLOCKED: Zone %d disabled at activation", zone + 1);
+              id(irrigation_busy) = false;
+              return;
+            }
+            
+            ESP_LOGI("irrigation", "✅ Zone %d relay activation allowed", zone + 1);
             
             // Start valve
             id($devicename1).start_single_valve(zone, adjusted_duration);
@@ -3317,7 +3751,7 @@ script:
             int cycles = (total_duration + cycle_seconds - 1) / cycle_seconds;
             int total_time = (cycles * cycle_seconds) + ((cycles - 1) * soak_seconds);
             
-            ESP_LOGI("irrigation", "==> CYCLE & SOAK MODE - %d cycles of %d sec (NO multiplier) + %d sec soak", 
+            ESP_LOGI("irrigation", "==> CYCLE & SOAK MODE - %d cycles of %d sec (NO multiplier) + %d sec soak",
                      cycles, cycle_seconds, soak_seconds);
             
             id(cycle_soak_total_duration) = total_time;
@@ -3366,7 +3800,7 @@ script:
                       int soak_sec = soak_min * 60;
                       int soak_ms = soak_sec * 1000;
                       id(cycle_soak_soak_end_time) = id(homeassistant_time).now().timestamp + soak_sec;
-                      ESP_LOGI("irrigation", "🌧️ SOAK START: soak_duration_minutes=%d, seconds=%d, milliseconds=%d", 
+                      ESP_LOGI("irrigation", "🌧️ SOAK START: soak_duration_minutes=%d, seconds=%d, milliseconds=%d",
                                soak_min, soak_sec, soak_ms);
                       ESP_LOGI("irrigation", "    Delay will be: %d ms (should be 600000 for 10 min)", soak_ms);
                   - delay: !lambda "return id(soak_duration_minutes) * 60 * 1000;"
@@ -3375,7 +3809,7 @@ script:
                       id(cycle_soak_is_soaking) = false;
                       id(cycle_soak_soak_end_time) = 0;
                       id(current_cycle)++;
-                      ESP_LOGI("irrigation", "✅ SOAK COMPLETE! Starting cycle %d of %d", 
+                      ESP_LOGI("irrigation", "✅ SOAK COMPLETE! Starting cycle %d of %d",
                                id(current_cycle), id(total_cycles));
                   
                   # Next cycle (no multiplier in soak mode)
@@ -3653,7 +4087,19 @@ script:
           id(in_program_run) = true;
 
       - lambda: |-
-          ESP_LOGI("irrigation", "Running Program %c", 'A' + program - 1);
+          // CRITICAL: Check weather before starting program
+          std::string weather = id(weather_forecast_home).state;
+          if (!weather.empty() && weather != "unknown" && weather != "unavailable") {
+            if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
+              ESP_LOGW("irrigation", "⛈️ Program %c BLOCKED - bad weather: %s", 'A' + program - 1, weather.c_str());
+              id(irrigation_busy) = false;
+              id(in_program_run) = false;
+              return;
+            }
+          }
+          ESP_LOGI("irrigation", "☀️ Weather check PASSED - Program %c starting", 'A' + program - 1);
+          
+          ESP_LOGI("irrigation", "🎯 PROGRAM %c STARTING | Checking zone assignments...", 'A' + program - 1);
       
       # Build list of zones for this program
       - lambda: |-
@@ -3805,9 +4251,17 @@ script:
     mode: single
     then:
       - lambda: |-
-          // If time restriction is disabled or override is active, allow watering
-          if (!id(time_restriction_switch).state || id(manual_time_restriction_override).state) {
+          // Check if time restriction is disabled
+          if (!id(time_restriction_switch).state) {
             id(is_time_restricted) = false;
+            ESP_LOGD("irrigation", "⏰ Time restriction DISABLED");
+            return;
+          }
+          
+          // Check if manual override is active
+          if (id(manual_time_restriction_override).state) {
+            id(is_time_restricted) = false;
+            ESP_LOGI("irrigation", "⏰ Time restriction OVERRIDDEN - watering allowed");
             return;
           }
           
@@ -4250,664 +4704,14 @@ select:
 ###############################################
 # Main Sprinkler Controller
 ###############################################
-sprinkler:
-  - id: $devicename1
-    main_switch:
-      name: "$dev1_what Start-Stop-Resume"
-      id: dev1_main_switch
-      internal: true
-      on_turn_off:
-        - lambda: |-
-            // Don't stop run_zone_with_cycles during cycle/soak mode with multiple cycles
-            // Only stop if we're in normal mode or if it's a manual stop
-            bool in_cycle_soak = (id(total_cycles) > 0 && id(current_cycle) > 0);
-            
-            if (!in_cycle_soak) {
-              ESP_LOGI("irrigation", "Main switch OFF - stopping run_zone_with_cycles (normal mode)");
-              id(run_zone_with_cycles).stop();
-              
-              // Reset soak countdown when stopping
-              id(cycle_soak_is_soaking) = false;
-              id(cycle_soak_soak_end_time) = 0;
-              id(soak_countdown_seconds) = 0;
-            } else {
-              ESP_LOGI("irrigation", "Main switch OFF - NOT stopping script (in cycle/soak, cycle %d/%d)", 
-                       id(current_cycle), id(total_cycles));
-            }
-            
-            if (id(is_paused)) return;
 
-            // Only clear state if not in active cycle/soak
-            if (!in_cycle_soak) {
-              id(active_zone_number) = -1;
-              id(current_cycle) = 0;
-              id(total_cycles) = 0;
-              id(cycle_soak_total_duration) = 0;
-              id(cycle_soak_elapsed_time) = 0;
-            }
-
-            if (id(irrigation_busy) && !id(in_program_run)) {
-              id(irrigation_busy) = false;
-              id(drain_queue).execute();
-            }
-
-      on_turn_on:
-        - lambda: |-
-            ESP_LOGI("irrigation", "Main switch turned ON");
-            // 🚫 do NOT read dev1_auto_advance here
-
-    auto_advance_switch:
-      name: "$dev1_what Auto Advance"
-      id: dev1_auto_advance
-      restore_mode: ALWAYS_ON
-
-    valve_open_delay: 2s 
-    valves:
-      - valve_switch: $dev1_zone1
-        enable_switch:
-          name: Enable $dev1_zone1
-          id: zone1_enable
-        run_duration_number:
-          id: "${devicename1}_1_duration"
-          name: "${dev1_zone1} Run Duration"
-          initial_value: 30
-          unit_of_measurement: $uom
-          mode: slider
-          min_value: 1
-          max_value: 60
-          step: 1
-          restore_value: true           
-        valve_switch_id: ${devicename1}_1
-        
-      - valve_switch: $dev1_zone2
-        enable_switch:
-          name: Enable $dev1_zone2
-          id: zone2_enable
-        run_duration_number:
-          id: "${devicename1}_2_duration"
-          name: "${dev1_zone2} Run Duration"
-          initial_value: 30
-          unit_of_measurement: $uom
-          mode: slider
-          min_value: 1
-          max_value: 60
-          step: 1
-          restore_value: true 
-        valve_switch_id: ${devicename1}_2
-        
-      - valve_switch: $dev1_zone3
-        enable_switch:
-          name: Enable $dev1_zone3
-          id: zone3_enable
-        run_duration_number:
-          id: "${devicename1}_3_duration"
-          name: "${dev1_zone3} Run Duration"
-          initial_value: 30
-          unit_of_measurement: $uom
-          mode: slider
-          min_value: 1
-          max_value: 60
-          step: 1
-          restore_value: true 
-        valve_switch_id: ${devicename1}_3
-        
-      - valve_switch: $dev1_zone4
-        enable_switch:
-          name: Enable $dev1_zone4
-          id: zone4_enable
-        run_duration_number:
-          id: "${devicename1}_4_duration"
-          name: "${dev1_zone4} Run Duration"
-          initial_value: 30
-          unit_of_measurement: $uom
-          mode: slider
-          min_value: 1
-          max_value: 60
-          step: 1
-          restore_value: true 
-        valve_switch_id: ${devicename1}_4
-        
-      - valve_switch: $dev1_zone5
-        enable_switch:
-          name: Enable $dev1_zone5
-          id: zone5_enable
-        run_duration_number:
-          id: "${devicename1}_5_duration"
-          name: "${dev1_zone5} Run Duration"
-          initial_value: 30
-          unit_of_measurement: $uom
-          mode: slider
-          min_value: 1
-          max_value: 60
-          step: 1
-          restore_value: true 
-        valve_switch_id: ${devicename1}_5
-        
-      - valve_switch: $dev1_zone6
-        enable_switch:
-          name: Enable $dev1_zone6
-          id: zone6_enable
-        run_duration_number:
-          id: "${devicename1}_6_duration"
-          name: "${dev1_zone6} Run Duration"
-          initial_value: 30
-          unit_of_measurement: $uom
-          mode: slider
-          min_value: 1
-          max_value: 60
-          step: 1
-          restore_value: true 
-        valve_switch_id: ${devicename1}_6
-        
-      - valve_switch: $dev1_zone7
-        enable_switch:
-          name: Enable $dev1_zone7
-          id: zone7_enable
-        run_duration_number:
-          id: "${devicename1}_7_duration"
-          name: "${dev1_zone7} Run Duration"
-          initial_value: 30
-          unit_of_measurement: $uom
-          mode: slider
-          min_value: 1
-          max_value: 60
-          step: 1
-          restore_value: true 
-        valve_switch_id: ${devicename1}_7
-        
-      - valve_switch: $dev1_zone8
-        enable_switch:
-          name: Enable $dev1_zone8
-          id: zone8_enable
-        run_duration_number:
-          id: "${devicename1}_8_duration"
-          name: "${dev1_zone8} Run Duration"
-          initial_value: 30
-          unit_of_measurement: $uom
-          mode: slider
-          min_value: 1
-          max_value: 60
-          step: 1
-          restore_value: true 
-        valve_switch_id: ${devicename1}_8
-
-###############################################
-# Buttons for Control
-###############################################
-button:
+switch:
    # Restart button
   - platform: restart
     name: "Restart $esphome_comment"
     icon: "mdi:restart"
 
   # Manual Master Valve Test Button
-  - platform: template
-    name: "Manual Master Valve Test"
-    icon: "mdi:valve"
-    on_press:
-      then:
-        - if:
-            condition:
-              lambda: 'return id(master_valve_enabled);'
-            then:
-              - lambda: |-
-                  ESP_LOGI("irrigation", "========================================");
-                  ESP_LOGI("irrigation", "MANUAL MASTER VALVE TEST");
-                  if (id(master_valve_relay).state) {
-                    ESP_LOGI("irrigation", "Closing master valve manually");
-                    id(master_valve_relay).turn_off();
-                  } else {
-                    ESP_LOGI("irrigation", "Opening master valve manually for 10 seconds");
-                    id(master_valve_relay).turn_on();
-                  }
-                  ESP_LOGI("irrigation", "========================================");
-              - delay: 10s
-              - lambda: |-
-                  if (id(master_valve_relay).state && !id($devicename1).active_valve().has_value()) {
-                    ESP_LOGI("irrigation", "Closing master valve (manual test complete, no zones active)");
-                    id(master_valve_relay).turn_off();
-                  }
-            else:
-              - logger.log: "⚠️ Master valve system is DISABLED - enable it first"
-
-  # Start All Zones - NORMAL MODE
-  - platform: template
-    id: start_all_zones_normal
-    name: "$dev1_what Start All Zones (Normal)"
-    icon: "mdi:play-circle-outline"
-    on_press:
-      then:
-        - logger.log: "═══ START ALL ZONES (NORMAL) PRESSED ═══"
-
-        - if:
-            condition:
-              switch.is_off: irrigation_system_enable
-            then:
-              - logger.log: "✗ BLOCKED: Irrigation system DISABLED"
-            else:
-              - if:
-                  condition:
-                    lambda: |-
-                      return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
-                  then:
-                    - logger.log: "✗ BLOCKED: Rain delay active"
-                  else:
-                    - lambda: |-
-                        id(pending_normal_start) = true;
-                        id(normal_start_attempts) = 0;
-                        id(normal_last_attempt_ms) = 0;
-                        ESP_LOGI(
-                          "irrigation",
-                          "Queued NORMAL start request (pending flag set)"
-                        );
-
-# Manual program run buttons
-  - platform: template
-    name: "Run Program A Now"
-    icon: "mdi:alpha-a-circle"
-    on_press:
-      then:
-        - if:
-            condition:
-              switch.is_off: irrigation_system_enable
-            then:
-              - logger.log: "Irrigation system is DISABLED"
-            else:
-              - if:
-                  condition:
-                    lambda: 'return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
-                  then:
-                    - logger.log: "Rain delay active"
-                  else:
-                    - script.execute:
-                        id: request_program_start
-                        program: 1
-                        allow_queue: true  
-                        
-  - platform: template
-    name: "Run Program B Now"
-    icon: "mdi:alpha-b-circle"
-    on_press:
-      then:
-        - if:
-            condition:
-              switch.is_off: irrigation_system_enable
-            then:
-              - logger.log: "Irrigation system is DISABLED"
-            else:
-              - if:
-                  condition:
-                    lambda: 'return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
-                  then:
-                    - logger.log: "Rain delay active"
-                  else:
-                    - script.execute:
-                        id: request_program_start
-                        program: 2
-                        allow_queue: true
-
-  - platform: template
-    name: "Run Program C Now"
-    icon: "mdi:alpha-c-circle"
-    on_press:
-      then:
-        - if:
-            condition:
-              switch.is_off: irrigation_system_enable
-            then:
-              - logger.log: "Irrigation system is DISABLED"
-            else:
-              - if:
-                  condition:
-                    lambda: 'return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
-                  then:
-                    - logger.log: "Rain delay active"
-                  else:
-                    - script.execute:
-                        id: request_program_start
-                        program: 3
-                        allow_queue: true
-
-# Pause button - Actually stops the valve
-  - platform: template
-    id: dev1_sprinkler_pause
-    name: "$dev1_what Pause"
-    icon: "mdi:pause"
-    on_press:
-      then:
-        - lambda: |-
-            // Save current state if a valve is active
-            if (id($devicename1).active_valve().has_value()) {
-              id(paused_zone) = id($devicename1).active_valve().value();
-              id(paused_cycle) = id(current_cycle);
-              id(time_remaining_when_paused) = id($devicename1).time_remaining_active_valve().value_or(0);
-              id(is_paused) = true;
-
-              // Snapshot cycle/soak state for resume
-              id(paused_total_cycles) = id(total_cycles);
-              id(paused_cycle_soak_total_duration) = id(cycle_soak_total_duration);
-              id(paused_cycle_soak_elapsed_time) = id(cycle_soak_elapsed_time);
-              id(paused_was_soaking) = false;
-              id(paused_soak_remaining_seconds) = 0;
-              
-              ESP_LOGI("irrigation", "Paused: Zone %d, Cycle %d/%d, Time remaining: %d sec, Elapsed: %d/%d sec", 
-                       id(paused_zone), id(paused_cycle), id(total_cycles), 
-                       id(time_remaining_when_paused),
-                       id(cycle_soak_elapsed_time), id(cycle_soak_total_duration));
-              
-              // ADDED: Confirm progress tracking is paused
-              ESP_LOGI("irrigation", "Progress tracking PAUSED - elapsed time frozen at %d seconds", 
-                       id(cycle_soak_elapsed_time));
-              
-            } else if (id(cycle_soak_is_soaking) && id(active_zone_number) >= 0 && id(total_cycles) > 0) {
-              id(paused_zone) = id(active_zone_number);
-              id(paused_cycle) = id(current_cycle);
-              long now = id(homeassistant_time).now().timestamp;
-              long rem = id(cycle_soak_soak_end_time) - now;
-              if (rem < 0) rem = 0;
-              id(paused_soak_remaining_seconds) = (int) rem;
-              id(time_remaining_when_paused) = 0;
-              id(paused_was_soaking) = true;
-              id(is_paused) = true;
-              id(paused_total_cycles) = id(total_cycles);
-              id(paused_cycle_soak_total_duration) = id(cycle_soak_total_duration);
-              id(paused_cycle_soak_elapsed_time) = id(cycle_soak_elapsed_time);
-              
-              ESP_LOGI("irrigation", "Paused during soak: Zone %d, Cycle %d/%d, Soak remaining: %d sec, Elapsed: %d/%d sec",
-                       id(paused_zone), id(paused_cycle), id(paused_total_cycles), 
-                       id(paused_soak_remaining_seconds),
-                       id(cycle_soak_elapsed_time), id(cycle_soak_total_duration));
-              
-              // ADDED: Confirm progress tracking is paused
-              ESP_LOGI("irrigation", "Progress tracking PAUSED during soak - elapsed time frozen at %d seconds", 
-                       id(cycle_soak_elapsed_time));
-            } else {
-              ESP_LOGI("irrigation", "Nothing active to pause");
-            }
-        - sprinkler.shutdown: $devicename1
-        - script.stop: run_zone_with_cycles
-        - script.stop: run_all_zones_cycle_soak_script
-        - script.stop: run_program
-        - text_sensor.template.publish:
-            id: dev1_valve_status
-            state: "Paused"
-
-# Resume button - Restarts from saved position
-  - platform: template
-    id: dev1_sprinkler_resume
-    name: "$dev1_what Resume"
-    icon: "mdi:play"
-    on_press:
-      then:
-        - if:
-            condition:
-              lambda: 'return id(is_paused) && id(paused_zone) >= 0;'
-            then:
-              - lambda: |-
-                  // Restore cycle/soak snapshot BEFORE mode checks
-                  id(total_cycles) = id(paused_total_cycles);
-                  id(cycle_soak_total_duration) = id(paused_cycle_soak_total_duration);
-                  id(cycle_soak_elapsed_time) = id(paused_cycle_soak_elapsed_time);
-
-                  ESP_LOGI("irrigation", "Resuming: Zone %d, Cycle %d/%d, Elapsed restored to: %d/%d sec",
-                           id(paused_zone), id(paused_cycle), id(total_cycles),
-                           id(cycle_soak_elapsed_time), id(cycle_soak_total_duration));
-                  
-                  // ADDED: Confirm progress tracking will resume
-                  ESP_LOGI("irrigation", "Progress tracking will RESUME from %d seconds", 
-                           id(cycle_soak_elapsed_time));
-
-                  id(is_paused) = false;
-                  id(active_zone_number) = id(paused_zone);
-                  id(current_cycle) = id(paused_cycle);
-
-              # If we paused while watering, restart valve for remaining time
-              - if:
-                  condition:
-                    lambda: 'return !id(paused_was_soaking);'
-                  then:
-                    - sprinkler.start_single_valve:
-                        id: $devicename1
-                        valve_number: !lambda 'return id(paused_zone);'
-                        run_duration: !lambda 'return id(time_remaining_when_paused);'
-
-              # Force Auto Advance state based on mode
-              - delay: 100ms
-              - if:
-                  condition:
-                    lambda: 'return id(total_cycles) > 0;'
-                  then:
-                    - switch.turn_off: dev1_auto_advance
-                    - logger.log: "Auto Advance forced OFF (Cycle & Soak mode)"
-                    - script.execute:
-                        id: continue_cycle_soak_after_resume
-                        zone: !lambda 'return id(paused_zone);'
-                        start_cycle: !lambda 'return id(current_cycle);'
-                        total: !lambda 'return id(total_cycles);'
-                        was_soaking: !lambda 'return id(paused_was_soaking);'
-                        soak_remaining: !lambda 'return id(paused_soak_remaining_seconds);'
-                        water_remaining: !lambda 'return id(time_remaining_when_paused);'
-                  else:
-                    - switch.turn_on: dev1_auto_advance
-                    - logger.log: "Auto Advance ON (Normal mode)"
-
-              - text_sensor.template.publish:
-                  id: dev1_valve_status
-                  state: "Resumed"
-
-              # Clear pause flags for normal mode; cycle/soak cleanup happens in continuation script
-              - if:
-                  condition:
-                    lambda: 'return id(total_cycles) <= 0;'
-                  then:
-                    - lambda: |-
-                        id(paused_zone) = -1;
-                        id(paused_cycle) = 0;
-                        id(time_remaining_when_paused) = 0;
-                        id(paused_was_soaking) = false;
-                        id(paused_soak_remaining_seconds) = 0;
-                        id(paused_total_cycles) = 0;
-                        id(paused_cycle_soak_total_duration) = 0;
-                        id(paused_cycle_soak_elapsed_time) = 0;
-
-            else:
-              - logger.log: "Nothing to resume - not paused or no saved state"
-
-  - platform: template
-    id: dev1_sprinkler_stop
-    name: "$dev1_what Stop"
-    icon: "mdi:stop"
-    on_press:
-      then:
-        - logger.log: "═══ STOP BUTTON PRESSED ═══"
-
-        # Cancel pending normal-mode retry worker (but preserve queued programs/zones)
-        - lambda: |-
-            id(pending_normal_start) = false;
-            id(normal_start_attempts) = 0;
-            id(normal_last_attempt_ms) = 0;
-
-            // Clear ONLY queued NORMAL start (type 3). Preserve Program (1) and Zone (2).
-            if (id(queued_type) == 3) {
-              ESP_LOGI("irrigation", "Clearing queued NORMAL request (type 3) on STOP");
-              id(queued_type) = 0;
-            }
-
-            ESP_LOGI(
-              "irrigation",
-              "⏹ STOPPING: Zone=%d, Cycle=%d/%d, queued_type=%d",
-              id(active_zone_number),
-              id(current_cycle),
-              id(total_cycles),
-              id(queued_type)
-            );
-
-            // Keep busy flag SET during shutdown/cleanup
-            id(irrigation_busy) = true;
-
-        # Stop sprinkler controller (shutdown respects internal stop delays)
-        - sprinkler.shutdown: $devicename1
-
-        # Stop helper scripts
-        - script.stop: run_zone_with_cycles
-        - script.stop: run_all_zones_cycle_soak_script
-        - script.stop: run_program
-        - script.stop: run_all_zones_normal_script
-        - script.stop: wait_until_idle_then_drain
-
-        # Clear run-state variables (do NOT clear queued_program/queued_zone)
-        - lambda: |-
-            ESP_LOGI("irrigation", "🧹 Clearing run state variables");
-            id(active_zone_number) = -1;
-            id(current_cycle) = 0;
-            id(total_cycles) = 0;
-            id(cycle_soak_total_duration) = 0;
-            id(cycle_soak_elapsed_time) = 0;
-            id(is_paused) = false;
-            id(paused_zone) = -1;
-            id(paused_cycle) = 0;
-            id(time_remaining_when_paused) = 0;
-            id(in_program_run) = false;
-
-        - text_sensor.template.publish:
-            id: dev1_valve_status
-            state: "Stopped"
-
-        # Give the sprinkler component time to finish its internal shutdown window
-        - delay: 8s
-
-        # Now mark idle
-        - lambda: |-
-            ESP_LOGI("irrigation", "✓ Stop cleanup complete (idle)");
-            id(irrigation_busy) = false;
-
-        # If a Program (type 1) or Zone (type 2) is queued, run it now
-        - if:
-            condition:
-              lambda: |-
-                return id(queued_type) != 0;
-            then:
-              - logger.log: "▶ Starting queued request after STOP"
-              - script.execute: drain_queue
-
-# Start All Zones - CYCLE & SOAK MODE
-  - platform: template
-    id: start_all_zones_cycle_soak
-    name: "$dev1_what Start All Zones (Cycle & Soak)"
-    icon: "mdi:water-sync"
-    on_press:
-      then:
-        - if:
-            condition:
-              switch.is_off: irrigation_system_enable
-            then:
-              - logger.log: "Irrigation system is DISABLED - watering blocked"
-            else:
-              - if:
-                  condition:
-                    lambda: 'return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
-                  then:
-                    - logger.log: "Rain delay active - watering blocked"
-                  else:
-                    # Turn ON cycle and soak mode
-                    - switch.turn_on: cycle_soak_switch
-                    - logger.log: "Cycle & Soak Mode enabled - starting all zones"
-                    - script.execute: run_all_zones_cycle_soak_script
-
-  - platform: template
-    name: "$dev1_zone1 Quick Run"
-    icon: "mdi:play-speed"
-    on_press:
-      then:
-        - script.execute:
-            id: request_zone_start
-            zone: 0
-            duration: !lambda "return id(quick_run_duration).state * 60;"
-            add_delay: true
-            allow_queue: true
-
-  - platform: template
-    name: "$dev1_zone2 Quick Run"
-    icon: "mdi:play-speed"
-    on_press:
-      then:
-        - script.execute:
-            id: request_zone_start
-            zone: 1
-            duration: !lambda "return id(quick_run_duration).state * 60;"
-            add_delay: true
-            allow_queue: true
-  - platform: template
-    name: "$dev1_zone3 Quick Run"
-    icon: "mdi:play-speed"
-    on_press:
-      then:
-        - script.execute:
-            id: request_zone_start
-            zone: 2
-            duration: !lambda "return id(quick_run_duration).state * 60;"
-            add_delay: true
-            allow_queue: true
-  - platform: template
-    name: "$dev1_zone4 Quick Run"
-    icon: "mdi:play-speed"
-    on_press:
-      then:
-        - script.execute:
-            id: request_zone_start
-            zone: 3
-            duration: !lambda "return id(quick_run_duration).state * 60;"
-            add_delay: true
-            allow_queue: true
-  - platform: template
-    name: "$dev1_zone5 Quick Run"
-    icon: "mdi:play-speed"
-    on_press:
-      then:
-        - script.execute:
-            id: request_zone_start
-            zone: 4
-            duration: !lambda "return id(quick_run_duration).state * 60;"
-            add_delay: true
-            allow_queue: true
-  - platform: template
-    name: "$dev1_zone6 Quick Run"
-    icon: "mdi:play-speed"
-    on_press:
-      then:
-        - script.execute:
-            id: request_zone_start
-            zone: 5
-            duration: !lambda "return id(quick_run_duration).state * 60;"
-            add_delay: true
-            allow_queue: true
-  - platform: template
-    name: "$dev1_zone7 Quick Run"
-    icon: "mdi:play-speed"
-    on_press:
-      then:
-        - script.execute:
-            id: request_zone_start
-            zone: 6
-            duration: !lambda "return id(quick_run_duration).state * 60;"
-            add_delay: true
-            allow_queue: true
-  - platform: template
-    name: "$dev1_zone8 Quick Run"
-    icon: "mdi:play-speed"
-    on_press:
-      then:
-        - script.execute:
-            id: request_zone_start
-            zone: 7
-            duration: !lambda "return id(quick_run_duration).state * 60;"
-            add_delay: true
-            allow_queue: true
-###############################################
-# Switches
-####################################################
-switch:
-  # Weekly Schedule Days - Select which days to water (Monday to Sunday order)
   - platform: template
     name: "Schedule 1 - Monday"
     id: schedule_monday
@@ -4967,35 +4771,6 @@ switch:
   # Master Valve Enable (Optional - Hunter Pro-C Style)
   # Global enable/disable for entire master valve system
   - platform: template
-    name: "Enable Master Valve"
-    id: master_valve_enable_switch
-    icon: "mdi:valve"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
-    lambda: "return id(master_valve_enabled);"
-    turn_on_action:
-      - lambda: |-
-          id(master_valve_enabled) = true;
-          ESP_LOGI("irrigation", "========================================");
-          ESP_LOGI("irrigation", "MASTER VALVE SYSTEM ENABLED");
-          ESP_LOGI("irrigation", "Will open when zones with MV enabled run");
-          ESP_LOGI("irrigation", "Check per-zone MV settings if needed");
-          ESP_LOGI("irrigation", "========================================");
-    turn_off_action:
-      - lambda: |-
-          id(master_valve_enabled) = false;
-          // Immediately close master valve
-          if (id(master_valve_relay).state) {
-            id(master_valve_relay).turn_off();
-            ESP_LOGI("irrigation", "Master valve closed (system disabled)");
-          }
-          ESP_LOGI("irrigation", "========================================");
-          ESP_LOGI("irrigation", "MASTER VALVE SYSTEM DISABLED");
-          ESP_LOGI("irrigation", "Zones will operate without master valve");
-          ESP_LOGI("irrigation", "========================================");
-
-  # Time Restriction Override
-  - platform: template
     name: "Time Restriction Override"
     id: manual_time_restriction_override
     icon: "mdi:shield-check"
@@ -5029,14 +4804,32 @@ switch:
     turn_on_action:
       - lambda: |-
           id(manual_rain_delay_override) = true;
-          // Also clear any existing rain delay when override is enabled
-          id(rain_delay_end_time) = 0;
-          id(rain_delay_days) = 0;
-          ESP_LOGI("irrigation", "Auto rain delay disabled and cleared - manual override active");
+          ESP_LOGI("irrigation", "Manual rain delay override enabled");
     turn_off_action:
       - lambda: |-
           id(manual_rain_delay_override) = false;
-          ESP_LOGI("irrigation", "Auto rain delay enabled");
+          ESP_LOGI("irrigation", "Manual rain delay override disabled");
+
+  # Manual Weather Override - Force watering in bad weather
+  - platform: template
+    name: "Weather Override (Force Watering)"
+    id: manual_weather_override_switch
+    icon: "mdi:weather-lightning-rainy"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(manual_weather_override);"
+    turn_on_action:
+      - lambda: |-
+          id(manual_weather_override) = true;
+      - logger.log:
+          format: "⚠️ WEATHER OVERRIDE ENABLED - Will water in any weather!"
+          level: WARN
+    turn_off_action:
+      - lambda: |-
+          id(manual_weather_override) = false;
+      - logger.log:
+          format: "✓ Weather override disabled - Normal weather checks active"
+          level: INFO
 
 # Vacation Mode
   - platform: template
@@ -5180,7 +4973,7 @@ switch:
     turn_on_action:
       - lambda: "id(zone8_schedule_enabled) = true;"
     turn_off_action:
-      - lambda: "id(zone8_schedule_enabled) = false;"   
+      - lambda: "id(zone8_schedule_enabled) = false;"
 
 # Master Valve per-zone enable (Hunter Pro-C style)
 # Each zone can independently enable/disable master valve usage
@@ -5469,16 +5262,31 @@ switch:
     id: program_c_sunday
     icon: "mdi:calendar"
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
-
-####################################################
-# Hidden I/O Switches to control irrigation valve relays
-####################################################
+    restore_mode: RESTORE_DEFAULT_OFF  # USER-FACING ZONE SWITCHES (enforce all checks)
   - platform: gpio
     restore_mode: ALWAYS_OFF
     internal: true
     id: ${devicename1}_1
     on_turn_on:
+      - lambda: |-
+          // Check if irrigation system is enabled
+          if (!id(irrigation_system_enable).state) {
+            ESP_LOGW("irrigation", "🚫 Zone 1 BLOCKED - Irrigation system is DISABLED");
+            id(${devicename1}_1).turn_off();
+            return;
+          }
+          
+          // Weather check (unless override is active)
+          if (!id(manual_weather_override)) {
+            std::string w = id(weather_forecast_home).state;
+            if (!w.empty() && w != "unknown" && w != "unavailable") {
+              if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                ESP_LOGW("irrigation", "⛈️ Zone 1 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                id(${devicename1}_1).turn_off();
+                return;
+              }
+            }
+          }
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "$dev1_zone1 Active"
@@ -5504,6 +5312,25 @@ switch:
     internal: true
     id: ${devicename1}_2
     on_turn_on:
+      - lambda: |-
+          // Check if irrigation system is enabled
+          if (!id(irrigation_system_enable).state) {
+            ESP_LOGW("irrigation", "🚫 Zone 2 BLOCKED - Irrigation system is DISABLED");
+            id(${devicename1}_2).turn_off();
+            return;
+          }
+          
+          // Weather check (unless override is active)
+          if (!id(manual_weather_override)) {
+            std::string w = id(weather_forecast_home).state;
+            if (!w.empty() && w != "unknown" && w != "unavailable") {
+              if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                ESP_LOGW("irrigation", "⛈️ Zone 2 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                id(${devicename1}_2).turn_off();
+                return;
+              }
+            }
+          }
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "$dev1_zone2 Active"
@@ -5529,6 +5356,25 @@ switch:
     internal: true
     id: ${devicename1}_3
     on_turn_on:
+      - lambda: |-
+          // Check if irrigation system is enabled
+          if (!id(irrigation_system_enable).state) {
+            ESP_LOGW("irrigation", "🚫 Zone 3 BLOCKED - Irrigation system is DISABLED");
+            id(${devicename1}_3).turn_off();
+            return;
+          }
+          
+          // Weather check (unless override is active)
+          if (!id(manual_weather_override)) {
+            std::string w = id(weather_forecast_home).state;
+            if (!w.empty() && w != "unknown" && w != "unavailable") {
+              if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                ESP_LOGW("irrigation", "⛈️ Zone 3 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                id(${devicename1}_3).turn_off();
+                return;
+              }
+            }
+          }
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "$dev1_zone3 Active"
@@ -5554,6 +5400,25 @@ switch:
     internal: true
     id: ${devicename1}_4
     on_turn_on:
+      - lambda: |-
+          // Check if irrigation system is enabled
+          if (!id(irrigation_system_enable).state) {
+            ESP_LOGW("irrigation", "🚫 Zone 4 BLOCKED - Irrigation system is DISABLED");
+            id(${devicename1}_4).turn_off();
+            return;
+          }
+          
+          // Weather check (unless override is active)
+          if (!id(manual_weather_override)) {
+            std::string w = id(weather_forecast_home).state;
+            if (!w.empty() && w != "unknown" && w != "unavailable") {
+              if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                ESP_LOGW("irrigation", "⛈️ Zone 4 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                id(${devicename1}_4).turn_off();
+                return;
+              }
+            }
+          }
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "$dev1_zone4 Active"
@@ -5579,6 +5444,25 @@ switch:
     internal: true
     id: ${devicename1}_5
     on_turn_on:
+      - lambda: |-
+          // Check if irrigation system is enabled
+          if (!id(irrigation_system_enable).state) {
+            ESP_LOGW("irrigation", "🚫 Zone 5 BLOCKED - Irrigation system is DISABLED");
+            id(${devicename1}_5).turn_off();
+            return;
+          }
+          
+          // Weather check (unless override is active)
+          if (!id(manual_weather_override)) {
+            std::string w = id(weather_forecast_home).state;
+            if (!w.empty() && w != "unknown" && w != "unavailable") {
+              if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                ESP_LOGW("irrigation", "⛈️ Zone 5 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                id(${devicename1}_5).turn_off();
+                return;
+              }
+            }
+          }
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "$dev1_zone5 Active"
@@ -5604,6 +5488,25 @@ switch:
     internal: true
     id: ${devicename1}_6
     on_turn_on:
+      - lambda: |-
+          // Check if irrigation system is enabled
+          if (!id(irrigation_system_enable).state) {
+            ESP_LOGW("irrigation", "🚫 Zone 6 BLOCKED - Irrigation system is DISABLED");
+            id(${devicename1}_6).turn_off();
+            return;
+          }
+          
+          // Weather check (unless override is active)
+          if (!id(manual_weather_override)) {
+            std::string w = id(weather_forecast_home).state;
+            if (!w.empty() && w != "unknown" && w != "unavailable") {
+              if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                ESP_LOGW("irrigation", "⛈️ Zone 6 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                id(${devicename1}_6).turn_off();
+                return;
+              }
+            }
+          }
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "$dev1_zone6 Active"
@@ -5629,6 +5532,25 @@ switch:
     internal: true
     id: ${devicename1}_7
     on_turn_on:
+      - lambda: |-
+          // Check if irrigation system is enabled
+          if (!id(irrigation_system_enable).state) {
+            ESP_LOGW("irrigation", "🚫 Zone 7 BLOCKED - Irrigation system is DISABLED");
+            id(${devicename1}_7).turn_off();
+            return;
+          }
+          
+          // Weather check (unless override is active)
+          if (!id(manual_weather_override)) {
+            std::string w = id(weather_forecast_home).state;
+            if (!w.empty() && w != "unknown" && w != "unavailable") {
+              if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                ESP_LOGW("irrigation", "⛈️ Zone 7 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                id(${devicename1}_7).turn_off();
+                return;
+              }
+            }
+          }
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "$dev1_zone7 Active"
@@ -5654,6 +5576,25 @@ switch:
     internal: true
     id: ${devicename1}_8
     on_turn_on:
+      - lambda: |-
+          // Check if irrigation system is enabled
+          if (!id(irrigation_system_enable).state) {
+            ESP_LOGW("irrigation", "🚫 Zone 8 BLOCKED - Irrigation system is DISABLED");
+            id(${devicename1}_8).turn_off();
+            return;
+          }
+          
+          // Weather check (unless override is active)
+          if (!id(manual_weather_override)) {
+            std::string w = id(weather_forecast_home).state;
+            if (!w.empty() && w != "unknown" && w != "unavailable") {
+              if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                ESP_LOGW("irrigation", "⛈️ Zone 8 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                id(${devicename1}_8).turn_off();
+                return;
+              }
+            }
+          }
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "$dev1_zone8 Active"
@@ -5684,3 +5625,696 @@ switch:
     name: "Master Valve Relay"
     pin: $master_valve_pin
     inverted: true
+sprinkler:
+  - id: $devicename1
+    main_switch:
+      name: "$dev1_what Start-Stop-Resume"
+      id: dev1_main_switch
+      internal: true
+      on_turn_off:
+        - lambda: |-
+            // Don't stop run_zone_with_cycles during cycle/soak mode with multiple cycles
+            // Only stop if we're in normal mode or if it's a manual stop
+            bool in_cycle_soak = (id(total_cycles) > 0 && id(current_cycle) > 0);
+            
+            if (!in_cycle_soak) {
+              ESP_LOGI("irrigation", "Main switch OFF - stopping run_zone_with_cycles (normal mode)");
+              id(run_zone_with_cycles).stop();
+              
+              // Reset soak countdown when stopping
+              id(cycle_soak_is_soaking) = false;
+              id(cycle_soak_soak_end_time) = 0;
+              id(soak_countdown_seconds) = 0;
+            } else {
+              ESP_LOGI("irrigation", "Main switch OFF - NOT stopping script (in cycle/soak, cycle %d/%d)",
+                       id(current_cycle), id(total_cycles));
+            }
+            
+            if (id(is_paused)) return;
+
+            // Only clear state if not in active cycle/soak
+            if (!in_cycle_soak) {
+              id(active_zone_number) = -1;
+              id(current_cycle) = 0;
+              id(total_cycles) = 0;
+              id(cycle_soak_total_duration) = 0;
+              id(cycle_soak_elapsed_time) = 0;
+            }
+
+            if (id(irrigation_busy) && !id(in_program_run)) {
+              id(irrigation_busy) = false;
+              id(drain_queue).execute();
+            }
+
+      on_turn_on:
+        - lambda: |-
+            // CRITICAL: Check if irrigation system is enabled
+            if (!id(irrigation_system_enable).state) {
+              ESP_LOGW("irrigation", "🚫 BLOCKED - Irrigation system is DISABLED");
+              // Turn the main switch back off immediately
+              id(dev1_main_switch).turn_off();
+              return;
+            }
+            
+            ESP_LOGI("irrigation", "Main switch turned ON");
+            // 🚫 do NOT read dev1_auto_advance here
+
+    auto_advance_switch:
+      name: "$dev1_what Auto Advance"
+      id: dev1_auto_advance
+      restore_mode: ALWAYS_ON
+
+    valve_open_delay: 2s
+    valves:
+      - valve_switch: $dev1_zone1
+        enable_switch:
+          name: Enable $dev1_zone1
+          id: zone1_enable
+        run_duration_number:
+          id: "${devicename1}_1_duration"
+          name: "${dev1_zone1} Run Duration"
+          initial_value: 30
+          unit_of_measurement: $uom
+          mode: slider
+          min_value: 1
+          max_value: 60
+          step: 1
+          restore_value: true
+        valve_switch_id: ${devicename1}_1
+        
+      - valve_switch: $dev1_zone2
+        enable_switch:
+          name: Enable $dev1_zone2
+          id: zone2_enable
+        run_duration_number:
+          id: "${devicename1}_2_duration"
+          name: "${dev1_zone2} Run Duration"
+          initial_value: 30
+          unit_of_measurement: $uom
+          mode: slider
+          min_value: 1
+          max_value: 60
+          step: 1
+          restore_value: true
+        valve_switch_id: ${devicename1}_2
+        
+      - valve_switch: $dev1_zone3
+        enable_switch:
+          name: Enable $dev1_zone3
+          id: zone3_enable
+        run_duration_number:
+          id: "${devicename1}_3_duration"
+          name: "${dev1_zone3} Run Duration"
+          initial_value: 30
+          unit_of_measurement: $uom
+          mode: slider
+          min_value: 1
+          max_value: 60
+          step: 1
+          restore_value: true
+        valve_switch_id: ${devicename1}_3
+        
+      - valve_switch: $dev1_zone4
+        enable_switch:
+          name: Enable $dev1_zone4
+          id: zone4_enable
+        run_duration_number:
+          id: "${devicename1}_4_duration"
+          name: "${dev1_zone4} Run Duration"
+          initial_value: 30
+          unit_of_measurement: $uom
+          mode: slider
+          min_value: 1
+          max_value: 60
+          step: 1
+          restore_value: true
+        valve_switch_id: ${devicename1}_4
+        
+      - valve_switch: $dev1_zone5
+        enable_switch:
+          name: Enable $dev1_zone5
+          id: zone5_enable
+        run_duration_number:
+          id: "${devicename1}_5_duration"
+          name: "${dev1_zone5} Run Duration"
+          initial_value: 30
+          unit_of_measurement: $uom
+          mode: slider
+          min_value: 1
+          max_value: 60
+          step: 1
+          restore_value: true
+        valve_switch_id: ${devicename1}_5
+        
+      - valve_switch: $dev1_zone6
+        enable_switch:
+          name: Enable $dev1_zone6
+          id: zone6_enable
+        run_duration_number:
+          id: "${devicename1}_6_duration"
+          name: "${dev1_zone6} Run Duration"
+          initial_value: 30
+          unit_of_measurement: $uom
+          mode: slider
+          min_value: 1
+          max_value: 60
+          step: 1
+          restore_value: true
+        valve_switch_id: ${devicename1}_6
+        
+      - valve_switch: $dev1_zone7
+        enable_switch:
+          name: Enable $dev1_zone7
+          id: zone7_enable
+        run_duration_number:
+          id: "${devicename1}_7_duration"
+          name: "${dev1_zone7} Run Duration"
+          initial_value: 30
+          unit_of_measurement: $uom
+          mode: slider
+          min_value: 1
+          max_value: 60
+          step: 1
+          restore_value: true
+        valve_switch_id: ${devicename1}_7
+        
+      - valve_switch: $dev1_zone8
+        enable_switch:
+          name: Enable $dev1_zone8
+          id: zone8_enable
+        run_duration_number:
+          id: "${devicename1}_8_duration"
+          name: "${dev1_zone8} Run Duration"
+          initial_value: 30
+          unit_of_measurement: $uom
+          mode: slider
+          min_value: 1
+          max_value: 60
+          step: 1
+          restore_value: true
+        valve_switch_id: ${devicename1}_8
+
+
+button:
+  - platform: template
+    id: start_all_zones_normal
+    name: "$dev1_what Start All Zones (Normal)"
+    icon: "mdi:play-circle-outline"
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Start All Zones (NORMAL)");
+            
+        - if:
+            condition:
+              switch.is_off: irrigation_system_enable
+            then:
+              - logger.log:
+                  format: "❌ BLOCKED: Irrigation system is DISABLED"
+                  level: WARN
+            else:
+              - if:
+                  condition:
+                    lambda: |-
+                      return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                  then:
+                    - logger.log:
+                        format: "⛈️ BLOCKED: Rain delay is active"
+                        level: WARN
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            // Weather check (unless override is active)
+                            if (!id(manual_weather_override)) {
+                              std::string w = id(weather_forecast_home).state;
+                              if (!w.empty() && w != "unknown" && w != "unavailable") {
+                                if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                                  return true;  // Bad weather - block
+                                }
+                              }
+                            }
+                            return false;  // Weather OK or override active
+                        then:
+                          - logger.log:
+                              format: "⛈️ BLOCKED: Bad weather (Enable Weather Override to force)"
+                              level: WARN
+                        else:
+                          - lambda: |-
+                              if (id(manual_weather_override)) {
+                                ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather");
+                              }
+                              id(pending_normal_start) = true;
+                              id(normal_start_attempts) = 0;
+                              id(normal_last_attempt_ms) = 0;
+                              ESP_LOGI("irrigation", "✅ Queued NORMAL start (will begin when system ready)");
+
+# Manual program run buttons
+  - platform: template
+    name: "Run Program A Now"
+    icon: "mdi:alpha-a-circle"
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program A");
+        - if:
+            condition:
+              switch.is_off: irrigation_system_enable
+            then:
+              - logger.log:
+                  format: "❌ BLOCKED: Irrigation system is DISABLED"
+                  level: WARN
+            else:
+              - if:
+                  condition:
+                    lambda: 'return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
+                  then:
+                    - logger.log: "Rain delay active"
+                  else:
+                    - script.execute:
+                        id: request_program_start
+                        program: 1
+                        allow_queue: true
+                        
+  - platform: template
+    name: "Run Program B Now"
+    icon: "mdi:alpha-b-circle"
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program A");
+        - if:
+            condition:
+              switch.is_off: irrigation_system_enable
+            then:
+              - logger.log:
+                  format: "❌ BLOCKED: Irrigation system is DISABLED"
+                  level: WARN
+            else:
+              - if:
+                  condition:
+                    lambda: 'return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
+                  then:
+                    - logger.log: "Rain delay active"
+                  else:
+                    - script.execute:
+                        id: request_program_start
+                        program: 2
+                        allow_queue: true
+
+  - platform: template
+    name: "Run Program C Now"
+    icon: "mdi:alpha-c-circle"
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program A");
+        - if:
+            condition:
+              switch.is_off: irrigation_system_enable
+            then:
+              - logger.log:
+                  format: "❌ BLOCKED: Irrigation system is DISABLED"
+                  level: WARN
+            else:
+              - if:
+                  condition:
+                    lambda: 'return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
+                  then:
+                    - logger.log: "Rain delay active"
+                  else:
+                    - script.execute:
+                        id: request_program_start
+                        program: 3
+                        allow_queue: true
+
+# Pause button - Actually stops the valve
+  - platform: template
+    id: dev1_sprinkler_pause
+    name: "$dev1_what Pause"
+    icon: "mdi:pause"
+    on_press:
+      then:
+        - lambda: |-
+            // Save current state if a valve is active
+            if (id($devicename1).active_valve().has_value()) {
+              id(paused_zone) = id($devicename1).active_valve().value();
+              id(paused_cycle) = id(current_cycle);
+              id(time_remaining_when_paused) = id($devicename1).time_remaining_active_valve().value_or(0);
+              id(is_paused) = true;
+
+              // Snapshot cycle/soak state for resume
+              id(paused_total_cycles) = id(total_cycles);
+              id(paused_cycle_soak_total_duration) = id(cycle_soak_total_duration);
+              id(paused_cycle_soak_elapsed_time) = id(cycle_soak_elapsed_time);
+              id(paused_was_soaking) = false;
+              id(paused_soak_remaining_seconds) = 0;
+              
+              ESP_LOGI("irrigation", "Paused: Zone %d, Cycle %d/%d, Time remaining: %d sec, Elapsed: %d/%d sec",
+                       id(paused_zone), id(paused_cycle), id(total_cycles),
+                       id(time_remaining_when_paused),
+                       id(cycle_soak_elapsed_time), id(cycle_soak_total_duration));
+              
+              // ADDED: Confirm progress tracking is paused
+              ESP_LOGI("irrigation", "Progress tracking PAUSED - elapsed time frozen at %d seconds",
+                       id(cycle_soak_elapsed_time));
+              
+            } else if (id(cycle_soak_is_soaking) && id(active_zone_number) >= 0 && id(total_cycles) > 0) {
+              id(paused_zone) = id(active_zone_number);
+              id(paused_cycle) = id(current_cycle);
+              long now = id(homeassistant_time).now().timestamp;
+              long rem = id(cycle_soak_soak_end_time) - now;
+              if (rem < 0) rem = 0;
+              id(paused_soak_remaining_seconds) = (int) rem;
+              id(time_remaining_when_paused) = 0;
+              id(paused_was_soaking) = true;
+              id(is_paused) = true;
+              id(paused_total_cycles) = id(total_cycles);
+              id(paused_cycle_soak_total_duration) = id(cycle_soak_total_duration);
+              id(paused_cycle_soak_elapsed_time) = id(cycle_soak_elapsed_time);
+              
+              ESP_LOGI("irrigation", "Paused during soak: Zone %d, Cycle %d/%d, Soak remaining: %d sec, Elapsed: %d/%d sec",
+                       id(paused_zone), id(paused_cycle), id(paused_total_cycles),
+                       id(paused_soak_remaining_seconds),
+                       id(cycle_soak_elapsed_time), id(cycle_soak_total_duration));
+              
+              // ADDED: Confirm progress tracking is paused
+              ESP_LOGI("irrigation", "Progress tracking PAUSED during soak - elapsed time frozen at %d seconds",
+                       id(cycle_soak_elapsed_time));
+            } else {
+              ESP_LOGI("irrigation", "Nothing active to pause");
+            }
+        - sprinkler.shutdown: $devicename1
+        - script.stop: run_zone_with_cycles
+        - script.stop: run_all_zones_cycle_soak_script
+        - script.stop: run_program
+        - text_sensor.template.publish:
+            id: dev1_valve_status
+            state: "Paused"
+
+# Resume button - Restarts from saved position
+  - platform: template
+    id: dev1_sprinkler_resume
+    name: "$dev1_what Resume"
+    icon: "mdi:play"
+    on_press:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(is_paused) && id(paused_zone) >= 0;'
+            then:
+              - lambda: |-
+                  // Restore cycle/soak snapshot BEFORE mode checks
+                  id(total_cycles) = id(paused_total_cycles);
+                  id(cycle_soak_total_duration) = id(paused_cycle_soak_total_duration);
+                  id(cycle_soak_elapsed_time) = id(paused_cycle_soak_elapsed_time);
+
+                  ESP_LOGI("irrigation", "Resuming: Zone %d, Cycle %d/%d, Elapsed restored to: %d/%d sec",
+                           id(paused_zone), id(paused_cycle), id(total_cycles),
+                           id(cycle_soak_elapsed_time), id(cycle_soak_total_duration));
+                  
+                  // ADDED: Confirm progress tracking will resume
+                  ESP_LOGI("irrigation", "Progress tracking will RESUME from %d seconds",
+                           id(cycle_soak_elapsed_time));
+
+                  id(is_paused) = false;
+                  id(active_zone_number) = id(paused_zone);
+                  id(current_cycle) = id(paused_cycle);
+
+              # If we paused while watering, restart valve for remaining time
+              - if:
+                  condition:
+                    lambda: 'return !id(paused_was_soaking);'
+                  then:
+                    - sprinkler.start_single_valve:
+                        id: $devicename1
+                        valve_number: !lambda 'return id(paused_zone);'
+                        run_duration: !lambda 'return id(time_remaining_when_paused);'
+
+              # Force Auto Advance state based on mode
+              - delay: 100ms
+              - if:
+                  condition:
+                    lambda: 'return id(total_cycles) > 0;'
+                  then:
+                    - switch.turn_off: dev1_auto_advance
+                    - logger.log: "Auto Advance forced OFF (Cycle & Soak mode)"
+                    - script.execute:
+                        id: continue_cycle_soak_after_resume
+                        zone: !lambda 'return id(paused_zone);'
+                        start_cycle: !lambda 'return id(current_cycle);'
+                        total: !lambda 'return id(total_cycles);'
+                        was_soaking: !lambda 'return id(paused_was_soaking);'
+                        soak_remaining: !lambda 'return id(paused_soak_remaining_seconds);'
+                        water_remaining: !lambda 'return id(time_remaining_when_paused);'
+                  else:
+                    - switch.turn_on: dev1_auto_advance
+                    - logger.log: "Auto Advance ON (Normal mode)"
+
+              - text_sensor.template.publish:
+                  id: dev1_valve_status
+                  state: "Resumed"
+
+              # Clear pause flags for normal mode; cycle/soak cleanup happens in continuation script
+              - if:
+                  condition:
+                    lambda: 'return id(total_cycles) <= 0;'
+                  then:
+                    - lambda: |-
+                        id(paused_zone) = -1;
+                        id(paused_cycle) = 0;
+                        id(time_remaining_when_paused) = 0;
+                        id(paused_was_soaking) = false;
+                        id(paused_soak_remaining_seconds) = 0;
+                        id(paused_total_cycles) = 0;
+                        id(paused_cycle_soak_total_duration) = 0;
+                        id(paused_cycle_soak_elapsed_time) = 0;
+
+            else:
+              - logger.log: "Nothing to resume - not paused or no saved state"
+
+  - platform: template
+    id: dev1_sprinkler_stop
+    name: "$dev1_what Stop"
+    icon: "mdi:stop"
+    on_press:
+      then:
+        - logger.log: "═══ STOP BUTTON PRESSED ═══"
+
+        # Cancel pending normal-mode retry worker (but preserve queued programs/zones)
+        - lambda: |-
+            id(pending_normal_start) = false;
+            id(normal_start_attempts) = 0;
+            id(normal_last_attempt_ms) = 0;
+
+            // Clear ONLY queued NORMAL start (type 3). Preserve Program (1) and Zone (2).
+            if (id(queued_type) == 3) {
+              ESP_LOGI("irrigation", "Clearing queued NORMAL request (type 3) on STOP");
+              id(queued_type) = 0;
+            }
+
+            ESP_LOGI(
+              "irrigation",
+              "⏹ STOPPING: Zone=%d, Cycle=%d/%d, queued_type=%d",
+              id(active_zone_number),
+              id(current_cycle),
+              id(total_cycles),
+              id(queued_type)
+            );
+
+            // Keep busy flag SET during shutdown/cleanup
+            id(irrigation_busy) = true;
+
+        # Stop sprinkler controller (shutdown respects internal stop delays)
+        - sprinkler.shutdown: $devicename1
+
+        # Stop helper scripts
+        - script.stop: run_zone_with_cycles
+        - script.stop: run_all_zones_cycle_soak_script
+        - script.stop: run_program
+        - script.stop: run_all_zones_normal_script
+        - script.stop: wait_until_idle_then_drain
+
+        # Clear run-state variables (do NOT clear queued_program/queued_zone)
+        - lambda: |-
+            ESP_LOGI("irrigation", "🧹 Clearing run state variables");
+            id(active_zone_number) = -1;
+            id(current_cycle) = 0;
+            id(total_cycles) = 0;
+            id(cycle_soak_total_duration) = 0;
+            id(cycle_soak_elapsed_time) = 0;
+            id(is_paused) = false;
+            id(paused_zone) = -1;
+            id(paused_cycle) = 0;
+            id(time_remaining_when_paused) = 0;
+            id(in_program_run) = false;
+
+        - text_sensor.template.publish:
+            id: dev1_valve_status
+            state: "Stopped"
+
+        # Give the sprinkler component time to finish its internal shutdown window
+        - delay: 8s
+
+        # Now mark idle
+        - lambda: |-
+            ESP_LOGI("irrigation", "✓ Stop cleanup complete (idle)");
+            id(irrigation_busy) = false;
+
+        # If a Program (type 1) or Zone (type 2) is queued, run it now
+        - if:
+            condition:
+              lambda: |-
+                return id(queued_type) != 0;
+            then:
+              - logger.log: "▶ Starting queued request after STOP"
+              - script.execute: drain_queue
+
+# Start All Zones - CYCLE & SOAK MODE
+  - platform: template
+    id: start_all_zones_cycle_soak
+    name: "$dev1_what Start All Zones (Cycle & Soak)"
+    icon: "mdi:water-sync"
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Start All Zones (CYCLE & SOAK)");
+        - if:
+            condition:
+              switch.is_off: irrigation_system_enable
+            then:
+              - logger.log:
+                  format: "❌ BLOCKED: Irrigation system is DISABLED"
+                  level: WARN
+            else:
+              - if:
+                  condition:
+                    lambda: 'return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
+                  then:
+                    - logger.log:
+                        format: "⛈️ BLOCKED: Rain delay is active"
+                        level: WARN
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            // Weather check (unless override is active)
+                            if (!id(manual_weather_override)) {
+                              std::string w = id(weather_forecast_home).state;
+                              if (!w.empty() && w != "unknown" && w != "unavailable") {
+                                if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                                  return true;  // Bad weather - block
+                                }
+                              }
+                            }
+                            return false;  // Weather OK or override active
+                        then:
+                          - logger.log:
+                              format: "⛈️ BLOCKED: Bad weather (Enable Weather Override to force)"
+                              level: WARN
+                        else:
+                          - lambda: |-
+                              if (id(manual_weather_override)) {
+                                ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather");
+                              }
+                          # Turn ON cycle and soak mode
+                          - switch.turn_on: cycle_soak_switch
+                          - logger.log:
+                              format: "✅ Cycle & Soak Mode ON - Starting all enabled zones"
+                              level: INFO
+                          - script.execute: run_all_zones_cycle_soak_script
+
+  - platform: template
+    name: "$dev1_zone1 Quick Run"
+    icon: "mdi:play-speed"
+    on_press:
+      then:
+        - script.execute:
+            id: request_zone_start
+            zone: 0
+            duration: !lambda "return id(quick_run_duration).state * 60;"
+            add_delay: true
+            allow_queue: true
+
+  - platform: template
+    name: "$dev1_zone2 Quick Run"
+    icon: "mdi:play-speed"
+    on_press:
+      then:
+        - script.execute:
+            id: request_zone_start
+            zone: 1
+            duration: !lambda "return id(quick_run_duration).state * 60;"
+            add_delay: true
+            allow_queue: true
+  - platform: template
+    name: "$dev1_zone3 Quick Run"
+    icon: "mdi:play-speed"
+    on_press:
+      then:
+        - script.execute:
+            id: request_zone_start
+            zone: 2
+            duration: !lambda "return id(quick_run_duration).state * 60;"
+            add_delay: true
+            allow_queue: true
+  - platform: template
+    name: "$dev1_zone4 Quick Run"
+    icon: "mdi:play-speed"
+    on_press:
+      then:
+        - script.execute:
+            id: request_zone_start
+            zone: 3
+            duration: !lambda "return id(quick_run_duration).state * 60;"
+            add_delay: true
+            allow_queue: true
+  - platform: template
+    name: "$dev1_zone5 Quick Run"
+    icon: "mdi:play-speed"
+    on_press:
+      then:
+        - script.execute:
+            id: request_zone_start
+            zone: 4
+            duration: !lambda "return id(quick_run_duration).state * 60;"
+            add_delay: true
+            allow_queue: true
+  - platform: template
+    name: "$dev1_zone6 Quick Run"
+    icon: "mdi:play-speed"
+    on_press:
+      then:
+        - script.execute:
+            id: request_zone_start
+            zone: 5
+            duration: !lambda "return id(quick_run_duration).state * 60;"
+            add_delay: true
+            allow_queue: true
+  - platform: template
+    name: "$dev1_zone7 Quick Run"
+    icon: "mdi:play-speed"
+    on_press:
+      then:
+        - script.execute:
+            id: request_zone_start
+            zone: 6
+            duration: !lambda "return id(quick_run_duration).state * 60;"
+            add_delay: true
+            allow_queue: true
+  - platform: template
+    name: "$dev1_zone8 Quick Run"
+    icon: "mdi:play-speed"
+    on_press:
+      then:
+        - script.execute:
+            id: request_zone_start
+            zone: 7
+            duration: !lambda "return id(quick_run_duration).state * 60;"
+            add_delay: true
+            allow_queue: true
