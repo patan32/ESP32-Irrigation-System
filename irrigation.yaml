@@ -151,11 +151,11 @@ esp32:
 
 api:
   encryption:
-    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ota:
   - platform: esphome
-    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -814,6 +814,7 @@ time:
                 if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
                   id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (86400 * 2); // 2 day delay
                   id(rain_delay_days) = 2;
+                  id(rain_delay_days_input).publish_state(2);
                   ESP_LOGI("irrigation", "Auto rain delay activated - weather is %s", weather.c_str());
                 }
                 // Clear rain delay if weather is good
@@ -821,6 +822,7 @@ time:
                   if (id(rain_delay_end_time) > id(homeassistant_time).now().timestamp) {
                     id(rain_delay_end_time) = 0;
                     id(rain_delay_days) = 0;
+                    id(rain_delay_days_input).publish_state(0);
                     ESP_LOGI("irrigation", "Auto rain delay cleared - weather is %s", weather.c_str());
                   }
                 }
@@ -858,6 +860,12 @@ time:
                         }
                         return false;
                       }
+                    }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
                     }
                   }
                   
@@ -932,6 +940,18 @@ time:
                              zone_count, zones_list.c_str());
                     ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
                     ESP_LOGI("irrigation", "");
+                    
+                    // Log weather check status
+                    std::string w = id(weather_forecast_home).state;
+                    if (id(manual_weather_override)) {
+                      if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                        ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather: %s", w.c_str());
+                      }
+                    } else {
+                      if (!w.empty() && w != "unknown" && w != "unavailable") {
+                        ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
+                      }
+                    }
                 - script.execute:
                     id: request_program_start
                     program: 1
@@ -964,6 +984,12 @@ time:
                         }
                         return false;
                       }
+                    }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
                     }
                   }
                   
@@ -1030,6 +1056,18 @@ time:
                              zone_count, zones_list.c_str());
                     ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
                     ESP_LOGI("irrigation", "");
+                    
+                    // Log weather check status
+                    std::string w = id(weather_forecast_home).state;
+                    if (id(manual_weather_override)) {
+                      if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                        ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather: %s", w.c_str());
+                      }
+                    } else {
+                      if (!w.empty() && w != "unknown" && w != "unavailable") {
+                        ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
+                      }
+                    }
                 - script.execute:
                     id: request_program_start
                     program: 2
@@ -1062,6 +1100,12 @@ time:
                         }
                         return false;
                       }
+                    }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
                     }
                   }
                   
@@ -1128,6 +1172,18 @@ time:
                              zone_count, zones_list.c_str());
                     ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
                     ESP_LOGI("irrigation", "");
+                    
+                    // Log weather check status
+                    std::string w = id(weather_forecast_home).state;
+                    if (id(manual_weather_override)) {
+                      if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                        ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather: %s", w.c_str());
+                      }
+                    } else {
+                      if (!w.empty() && w != "unknown" && w != "unavailable") {
+                        ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
+                      }
+                    }
                 - script.execute:
                     id: request_program_start
                     program: 3
@@ -1196,6 +1252,12 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         return false;  // Block silently, logged once per hour by programs
                       }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
+                    }
                     }
                   }
                   
@@ -1269,6 +1331,12 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         return false;  // Block silently, logged once per hour by programs
                       }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
+                    }
                     }
                   }
                   
@@ -1332,6 +1400,12 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         return false;  // Block silently, logged once per hour by programs
                       }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
+                    }
                     }
                   }
 
@@ -1394,6 +1468,12 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         return false;  // Block silently, logged once per hour by programs
                       }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
+                    }
                     }
                   }
 
@@ -1457,6 +1537,12 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         return false;  // Block silently, logged once per hour by programs
                       }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
+                    }
                     }
                   }
 
@@ -1520,6 +1606,12 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         return false;  // Block silently, logged once per hour by programs
                       }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
+                    }
                     }
                   }
 
@@ -1584,6 +1676,12 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         return false;  // Block silently, logged once per hour by programs
                       }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
+                    }
                     }
                   }
 
@@ -1645,6 +1743,12 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         return false;  // Block silently, logged once per hour by programs
                       }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Schedule will run despite weather: %s", w.c_str());
+                    }
                     }
                   }
 
@@ -1719,6 +1823,12 @@ time:
                         return false;  // Block silently, logged once per hour by programs
                       }
                     }
+                  } else {
+                    // Weather override is active - log and continue
+                    std::string w = id(weather_forecast_home).state;
+                    if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Weekly schedule will run despite weather: %s", w.c_str());
+                    }
                   }
                   
                   // Time restriction check
@@ -1788,6 +1898,18 @@ time:
                     ESP_LOGI("irrigation", "║  Mode: Hunter Pro-C (full cycle with auto-advance)        ║");
                     ESP_LOGI("irrigation", "╚════════════════════════════════════════════════════════════╝");
                     ESP_LOGI("irrigation", "");
+                    
+                    // Log weather check status
+                    std::string w = id(weather_forecast_home).state;
+                    if (id(manual_weather_override)) {
+                      if (!w.empty() && (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy")) {
+                        ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather: %s", w.c_str());
+                      }
+                    } else {
+                      if (!w.empty() && w != "unknown" && w != "unavailable") {
+                        ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
+                      }
+                    }
                     
                     // Check if system is busy
                     bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
@@ -2431,6 +2553,7 @@ text_sensor:
               if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
                 id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (86400 * 2); // 2 day delay
                 id(rain_delay_days) = 2;
+                id(rain_delay_days_input).publish_state(2);
                 ESP_LOGI("irrigation", "Auto rain delay activated immediately - weather changed to %s", weather.c_str());
               }
               // Clear rain delay if weather improves
@@ -2438,6 +2561,7 @@ text_sensor:
                 if (id(rain_delay_end_time) > id(homeassistant_time).now().timestamp) {
                   id(rain_delay_end_time) = 0;
                   id(rain_delay_days) = 0;
+                  id(rain_delay_days_input).publish_state(0);
                   ESP_LOGI("irrigation", "Auto rain delay cleared immediately - weather changed to %s", weather.c_str());
                 }
               }
@@ -2833,17 +2957,18 @@ sensor:
     name: "Rain Delay Days Remaining"
     icon: "mdi:timer-sand"
     unit_of_measurement: "days"
-    accuracy_decimals: 0
-    update_interval: 3600s
+    accuracy_decimals: 1
+    update_interval: 5s
     lambda: |-
-      if (id(rain_delay_end_time) == 0) return 0;
+      if (id(rain_delay_end_time) == 0) return 0.0f;
       long current_time = id(homeassistant_time).now().timestamp;
-      long remaining = (id(rain_delay_end_time) - current_time) / 86400;
-      if (remaining <= 0) {
+      long remaining_seconds = id(rain_delay_end_time) - current_time;
+      if (remaining_seconds <= 0) {
         id(rain_delay_end_time) = 0;
-        return 0;
+        id(rain_delay_days) = 0;
+        return 0.0f;
       }
-      return remaining;
+      return remaining_seconds / 86400.0f;
 
   # Current seasonal multiplier
   - platform: template
@@ -4804,11 +4929,31 @@ switch:
     turn_on_action:
       - lambda: |-
           id(manual_rain_delay_override) = true;
-          ESP_LOGI("irrigation", "Manual rain delay override enabled");
+          // Clear any active rain delay immediately so it stops blocking runs
+          id(rain_delay_end_time) = 0;
+          id(rain_delay_days) = 0;
+          id(rain_delay_days_input).publish_state(0);
+          ESP_LOGI("irrigation", "Manual rain delay override enabled - active rain delay CLEARED");
     turn_off_action:
       - lambda: |-
           id(manual_rain_delay_override) = false;
-          ESP_LOGI("irrigation", "Manual rain delay override disabled");
+          ESP_LOGI("irrigation", "Manual rain delay override disabled - checking weather immediately");
+          
+          // Immediately check current weather and apply rain delay if needed
+          std::string weather = id(weather_forecast_home).state;
+          if (weather.empty() || weather == "unknown" || weather == "unavailable") {
+            ESP_LOGW("irrigation", "Weather state unavailable - rain delay will be set on next weather update");
+            return;
+          }
+          
+          if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
+            id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (86400 * 2);
+            id(rain_delay_days) = 2;
+            id(rain_delay_days_input).publish_state(2);
+            ESP_LOGI("irrigation", "Auto rain delay IMMEDIATELY activated - weather is %s", weather.c_str());
+          } else {
+            ESP_LOGI("irrigation", "Weather is %s - no rain delay needed", weather.c_str());
+          }
 
   # Manual Weather Override - Force watering in bad weather
   - platform: template
@@ -5273,6 +5418,7 @@ switch:
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 1 BLOCKED - Irrigation system is DISABLED");
             id(${devicename1}_1).turn_off();
+            id(dev1_valve_status).publish_state("Idle");
             return;
           }
           
@@ -5283,24 +5429,23 @@ switch:
               if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                 ESP_LOGW("irrigation", "⛈️ Zone 1 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                 id(${devicename1}_1).turn_off();
+                id(dev1_valve_status).publish_state("Idle");
                 return;
               }
             }
           }
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "$dev1_zone1 Active"
-      - globals.set:
-          id: zone1_start_time
-          value: !lambda 'return id(homeassistant_time).now().timestamp;'
+          
+          // All checks passed - record start time and show active
+          id(zone1_start_time) = id(homeassistant_time).now().timestamp;
+          id(dev1_valve_status).publish_state("$dev1_zone1 Active"); 
     on_turn_off:
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "Idle"
       - lambda: |-
-          // Only record if valve ran for more than 60 seconds
+          // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone1_start_time);
-          if (duration > 60) {
+          if (duration > 120) {
             id(zone1_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 1 watering completed (%ld seconds) - timestamp saved", duration);
           }
@@ -5317,6 +5462,7 @@ switch:
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 2 BLOCKED - Irrigation system is DISABLED");
             id(${devicename1}_2).turn_off();
+            id(dev1_valve_status).publish_state("Idle");
             return;
           }
           
@@ -5327,24 +5473,23 @@ switch:
               if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                 ESP_LOGW("irrigation", "⛈️ Zone 2 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                 id(${devicename1}_2).turn_off();
+                id(dev1_valve_status).publish_state("Idle");
                 return;
               }
             }
           }
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "$dev1_zone2 Active"
-      - globals.set:
-          id: zone2_start_time
-          value: !lambda 'return id(homeassistant_time).now().timestamp;'
+          
+          // All checks passed - record start time and show active
+          id(zone2_start_time) = id(homeassistant_time).now().timestamp;
+          id(dev1_valve_status).publish_state("$dev1_zone2 Active"); 
     on_turn_off:
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "Idle"
       - lambda: |-
-          // Only record if valve ran for more than 60 seconds
+          // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone2_start_time);
-          if (duration > 60) {
+          if (duration > 120) {
             id(zone2_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 2 watering completed (%ld seconds) - timestamp saved", duration);
           }
@@ -5361,6 +5506,7 @@ switch:
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 3 BLOCKED - Irrigation system is DISABLED");
             id(${devicename1}_3).turn_off();
+            id(dev1_valve_status).publish_state("Idle");
             return;
           }
           
@@ -5371,24 +5517,23 @@ switch:
               if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                 ESP_LOGW("irrigation", "⛈️ Zone 3 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                 id(${devicename1}_3).turn_off();
+                id(dev1_valve_status).publish_state("Idle");
                 return;
               }
             }
           }
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "$dev1_zone3 Active"
-      - globals.set:
-          id: zone3_start_time
-          value: !lambda 'return id(homeassistant_time).now().timestamp;'
+          
+          // All checks passed - record start time
+          id(zone3_start_time) = id(homeassistant_time).now().timestamp;
+          id(dev1_valve_status).publish_state("$dev1_zone3 Active");
     on_turn_off:
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "Idle"
       - lambda: |-
-          // Only record if valve ran for more than 60 seconds
+          // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone3_start_time);
-          if (duration > 60) {
+          if (duration > 120) {
             id(zone3_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 3 watering completed (%ld seconds) - timestamp saved", duration);
           }
@@ -5405,6 +5550,7 @@ switch:
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 4 BLOCKED - Irrigation system is DISABLED");
             id(${devicename1}_4).turn_off();
+            id(dev1_valve_status).publish_state("Idle");
             return;
           }
           
@@ -5415,24 +5561,22 @@ switch:
               if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                 ESP_LOGW("irrigation", "⛈️ Zone 4 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                 id(${devicename1}_4).turn_off();
+                id(dev1_valve_status).publish_state("Idle");
                 return;
               }
             }
           }
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "$dev1_zone4 Active"
-      - globals.set:
-          id: zone4_start_time
-          value: !lambda 'return id(homeassistant_time).now().timestamp;'
+          
+          // All checks passed - record start time and show active
+          id(zone4_start_time) = id(homeassistant_time).now().timestamp;
+          id(dev1_valve_status).publish_state("$dev1_zone4 Active");
+          id(dev1_valve_status).publish_state("$dev1_zone4 Active");
+ 
     on_turn_off:
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "Idle"
       - lambda: |-
-          // Only record if valve ran for more than 60 seconds
+          // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone4_start_time);
-          if (duration > 60) {
+          if (duration > 120) {
             id(zone4_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 4 watering completed (%ld seconds) - timestamp saved", duration);
           }
@@ -5449,6 +5593,7 @@ switch:
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 5 BLOCKED - Irrigation system is DISABLED");
             id(${devicename1}_5).turn_off();
+            id(dev1_valve_status).publish_state("Idle");
             return;
           }
           
@@ -5459,24 +5604,22 @@ switch:
               if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                 ESP_LOGW("irrigation", "⛈️ Zone 5 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                 id(${devicename1}_5).turn_off();
+                id(dev1_valve_status).publish_state("Idle");
                 return;
               }
             }
           }
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "$dev1_zone5 Active"
-      - globals.set:
-          id: zone5_start_time
-          value: !lambda 'return id(homeassistant_time).now().timestamp;'
+          
+          // All checks passed - record start time and show active
+          id(zone5_start_time) = id(homeassistant_time).now().timestamp;
+          id(dev1_valve_status).publish_state("$dev1_zone5 Active");
+          id(dev1_valve_status).publish_state("$dev1_zone5 Active");
+ 
     on_turn_off:
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "Idle"
       - lambda: |-
-          // Only record if valve ran for more than 60 seconds
+          // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone5_start_time);
-          if (duration > 60) {
+          if (duration > 120) {
             id(zone5_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 5 watering completed (%ld seconds) - timestamp saved", duration);
           }
@@ -5493,6 +5636,7 @@ switch:
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 6 BLOCKED - Irrigation system is DISABLED");
             id(${devicename1}_6).turn_off();
+            id(dev1_valve_status).publish_state("Idle");
             return;
           }
           
@@ -5503,24 +5647,22 @@ switch:
               if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                 ESP_LOGW("irrigation", "⛈️ Zone 6 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                 id(${devicename1}_6).turn_off();
+                id(dev1_valve_status).publish_state("Idle");
                 return;
               }
             }
           }
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "$dev1_zone6 Active"
-      - globals.set:
-          id: zone6_start_time
-          value: !lambda 'return id(homeassistant_time).now().timestamp;'
+          
+          // All checks passed - record start time and show active
+          id(zone6_start_time) = id(homeassistant_time).now().timestamp;
+          id(dev1_valve_status).publish_state("$dev1_zone6 Active");
+          id(dev1_valve_status).publish_state("$dev1_zone6 Active");
+ 
     on_turn_off:
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "Idle"
       - lambda: |-
-          // Only record if valve ran for more than 60 seconds
+          // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone6_start_time);
-          if (duration > 60) {
+          if (duration > 120) {
             id(zone6_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 6 watering completed (%ld seconds) - timestamp saved", duration);
           }
@@ -5537,6 +5679,7 @@ switch:
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 7 BLOCKED - Irrigation system is DISABLED");
             id(${devicename1}_7).turn_off();
+            id(dev1_valve_status).publish_state("Idle");
             return;
           }
           
@@ -5547,24 +5690,22 @@ switch:
               if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                 ESP_LOGW("irrigation", "⛈️ Zone 7 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                 id(${devicename1}_7).turn_off();
+                id(dev1_valve_status).publish_state("Idle");
                 return;
               }
             }
           }
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "$dev1_zone7 Active"
-      - globals.set:
-          id: zone7_start_time
-          value: !lambda 'return id(homeassistant_time).now().timestamp;'
+          
+          // All checks passed - record start time and show active
+          id(zone7_start_time) = id(homeassistant_time).now().timestamp;
+          id(dev1_valve_status).publish_state("$dev1_zone7 Active");
+          id(dev1_valve_status).publish_state("$dev1_zone7 Active");
+ 
     on_turn_off:
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "Idle"
       - lambda: |-
-          // Only record if valve ran for more than 60 seconds
+          // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone7_start_time);
-          if (duration > 60) {
+          if (duration > 120) {
             id(zone7_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 7 watering completed (%ld seconds) - timestamp saved", duration);
           }
@@ -5581,6 +5722,7 @@ switch:
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 8 BLOCKED - Irrigation system is DISABLED");
             id(${devicename1}_8).turn_off();
+            id(dev1_valve_status).publish_state("Idle");
             return;
           }
           
@@ -5591,24 +5733,22 @@ switch:
               if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                 ESP_LOGW("irrigation", "⛈️ Zone 8 BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                 id(${devicename1}_8).turn_off();
+                id(dev1_valve_status).publish_state("Idle");
                 return;
               }
             }
           }
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "$dev1_zone8 Active"
-      - globals.set:
-          id: zone8_start_time
-          value: !lambda 'return id(homeassistant_time).now().timestamp;'
+          
+          // All checks passed - record start time and show active
+          id(zone8_start_time) = id(homeassistant_time).now().timestamp;
+          id(dev1_valve_status).publish_state("$dev1_zone8 Active");
+          id(dev1_valve_status).publish_state("$dev1_zone8 Active");
+ 
     on_turn_off:
-      - text_sensor.template.publish:
-          id: dev1_valve_status
-          state: "Idle"
       - lambda: |-
-          // Only record if valve ran for more than 60 seconds
+          // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone8_start_time);
-          if (duration > 60) {
+          if (duration > 120) {
             id(zone8_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 8 watering completed (%ld seconds) - timestamp saved", duration);
           }
@@ -5671,13 +5811,37 @@ sprinkler:
             // CRITICAL: Check if irrigation system is enabled
             if (!id(irrigation_system_enable).state) {
               ESP_LOGW("irrigation", "🚫 BLOCKED - Irrigation system is DISABLED");
-              // Turn the main switch back off immediately
               id(dev1_main_switch).turn_off();
               return;
             }
             
-            ESP_LOGI("irrigation", "Main switch turned ON");
-            // 🚫 do NOT read dev1_auto_advance here
+            // Check rain delay
+            if (id(rain_delay_end_time) > id(homeassistant_time).now().timestamp) {
+              ESP_LOGW("irrigation", "⛈️ BLOCKED - Rain delay is active");
+              id(dev1_main_switch).turn_off();
+              return;
+            }
+            
+            // Weather check (unless override is active)
+            if (!id(manual_weather_override)) {
+              std::string w = id(weather_forecast_home).state;
+              if (!w.empty() && w != "unknown" && w != "unavailable") {
+                if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                  ESP_LOGW("irrigation", "⛈️ BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
+                  id(dev1_main_switch).turn_off();
+                  return;
+                }
+              }
+            }
+            
+            // Time restriction check
+            if (id(is_time_restricted)) {
+              ESP_LOGW("irrigation", "⏰ BLOCKED - Time restriction active");
+              id(dev1_main_switch).turn_off();
+              return;
+            }
+            
+            ESP_LOGI("irrigation", "✅ Main switch turned ON - all checks passed");
 
     auto_advance_switch:
       name: "$dev1_what Auto Advance"
@@ -5837,38 +6001,55 @@ button:
               - if:
                   condition:
                     lambda: |-
-                      return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                      // Check rain delay (unless manual override is active)
+                      if (!id(manual_rain_delay_override)) {
+                        return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                      }
+                      return false;  // Override active, don't block
                   then:
                     - logger.log:
-                        format: "⛈️ BLOCKED: Rain delay is active"
+                        format: "⛈️ BLOCKED: Rain delay is active (Disable Auto Rain Delay to override)"
                         level: WARN
                   else:
                     - if:
                         condition:
                           lambda: |-
-                            // Weather check (unless override is active)
-                            if (!id(manual_weather_override)) {
-                              std::string w = id(weather_forecast_home).state;
-                              if (!w.empty() && w != "unknown" && w != "unavailable") {
-                                if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                                  return true;  // Bad weather - block
-                                }
-                              }
-                            }
-                            return false;  // Weather OK or override active
+                            // Time restriction check
+                            return id(is_time_restricted);
                         then:
                           - logger.log:
-                              format: "⛈️ BLOCKED: Bad weather (Enable Weather Override to force)"
+                              format: "⏰ BLOCKED: Time restriction active (outside allowed hours)"
                               level: WARN
                         else:
-                          - lambda: |-
-                              if (id(manual_weather_override)) {
-                                ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather");
-                              }
-                              id(pending_normal_start) = true;
-                              id(normal_start_attempts) = 0;
-                              id(normal_last_attempt_ms) = 0;
-                              ESP_LOGI("irrigation", "✅ Queued NORMAL start (will begin when system ready)");
+                          - if:
+                              condition:
+                                lambda: |-
+                                  // Weather check (unless override is active)
+                                  if (!id(manual_weather_override)) {
+                                    std::string w = id(weather_forecast_home).state;
+                                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                                        return true;  // Bad weather - block
+                                      }
+                                    }
+                                  }
+                                  return false;  // Weather OK or override active
+                              then:
+                                - logger.log:
+                                    format: "⛈️ BLOCKED: Bad weather (Enable Weather Override to force)"
+                                    level: WARN
+                              else:
+                                - lambda: |-
+                                    std::string w = id(weather_forecast_home).state;
+                                    if (id(manual_weather_override)) {
+                                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather: %s", w.c_str());
+                                    } else {
+                                      ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
+                                    }
+                                    id(pending_normal_start) = true;
+                                    id(normal_start_attempts) = 0;
+                                    id(normal_last_attempt_ms) = 0;
+                                    ESP_LOGI("irrigation", "✅ Queued NORMAL start (will begin when system ready)");
 
 # Manual program run buttons
   - platform: template
@@ -6203,31 +6384,44 @@ button:
                     - if:
                         condition:
                           lambda: |-
-                            // Weather check (unless override is active)
-                            if (!id(manual_weather_override)) {
-                              std::string w = id(weather_forecast_home).state;
-                              if (!w.empty() && w != "unknown" && w != "unavailable") {
-                                if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
-                                  return true;  // Bad weather - block
-                                }
-                              }
-                            }
-                            return false;  // Weather OK or override active
+                            // Time restriction check
+                            return id(is_time_restricted);
                         then:
                           - logger.log:
-                              format: "⛈️ BLOCKED: Bad weather (Enable Weather Override to force)"
+                              format: "⏰ BLOCKED: Time restriction active (outside allowed hours)"
                               level: WARN
                         else:
-                          - lambda: |-
-                              if (id(manual_weather_override)) {
-                                ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather");
-                              }
-                          # Turn ON cycle and soak mode
-                          - switch.turn_on: cycle_soak_switch
-                          - logger.log:
-                              format: "✅ Cycle & Soak Mode ON - Starting all enabled zones"
-                              level: INFO
-                          - script.execute: run_all_zones_cycle_soak_script
+                          - if:
+                              condition:
+                                lambda: |-
+                                  // Weather check (unless override is active)
+                                  if (!id(manual_weather_override)) {
+                                    std::string w = id(weather_forecast_home).state;
+                                    if (!w.empty() && w != "unknown" && w != "unavailable") {
+                                      if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                                        return true;  // Bad weather - block
+                                      }
+                                    }
+                                  }
+                                  return false;  // Weather OK or override active
+                              then:
+                                - logger.log:
+                                    format: "⛈️ BLOCKED: Bad weather (Enable Weather Override to force)"
+                                    level: WARN
+                              else:
+                                - lambda: |-
+                                    std::string w = id(weather_forecast_home).state;
+                                    if (id(manual_weather_override)) {
+                                      ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather: %s", w.c_str());
+                                    } else {
+                                      ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
+                                    }
+                                # Turn ON cycle and soak mode
+                                - switch.turn_on: cycle_soak_switch
+                                - logger.log:
+                                    format: "✅ Cycle & Soak Mode ON - Starting all enabled zones"
+                                    level: INFO
+                                - script.execute: run_all_zones_cycle_soak_script
 
   - platform: template
     name: "$dev1_zone1 Quick Run"
