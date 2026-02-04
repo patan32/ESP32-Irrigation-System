@@ -151,11 +151,11 @@ esp32:
 
 api:
   encryption:
-    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ota:
   - platform: esphome
-    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -764,6 +764,10 @@ globals:
     type: bool
     restore_value: False
     initial_value: 'false'
+  - id: last_time_restriction_state
+    type: int
+    restore_value: False
+    initial_value: '0'
   - id: auto_advance_enabled
     type: bool
     restore_value: true
@@ -2232,8 +2236,8 @@ interval:
             id(drain_queue).execute();
           }
 
-  # Update time restriction status every minute
-  - interval: 60s
+  # Update time restriction status every 5 seconds for faster response
+  - interval: 5s
     then:
       - script.execute: check_time_restriction
 
@@ -4379,14 +4383,20 @@ script:
           // Check if time restriction is disabled
           if (!id(time_restriction_switch).state) {
             id(is_time_restricted) = false;
-            ESP_LOGD("irrigation", "⏰ Time restriction DISABLED");
+            if (id(last_time_restriction_state) != 3) {
+              ESP_LOGD("irrigation", "⏰ Time restriction DISABLED");
+              id(last_time_restriction_state) = 3;
+            }
             return;
           }
           
           // Check if manual override is active
           if (id(manual_time_restriction_override).state) {
             id(is_time_restricted) = false;
-            ESP_LOGI("irrigation", "⏰ Time restriction OVERRIDDEN - watering allowed");
+            if (id(last_time_restriction_state) != 2) {
+              ESP_LOGI("irrigation", "⏰ Time restriction OVERRIDDEN - watering allowed");
+              id(last_time_restriction_state) = 2;
+            }
             return;
           }
           
@@ -4901,6 +4911,12 @@ switch:
     icon: "mdi:shield-check"
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - script.execute: check_time_restriction
+      - logger.log: "⚠️ Time restriction override ON - immediate check triggered"
+    turn_off_action:
+      - script.execute: check_time_restriction
+      - logger.log: "✓ Time restriction override OFF - immediate check triggered"
 
   # Time of Day Restriction (10am-3pm block)
   - platform: template
