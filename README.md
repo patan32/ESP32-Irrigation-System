@@ -1,3 +1,5 @@
+Change your weather entity name from HA for weather to work properly. Look for weather.forecast_home entity and change it to what you have in HA for weather. 
+
 🌱 Core System Enhancements
 
 Hunter Pro-C–style controller logic implemented
