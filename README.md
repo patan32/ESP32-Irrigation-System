@@ -1,4 +1,5 @@
 Add this to your HA sensors yaml file. 
+```
 # Standard Sensors
 - sensor:
 # Trigger-based sensor to fetch Forecast
@@ -33,7 +34,7 @@ Add this to your HA sensors yaml file.
         {% endif %}
       availability: >
         {{ states('weather.home') not in ['unavailable', 'unknown'] and daily_data['weather.home'] is defined }}
-
+```
 Change your weather entity name from HA for weather to work properly. Look for weather.forecast_home entity and change it to what you have in HA for weather. 
 
 🌱 Core System Enhancements
