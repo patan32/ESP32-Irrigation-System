@@ -1,4 +1,4 @@
-Add this to your HA sensors yaml file. 
+Add this to your HA sensors yaml file. I am using Open-Meteo for weather. Entity is "weather.home".
 ```
 # Standard Sensors
 - sensor:
