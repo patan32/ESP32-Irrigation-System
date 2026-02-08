@@ -1,4 +1,4 @@
-Add this to your HA sensors yaml file. I am using Open-Meteo for weather. Entity is "weather.home". Make sure in states you have entity called: "home_rain_forecast_0d" or else it won't work. 
+Add this to your HA sensors yaml file. I am using Open-Meteo for weather. Entity is "weather.home". Make sure in states you have entity called: "home_rain_forecast_0d" or else it won't work. I had to use Meteorologisk institutt (Met.no) for humdity reading since Open-Meteo doesn't provide that entity. 
 ```
 # Standard Sensors
 - sensor:
