@@ -11,8 +11,8 @@ substitutions:
   dev1_zone7: Lawn Zone7
   dev1_zone8: Lawn Zone8
   master_valve_pin: GPIO27  # Master valve control (like Hunter Pro-C) - optional
-  software_revision: V2.1
-  date_revision: 2025 01 23
+  software_revision: V2.2-PW
+  date_revision: 2025 02 05
   sensor_update_frequency: 1s
   log_level: info # Enable levels logging https://esphome.io/components/logger.html
   # none, error, warn, info, debug (default), verbose, very_verbose
@@ -59,6 +59,16 @@ esphome:
               id(queue_add_delays)[i] = false;
             }
             ESP_LOGI("irrigation", "🔄 BOOT: 3-slot queue initialized (Hunter Pro-C style)");
+            
+            // Initialize Predictive Watering variables
+            id(pw_last_calculation_time) = 0;
+            id(pw_current_multiplier) = 1.0;
+            ESP_LOGI("irrigation", "💧 Predictive Watering™ system initialized");
+            
+            // Initialize Smart ET variables
+            id(et_last_calculation_time) = 0;
+            id(et_pending_irrigation) = false;
+            ESP_LOGI("irrigation", "🌱 Smart ET Watering system initialized");
 
       - sprinkler.set_multiplier:
           id: $devicename1
@@ -144,6 +154,15 @@ esphome:
       # Initialize time restriction check
       - delay: 2s
       - script.execute: check_time_restriction
+      
+      # Initialize Predictive Watering calculation
+      - delay: 5s
+      - script.execute: calculate_predictive_watering
+      
+      # Initialize Smart ET calculation
+      - delay: 2s
+      - script.execute: calculate_smart_et
+      
 esp32:
   board: $esphome_board
   framework:
@@ -151,11 +170,11 @@ esp32:
 
 api:
   encryption:
-    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ota:
   - platform: esphome
-    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -220,6 +239,187 @@ globals:
     type: int
     restore_value: True
     initial_value: '5'  # Default 5 seconds between zones
+
+  # ============================================================
+  # PREDICTIVE WATERING™ GLOBALS
+  # ============================================================
+  - id: predictive_watering_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'  # Predictive Watering™ ON by default
+    
+  - id: pw_last_calculation_time
+    type: long
+    restore_value: False
+    initial_value: '0'  # Timestamp of last calculation
+    
+  - id: pw_current_multiplier
+    type: float
+    restore_value: True
+    initial_value: '1.0'  # Current calculated multiplier
+    
+  - id: pw_temperature_factor
+    type: float
+    restore_value: False
+    initial_value: '1.0'
+    
+  - id: pw_rain_factor
+    type: float
+    restore_value: False
+    initial_value: '1.0'
+    
+  - id: pw_humidity_factor
+    type: float
+    restore_value: False
+    initial_value: '1.0'
+    
+  - id: pw_wind_factor
+    type: float
+    restore_value: False
+    initial_value: '1.0'
+
+  # ============================================================
+  # SMART ET WATERING GLOBALS
+  # ============================================================
+  - id: smart_et_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'false'  # Smart ET OFF by default
+    
+  - id: et_soil_moisture_deficit
+    type: float
+    restore_value: True
+    initial_value: '0.0'  # mm of water deficit
+    
+  - id: et_water_threshold
+    type: float
+    restore_value: True
+    initial_value: '25.0'  # Water when deficit reaches 25mm
+    
+  - id: et_last_calculation_time
+    type: long
+    restore_value: False
+    initial_value: '0'
+    
+  - id: et_daily_et
+    type: float
+    restore_value: False
+    initial_value: '0.0'  # Today's ET in mm
+    
+  - id: et_last_water_time
+    type: long
+    restore_value: True
+    initial_value: '0'
+    
+  - id: et_pending_irrigation
+    type: bool
+    restore_value: False
+    initial_value: 'false'
+  
+  - id: et_duration_multiplier
+    type: float
+    restore_value: False
+    initial_value: '1.0'  # Smart ET's additional multiplier based on deficit
+  
+  # Smart ET Schedule Time
+  - id: et_schedule_hour
+    type: int
+    restore_value: True
+    initial_value: '6'  # Default 6 AM
+    
+  - id: et_schedule_minute
+    type: int
+    restore_value: True
+    initial_value: '0'  # Default :00
+    
+  - id: et_schedule_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'  # 0=AM, 1=PM
+
+  # ═══════════════════════════════════════════════
+  # WATER USAGE TRACKING (Hunter Pro-C Style)
+  # ═══════════════════════════════════════════════
+  
+  # Zone flow rates (liters per minute) - configurable per zone
+  - id: zone1_flow_rate
+    type: float
+    restore_value: True
+    initial_value: '15.0'  # 15 L/min default
+  - id: zone2_flow_rate
+    type: float
+    restore_value: True
+    initial_value: '15.0'
+  - id: zone3_flow_rate
+    type: float
+    restore_value: True
+    initial_value: '15.0'
+  - id: zone4_flow_rate
+    type: float
+    restore_value: True
+    initial_value: '15.0'
+  - id: zone5_flow_rate
+    type: float
+    restore_value: True
+    initial_value: '15.0'
+  - id: zone6_flow_rate
+    type: float
+    restore_value: True
+    initial_value: '15.0'
+  - id: zone7_flow_rate
+    type: float
+    restore_value: True
+    initial_value: '15.0'
+  - id: zone8_flow_rate
+    type: float
+    restore_value: True
+    initial_value: '15.0'
+  
+  # Water used per zone (liters) - accumulated total
+  - id: zone1_water_used
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  - id: zone2_water_used
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  - id: zone3_water_used
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  - id: zone4_water_used
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  - id: zone5_water_used
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  - id: zone6_water_used
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  - id: zone7_water_used
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  - id: zone8_water_used
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  
+  # Total system water usage (liters)
+  - id: total_water_used
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  
+  # Last water usage reset timestamp
+  - id: water_usage_reset_time
+    type: long
+    restore_value: True
+    initial_value: '0'
 
   # Zone-specific schedule times
   - id: zone1_start_hour
@@ -392,6 +592,66 @@ globals:
     type: bool
     restore_value: True
     initial_value: 'true'
+    
+  # ═══════════════════════════════════════════════
+  # SOIL TYPE SETTINGS
+  # ═══════════════════════════════════════════════
+  - id: soil_type
+    type: int
+    restore_value: True
+    initial_value: '0'  # 0=Sand, 1=Loam, 2=Clay (Default: Sand for Whanganui)
+  
+  # ═══════════════════════════════════════════════
+  # SEASONAL ADJUSTMENT MULTIPLIERS (Southern Hemisphere - Whanganui)
+  # ═══════════════════════════════════════════════
+  - id: seasonal_jan
+    type: float
+    restore_value: True
+    initial_value: '1.4'  # Peak summer
+  - id: seasonal_feb
+    type: float
+    restore_value: True
+    initial_value: '1.4'  # Peak summer
+  - id: seasonal_mar
+    type: float
+    restore_value: True
+    initial_value: '1.2'  # Early autumn
+  - id: seasonal_apr
+    type: float
+    restore_value: True
+    initial_value: '1.0'  # Autumn
+  - id: seasonal_may
+    type: float
+    restore_value: True
+    initial_value: '0.9'  # Late autumn
+  - id: seasonal_jun
+    type: float
+    restore_value: True
+    initial_value: '0.7'  # Winter
+  - id: seasonal_jul
+    type: float
+    restore_value: True
+    initial_value: '0.6'  # Winter
+  - id: seasonal_aug
+    type: float
+    restore_value: True
+    initial_value: '0.7'  # Late winter
+  - id: seasonal_sep
+    type: float
+    restore_value: True
+    initial_value: '0.9'  # Early spring
+  - id: seasonal_oct
+    type: float
+    restore_value: True
+    initial_value: '1.1'  # Spring
+  - id: seasonal_nov
+    type: float
+    restore_value: True
+    initial_value: '1.3'  # Late spring
+  - id: seasonal_dec
+    type: float
+    restore_value: True
+    initial_value: '1.4'  # Early summer
     
   - id: manual_rain_delay_override
     type: bool
@@ -830,6 +1090,106 @@ time:
                     ESP_LOGI("irrigation", "Auto rain delay cleared - weather is %s", weather.c_str());
                   }
                 }
+              }
+      
+      # Run Predictive Watering calculation every hour
+      - seconds: 0
+        minutes: 0
+        # Runs every hour on the hour
+        then:
+          - script.execute: calculate_predictive_watering
+      
+      # Run Smart ET calculation every hour
+      - seconds: 0
+        minutes: 0
+        # Runs every hour on the hour
+        then:
+          - script.execute: calculate_smart_et
+      
+      # Check for pending Smart ET irrigation at scheduled time
+      - seconds: 0
+        minutes: 0,5,10,15,20,25,30,35,40,45,50,55  # Check every 5 minutes
+        then:
+          - lambda: |-
+              if (id(smart_et_enabled) && id(et_pending_irrigation)) {
+                if (!id(is_time_restricted) && id(irrigation_system_enable).state) {
+                  
+                  // Check if current time matches Smart ET schedule
+                  auto time = id(homeassistant_time).now();
+                  int current_hour = time.hour;
+                  int current_minute = time.minute;
+                  
+                  // Convert schedule to 24-hour format
+                  int schedule_hour = id(et_schedule_hour);
+                  if (id(et_schedule_am_pm) == 1 && schedule_hour != 12) {
+                    schedule_hour += 12;  // PM conversion
+                  } else if (id(et_schedule_am_pm) == 0 && schedule_hour == 12) {
+                    schedule_hour = 0;  // Midnight conversion
+                  }
+                  
+                  // Check if we're within 5 minutes of scheduled time
+                  bool time_match = (current_hour == schedule_hour && abs(current_minute - id(et_schedule_minute)) < 5);
+                  
+                  if (time_match) {
+                    ESP_LOGI("irrigation", "🌱 Smart ET: Executing pending irrigation at scheduled time");
+                    
+                    // Recalculate and apply ET multiplier
+                    float deficit = id(et_soil_moisture_deficit);
+                    float threshold = id(et_water_threshold);
+                    float deficit_ratio = deficit / threshold;
+                    float et_multiplier = deficit_ratio;
+                    if (et_multiplier > 2.0) et_multiplier = 2.0;
+                    if (et_multiplier < 1.0) et_multiplier = 1.0;
+                    
+                    id(et_duration_multiplier) = et_multiplier;
+                    
+                    // Apply combined multiplier
+                    float pw_mult = id(pw_current_multiplier);
+                    float combined = pw_mult * et_multiplier;
+                    if (combined > 2.0) combined = 2.0;
+                    
+                    ESP_LOGI("irrigation", "   ET Multiplier: %.2fx, PW: %.2fx, Combined: %.2fx", 
+                             et_multiplier, pw_mult, combined);
+                    
+                    id($devicename1).set_multiplier(combined);
+                    id(start_all_zones_cycle_soak).press();
+                    id(et_soil_moisture_deficit) = 0;
+                    id(et_last_water_time) = id(homeassistant_time).now().timestamp;
+                    id(et_pending_irrigation) = false;
+                  }
+                }
+              }
+      
+      # Restore Predictive Watering multiplier if Smart ET finished watering
+      - seconds: 0
+        minutes: /5  # Every 5 minutes
+        then:
+          - lambda: |-
+              // Only restore if Smart ET is enabled and we're not currently watering
+              if (!id(smart_et_enabled)) {
+                return;
+              }
+              
+              // Check if any valve is active
+              bool is_watering = id($devicename1).active_valve().has_value();
+              
+              // If not watering and ET multiplier is not 1.0, restore PW multiplier
+              if (!is_watering && id(et_duration_multiplier) != 1.0) {
+                id(restore_pw_multiplier).execute();
+              }
+      
+      # Check valve status and reset to Idle if no valves active
+      - seconds: 0
+        minutes: /1  # Every minute
+        then:
+          - lambda: |-
+              // Check if any valve is currently active
+              bool is_active = id($devicename1).active_valve().has_value();
+              
+              // If no valve is active and status isn't "Idle", reset it
+              if (!is_active && id(dev1_valve_status).state != "Idle") {
+                ESP_LOGI("irrigation", "No active valve detected - resetting status to Idle");
+                id(dev1_valve_status).publish_state("Idle");
               }
       
 # Check every minute if it's time to start programs
@@ -1982,8 +2342,8 @@ interval:
             # Try to start full cycle; if it's still stopping, next interval will retry
             - sprinkler.start_full_cycle: $devicename1
 
-  # Update cycle & soak progress every 2 seconds
-  - interval: 2s
+  # Update cycle & soak progress and master valve control every 500ms
+  - interval: 500ms
     then:
       - lambda: |-
           // ====================================================================
@@ -2315,6 +2675,106 @@ text_sensor:
               hour_12, time.minute, am_pm.c_str());
       return {std::string(buffer)};
 
+  # Predictive Watering™ status
+  - platform: template
+    name: "$dev1_what Predictive Watering Status"
+    icon: "mdi:water-check"
+    update_interval: 10s
+    lambda: |-
+      if (!id(predictive_watering_enabled)) {
+        return {"Disabled"};
+      }
+      
+      auto time = id(homeassistant_time).now();
+      if (!time.is_valid()) {
+        return {"Waiting for time sync"};
+      }
+      
+      long last_calc = id(pw_last_calculation_time);
+      
+      if (last_calc == 0) {
+        return {"Initializing..."};
+      }
+      
+      float multiplier = id(pw_current_multiplier);
+      int pct_change = (int)((multiplier - 1.0) * 100);
+      
+      // Calculate next update time (hourly updates)
+      long current_time = time.timestamp;
+      long time_since_calc = current_time - last_calc;
+      long next_calc_sec = 3600 - (time_since_calc % 3600); // 3600 = 1 hour
+      int mins_until = next_calc_sec / 60;
+      
+      char buf[80];
+      
+      // Determine status description
+      if (multiplier >= 1.8) {
+        snprintf(buf, sizeof(buf), "Very Hot (+%d%%) - Next: %dm", pct_change, mins_until);
+      } else if (multiplier >= 1.5) {
+        snprintf(buf, sizeof(buf), "Hot Weather (+%d%%) - Next: %dm", pct_change, mins_until);
+      } else if (multiplier >= 1.2) {
+        snprintf(buf, sizeof(buf), "Warm (+%d%%) - Next: %dm", pct_change, mins_until);
+      } else if (multiplier >= 0.95 && multiplier <= 1.05) {
+        snprintf(buf, sizeof(buf), "Normal (%.2fx) - Next: %dm", multiplier, mins_until);
+      } else if (multiplier >= 0.5) {
+        snprintf(buf, sizeof(buf), "Reduced (%d%%) - Next: %dm", pct_change, mins_until);
+      } else if (multiplier >= 0.3) {
+        snprintf(buf, sizeof(buf), "Cool/Rainy (%d%%) - Next: %dm", pct_change, mins_until);
+      } else {
+        snprintf(buf, sizeof(buf), "Minimal (%d%%) - Next: %dm", pct_change, mins_until);
+      }
+      
+      return {buf};
+
+  # Smart ET Watering status
+  - platform: template
+    name: "$dev1_what Smart ET Status"
+    icon: "mdi:sprinkler-variant"
+    update_interval: 5s
+    lambda: |-
+      if (!id(smart_et_enabled)) {
+        return {"Disabled"};
+      }
+      
+      auto time = id(homeassistant_time).now();
+      if (!time.is_valid()) {
+        return {"Waiting for time sync"};
+      }
+      
+      float deficit = id(et_soil_moisture_deficit);
+      float threshold = id(et_water_threshold);
+      float pct = (deficit / threshold) * 100.0;
+      float et_mult = id(et_duration_multiplier);
+      
+      char buf[80];
+      
+      if (id(et_pending_irrigation)) {
+        // Show scheduled time when pending
+        snprintf(buf, sizeof(buf), "PENDING - Next: %d:%02d %s", 
+                 id(et_schedule_hour),
+                 id(et_schedule_minute),
+                 id(et_schedule_am_pm) == 0 ? "AM" : "PM");
+        return {buf};
+      }
+      
+      if (deficit >= threshold) {
+        // Show that watering is ready and when it will happen
+        float deficit_ratio = deficit / threshold;
+        snprintf(buf, sizeof(buf), "READY @ %d:%02d %s (%.0f%% over)", 
+                 id(et_schedule_hour),
+                 id(et_schedule_minute),
+                 id(et_schedule_am_pm) == 0 ? "AM" : "PM",
+                 (deficit_ratio - 1.0) * 100);
+        return {buf};
+      }
+      
+      if (et_mult > 1.0) {
+        snprintf(buf, sizeof(buf), "OK (%.1fmm, %.0f%%) [%.2fx]", deficit, pct, et_mult);
+      } else {
+        snprintf(buf, sizeof(buf), "OK (%.1fmm, %.0f%%)", deficit, pct);
+      }
+      return {buf};
+
 # Master Valve Status Display (Hunter Pro-C Style)
   - platform: template
     id: master_valve_status
@@ -2539,7 +2999,7 @@ text_sensor:
 # Weather state from Home Assistant
   - platform: homeassistant
     id: weather_forecast_home
-    entity_id: weather.forecast_home
+    entity_id: weather.home
     internal: true
     on_value:
       then:
@@ -2911,6 +3371,64 @@ text_sensor:
       }
       return {result};
 
+  # ═══════════════════════════════════════════════
+  # MULTIPLIER BREAKDOWN DISPLAY (Whanganui - Sand Soil)
+  # ═══════════════════════════════════════════════
+  - platform: template
+    id: multiplier_breakdown
+    name: "$dev1_what Multiplier Breakdown"
+    icon: "mdi:calculator"
+    update_interval: 60s
+    lambda: |-
+      if (!id(predictive_watering_enabled)) {
+        return {"Predictive Watering Disabled"};
+      }
+      
+      auto time = id(homeassistant_time).now();
+      if (!time.is_valid()) {
+        return {"Time not synced"};
+      }
+      
+      // Get seasonal factor
+      float seasonal = 1.0;
+      int month = time.month;
+      switch (month) {
+        case 1:  seasonal = id(seasonal_jan); break;
+        case 2:  seasonal = id(seasonal_feb); break;
+        case 3:  seasonal = id(seasonal_mar); break;
+        case 4:  seasonal = id(seasonal_apr); break;
+        case 5:  seasonal = id(seasonal_may); break;
+        case 6:  seasonal = id(seasonal_jun); break;
+        case 7:  seasonal = id(seasonal_jul); break;
+        case 8:  seasonal = id(seasonal_aug); break;
+        case 9:  seasonal = id(seasonal_sep); break;
+        case 10: seasonal = id(seasonal_oct); break;
+        case 11: seasonal = id(seasonal_nov); break;
+        case 12: seasonal = id(seasonal_dec); break;
+      }
+      
+      // Get soil factor
+      float soil = 1.0;
+      std::string soil_name = "Unknown";
+      if (id(soil_type) == 0) {
+        soil = 1.15;
+        soil_name = "Sand";
+      } else if (id(soil_type) == 1) {
+        soil = 1.0;
+        soil_name = "Loam";
+      } else if (id(soil_type) == 2) {
+        soil = 0.85;
+        soil_name = "Clay";
+      }
+      
+      // Get current multiplier
+      float total = id(pw_current_multiplier);
+      
+      char buffer[150];
+      sprintf(buffer, "Season: %.2f | Soil (%s): %.2f | Total: %.2f",
+              seasonal, soil_name.c_str(), soil, total);
+      return {std::string(buffer)};
+
 sensor:
   # Uptime sensor
   - platform: uptime
@@ -2920,10 +3438,11 @@ sensor:
   # Internal sensors from Home Assistant (no template.publish here)
   - platform: homeassistant
     id: ha_temperature
-    entity_id: weather.forecast_home
+    entity_id: weather.home
     attribute: temperature
     internal: true
 
+  # Humidity from Met.no (weather.forecast_home) since Open-Meteo doesn't provide it
   - platform: homeassistant
     id: ha_humidity
     entity_id: weather.forecast_home
@@ -2954,6 +3473,176 @@ sensor:
         return 70.0;  // Default fallback humidity
       }
       return id(ha_humidity).state;
+  
+  # ============================================================
+  # PREDICTIVE WATERING™ WEATHER SENSORS
+  # ============================================================
+  # Wind speed sensor from Home Assistant
+  - platform: homeassistant
+    id: wind_speed
+    entity_id: weather.home
+    attribute: wind_speed
+    internal: true
+    filters:
+      - lambda: |-
+          if (isnan(x)) return 10.0;  // Default 10 km/h
+          return x;
+  
+  # Rain forecast (precipitation amount in mm) from Home Assistant template sensor
+  # This uses actual precipitation forecast instead of probability - MORE ACCURATE!
+  # Create this sensor in Home Assistant configuration.yaml:
+  # template:
+  #   - sensor:
+  #       - name: "Rain Forecast Today"
+  #         unique_id: home_rain_forecast_0d
+  #         state: >
+  #           {% set forecast = state_attr('weather.home', 'forecast') %}
+  #           {% if forecast and forecast|length > 0 %}
+  #             {{ forecast[0].precipitation | default(0) }}
+  #           {% else %}
+  #             0
+  #           {% endif %}
+  #         unit_of_measurement: "mm"
+  - platform: homeassistant
+    id: rain_probability
+    entity_id: sensor.home_rain_forecast_0d
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            // Only process valid numeric values
+            if (!isnan(x) && x >= 0) {
+              ESP_LOGD("irrigation", "Precipitation forecast updated: %.1f mm", x);
+            }
+    filters:
+      - lambda: |-
+          // Reject unavailable, unknown, or invalid values
+          if (isnan(x) || x < 0) {
+            // Keep previous value, don't update
+            return {};
+          }
+          return x;  // Return actual mm value
+
+  # Predictive Watering Multiplier Display
+  - platform: template
+    name: "$dev1_what Predictive Watering Multiplier"
+    id: pw_multiplier_display
+    icon: "mdi:water-percent"
+    unit_of_measurement: "x"
+    accuracy_decimals: 2
+    update_interval: 10s
+    lambda: |-
+      if (id(predictive_watering_enabled)) {
+        return id(pw_current_multiplier);
+      }
+      return {};
+
+  # Individual factor displays
+  - platform: template
+    name: "$dev1_what PW Temperature Factor"
+    icon: "mdi:thermometer"
+    unit_of_measurement: "x"
+    accuracy_decimals: 2
+    update_interval: 30s
+    lambda: |-
+      if (id(predictive_watering_enabled)) {
+        return id(pw_temperature_factor);
+      }
+      return {};
+
+  - platform: template
+    name: "$dev1_what PW Humidity Factor"
+    icon: "mdi:water-percent"
+    unit_of_measurement: "x"
+    accuracy_decimals: 2
+    update_interval: 30s
+    lambda: |-
+      if (id(predictive_watering_enabled)) {
+        return id(pw_humidity_factor);
+      }
+      return {};
+
+  - platform: template
+    name: "$dev1_what PW Wind Factor"
+    icon: "mdi:weather-windy"
+    unit_of_measurement: "x"
+    accuracy_decimals: 2
+    update_interval: 30s
+    lambda: |-
+      if (id(predictive_watering_enabled)) {
+        return id(pw_wind_factor);
+      }
+      return {};
+
+  - platform: template
+    name: "$dev1_what PW Rain Factor"
+    icon: "mdi:weather-rainy"
+    unit_of_measurement: "x"
+    accuracy_decimals: 2
+    update_interval: 30s
+    lambda: |-
+      if (id(predictive_watering_enabled)) {
+        return id(pw_rain_factor);
+      }
+      return {};
+  
+  # ============================================================
+  # SMART ET WATERING SENSORS
+  # ============================================================
+  - platform: template
+    name: "$dev1_what ET Soil Moisture Deficit"
+    id: et_deficit_display
+    icon: "mdi:water-minus"
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    update_interval: 10s
+    lambda: |-
+      if (id(smart_et_enabled)) {
+        return id(et_soil_moisture_deficit);
+      }
+      return {};
+
+  - platform: template
+    name: "$dev1_what ET Daily Evapotranspiration"
+    icon: "mdi:water-outline"
+    unit_of_measurement: "mm/day"
+    accuracy_decimals: 1
+    update_interval: 30s
+    lambda: |-
+      if (id(smart_et_enabled)) {
+        return id(et_daily_et);
+      }
+      return {};
+
+  - platform: template
+    name: "$dev1_what ET Deficit Percentage"
+    icon: "mdi:water-percent"
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: |-
+      if (id(smart_et_enabled)) {
+        float threshold = id(et_water_threshold);
+        if (threshold > 0) {
+          float pct = (id(et_soil_moisture_deficit) / threshold) * 100.0;
+          if (pct > 100) pct = 100;
+          return pct;
+        }
+      }
+      return {};
+  
+  # Smart ET Duration Multiplier (shows deficit-based adjustment)
+  - platform: template
+    name: "$dev1_what ET Duration Multiplier"
+    icon: "mdi:multiplication"
+    unit_of_measurement: "x"
+    accuracy_decimals: 2
+    update_interval: 10s
+    lambda: |-
+      if (id(smart_et_enabled)) {
+        return id(et_duration_multiplier);
+      }
+      return {};
     
   # Rain delay countdown
   - platform: template
@@ -2984,6 +3673,145 @@ sensor:
     update_interval: 3600s
     lambda: |-
       return id($devicename1).multiplier();
+
+  # ═══════════════════════════════════════════════
+  # WATER USAGE TRACKING SENSORS (Hunter Pro-C Style)
+  # ═══════════════════════════════════════════════
+  
+  # Zone 1 Water Used
+  - platform: template
+    name: "$dev1_zone1 Water Used"
+    id: zone1_water_sensor
+    icon: "mdi:water"
+    unit_of_measurement: "L"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: water
+    update_interval: 10s
+    lambda: "return id(zone1_water_used);"
+    
+  # Zone 2 Water Used
+  - platform: template
+    name: "$dev1_zone2 Water Used"
+    id: zone2_water_sensor
+    icon: "mdi:water"
+    unit_of_measurement: "L"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: water
+    update_interval: 10s
+    lambda: "return id(zone2_water_used);"
+    
+  # Zone 3 Water Used
+  - platform: template
+    name: "$dev1_zone3 Water Used"
+    id: zone3_water_sensor
+    icon: "mdi:water"
+    unit_of_measurement: "L"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: water
+    update_interval: 10s
+    lambda: "return id(zone3_water_used);"
+    
+  # Zone 4 Water Used
+  - platform: template
+    name: "$dev1_zone4 Water Used"
+    id: zone4_water_sensor
+    icon: "mdi:water"
+    unit_of_measurement: "L"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: water
+    update_interval: 10s
+    lambda: "return id(zone4_water_used);"
+    
+  # Zone 5 Water Used
+  - platform: template
+    name: "$dev1_zone5 Water Used"
+    id: zone5_water_sensor
+    icon: "mdi:water"
+    unit_of_measurement: "L"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: water
+    update_interval: 10s
+    lambda: "return id(zone5_water_used);"
+    
+  # Zone 6 Water Used
+  - platform: template
+    name: "$dev1_zone6 Water Used"
+    id: zone6_water_sensor
+    icon: "mdi:water"
+    unit_of_measurement: "L"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: water
+    update_interval: 10s
+    lambda: "return id(zone6_water_used);"
+    
+  # Zone 7 Water Used
+  - platform: template
+    name: "$dev1_zone7 Water Used"
+    id: zone7_water_sensor
+    icon: "mdi:water"
+    unit_of_measurement: "L"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: water
+    update_interval: 10s
+    lambda: "return id(zone7_water_used);"
+    
+  # Zone 8 Water Used
+  - platform: template
+    name: "$dev1_zone8 Water Used"
+    id: zone8_water_sensor
+    icon: "mdi:water"
+    unit_of_measurement: "L"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: water
+    update_interval: 10s
+    lambda: "return id(zone8_water_used);"
+    
+  # Total System Water Used
+  - platform: template
+    name: "$dev1_what Total Water Used"
+    id: total_water_sensor
+    icon: "mdi:water-pump"
+    unit_of_measurement: "L"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: water
+    update_interval: 10s
+    lambda: "return id(total_water_used);"
+  
+  # Days Since Water Usage Reset
+  - platform: template
+    name: "$dev1_what Days Since Usage Reset"
+    icon: "mdi:calendar-clock"
+    unit_of_measurement: "days"
+    accuracy_decimals: 1
+    update_interval: 60s
+    lambda: |-
+      if (id(water_usage_reset_time) == 0) {
+        return 0.0;
+      }
+      long now = id(homeassistant_time).now().timestamp;
+      float days = (now - id(water_usage_reset_time)) / 86400.0;
+      return days;
+
+###############################################
+# Binary Sensors (Status Indicators)
+###############################################
+binary_sensor:
+  # Master Valve Status
+  - platform: template
+    name: "$dev1_what Master Valve Status"
+    id: master_valve_status_sensor
+    icon: "mdi:valve"
+    device_class: opening
+    lambda: "return id(master_valve_relay).state;"
 
 ###############################################
 # Configuration to set multiplier via number
@@ -3023,6 +3851,51 @@ number:
             id(rain_delay_end_time) = 0;
           }
 
+  # Smart ET watering threshold
+  - platform: template
+    id: et_threshold_input
+    name: "$dev1_what ET Water Threshold"
+    min_value: 10
+    max_value: 50
+    step: 1
+    icon: "mdi:water-alert"
+    mode: slider
+    unit_of_measurement: "mm"
+    lambda: "return id(et_water_threshold);"
+    set_action:
+      - lambda: |-
+          id(et_water_threshold) = x;
+          ESP_LOGI("irrigation", "ET threshold updated to %.0f mm", x);
+
+  # Smart ET Schedule Time
+  - platform: template
+    id: et_schedule_hour_input
+    name: "$dev1_what ET Schedule Hour"
+    min_value: 1
+    max_value: 12
+    step: 1
+    icon: "mdi:clock-time-four-outline"
+    mode: box
+    lambda: "return id(et_schedule_hour);"
+    set_action:
+      - lambda: |-
+          id(et_schedule_hour) = (int)x;
+          ESP_LOGI("irrigation", "Smart ET schedule hour updated to %d", (int)x);
+
+  - platform: template
+    id: et_schedule_minute_input
+    name: "$dev1_what ET Schedule Minute"
+    min_value: 0
+    max_value: 59
+    step: 5
+    icon: "mdi:clock-outline"
+    mode: box
+    lambda: "return id(et_schedule_minute);"
+    set_action:
+      - lambda: |-
+          id(et_schedule_minute) = (int)x;
+          ESP_LOGI("irrigation", "Smart ET schedule minute updated to %02d", (int)x);
+
   # Quick run duration
   - platform: template
     id: quick_run_duration
@@ -3036,6 +3909,114 @@ number:
     unit_of_measurement: "min"
     optimistic: true
     restore_value: true
+
+  # ═══════════════════════════════════════════════
+  # ZONE FLOW RATES (For Water Usage Tracking)
+  # ═══════════════════════════════════════════════
+  
+  - platform: template
+    id: zone1_flow_rate_input
+    name: "$dev1_zone1 Flow Rate"
+    min_value: 1
+    max_value: 100
+    step: 0.5
+    icon: "mdi:water-pump"
+    mode: box
+    unit_of_measurement: "L/min"
+    lambda: "return id(zone1_flow_rate);"
+    set_action:
+      - lambda: "id(zone1_flow_rate) = x;"
+      
+  - platform: template
+    id: zone2_flow_rate_input
+    name: "$dev1_zone2 Flow Rate"
+    min_value: 1
+    max_value: 100
+    step: 0.5
+    icon: "mdi:water-pump"
+    mode: box
+    unit_of_measurement: "L/min"
+    lambda: "return id(zone2_flow_rate);"
+    set_action:
+      - lambda: "id(zone2_flow_rate) = x;"
+      
+  - platform: template
+    id: zone3_flow_rate_input
+    name: "$dev1_zone3 Flow Rate"
+    min_value: 1
+    max_value: 100
+    step: 0.5
+    icon: "mdi:water-pump"
+    mode: box
+    unit_of_measurement: "L/min"
+    lambda: "return id(zone3_flow_rate);"
+    set_action:
+      - lambda: "id(zone3_flow_rate) = x;"
+      
+  - platform: template
+    id: zone4_flow_rate_input
+    name: "$dev1_zone4 Flow Rate"
+    min_value: 1
+    max_value: 100
+    step: 0.5
+    icon: "mdi:water-pump"
+    mode: box
+    unit_of_measurement: "L/min"
+    lambda: "return id(zone4_flow_rate);"
+    set_action:
+      - lambda: "id(zone4_flow_rate) = x;"
+      
+  - platform: template
+    id: zone5_flow_rate_input
+    name: "$dev1_zone5 Flow Rate"
+    min_value: 1
+    max_value: 100
+    step: 0.5
+    icon: "mdi:water-pump"
+    mode: box
+    unit_of_measurement: "L/min"
+    lambda: "return id(zone5_flow_rate);"
+    set_action:
+      - lambda: "id(zone5_flow_rate) = x;"
+      
+  - platform: template
+    id: zone6_flow_rate_input
+    name: "$dev1_zone6 Flow Rate"
+    min_value: 1
+    max_value: 100
+    step: 0.5
+    icon: "mdi:water-pump"
+    mode: box
+    unit_of_measurement: "L/min"
+    lambda: "return id(zone6_flow_rate);"
+    set_action:
+      - lambda: "id(zone6_flow_rate) = x;"
+      
+  - platform: template
+    id: zone7_flow_rate_input
+    name: "$dev1_zone7 Flow Rate"
+    min_value: 1
+    max_value: 100
+    step: 0.5
+    icon: "mdi:water-pump"
+    mode: box
+    unit_of_measurement: "L/min"
+    lambda: "return id(zone7_flow_rate);"
+    set_action:
+      - lambda: "id(zone7_flow_rate) = x;"
+      
+  - platform: template
+    id: zone8_flow_rate_input
+    name: "$dev1_zone8 Flow Rate"
+    min_value: 1
+    max_value: 100
+    step: 0.5
+    icon: "mdi:water-pump"
+    mode: box
+    unit_of_measurement: "L/min"
+    lambda: "return id(zone8_flow_rate);"
+    set_action:
+      - lambda: "id(zone8_flow_rate) = x;"
 
 # Schedule start hour (12-hour format)
   - platform: template
@@ -3497,7 +4478,639 @@ number:
     set_action:
       - lambda: "id(program_c_interval_days) = x;"
 
+  # ═══════════════════════════════════════════════
+  # SEASONAL ADJUSTMENT MULTIPLIERS (Whanganui - Southern Hemisphere)
+  # ═══════════════════════════════════════════════
+  
+  - platform: template
+    id: seasonal_jan_input
+    name: "$dev1_what Seasonal Jan"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_jan);"
+    set_action:
+      - lambda: "id(seasonal_jan) = x;"
+
+  - platform: template
+    id: seasonal_feb_input
+    name: "$dev1_what Seasonal Feb"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_feb);"
+    set_action:
+      - lambda: "id(seasonal_feb) = x;"
+
+  - platform: template
+    id: seasonal_mar_input
+    name: "$dev1_what Seasonal Mar"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_mar);"
+    set_action:
+      - lambda: "id(seasonal_mar) = x;"
+
+  - platform: template
+    id: seasonal_apr_input
+    name: "$dev1_what Seasonal Apr"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_apr);"
+    set_action:
+      - lambda: "id(seasonal_apr) = x;"
+
+  - platform: template
+    id: seasonal_may_input
+    name: "$dev1_what Seasonal May"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_may);"
+    set_action:
+      - lambda: "id(seasonal_may) = x;"
+
+  - platform: template
+    id: seasonal_jun_input
+    name: "$dev1_what Seasonal Jun"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_jun);"
+    set_action:
+      - lambda: "id(seasonal_jun) = x;"
+
+  - platform: template
+    id: seasonal_jul_input
+    name: "$dev1_what Seasonal Jul"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_jul);"
+    set_action:
+      - lambda: "id(seasonal_jul) = x;"
+
+  - platform: template
+    id: seasonal_aug_input
+    name: "$dev1_what Seasonal Aug"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_aug);"
+    set_action:
+      - lambda: "id(seasonal_aug) = x;"
+
+  - platform: template
+    id: seasonal_sep_input
+    name: "$dev1_what Seasonal Sep"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_sep);"
+    set_action:
+      - lambda: "id(seasonal_sep) = x;"
+
+  - platform: template
+    id: seasonal_oct_input
+    name: "$dev1_what Seasonal Oct"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_oct);"
+    set_action:
+      - lambda: "id(seasonal_oct) = x;"
+
+  - platform: template
+    id: seasonal_nov_input
+    name: "$dev1_what Seasonal Nov"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_nov);"
+    set_action:
+      - lambda: "id(seasonal_nov) = x;"
+
+  - platform: template
+    id: seasonal_dec_input
+    name: "$dev1_what Seasonal Dec"
+    min_value: 0.5
+    max_value: 2.0
+    step: 0.1
+    icon: "mdi:calendar-month"
+    mode: slider
+    lambda: "return id(seasonal_dec);"
+    set_action:
+      - lambda: "id(seasonal_dec) = x;"
+
 script:
+  # ============================================================
+  # PREDICTIVE WATERING™ SCRIPT
+  # ============================================================
+  - id: calculate_predictive_watering
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(predictive_watering_enabled)) {
+            ESP_LOGI("irrigation", "💧 Predictive Watering™ is DISABLED - skipping calculation");
+            return;
+          }
+          
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "💧 PREDICTIVE WATERING™ - Daily Calculation");
+          ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
+          
+          // Get current weather data
+          float temp = id(outside_temperature).state;
+          float humidity = id(outside_humidity).state;
+          float wind = id(wind_speed).state;
+          float rain_mm = id(rain_probability).state;  // Now in mm, not %
+          
+          // Validate data
+          if (isnan(temp)) {
+            ESP_LOGW("irrigation", "⚠️ Temperature unavailable, using 20°C");
+            temp = 20.0;
+          }
+          if (isnan(humidity)) {
+            ESP_LOGW("irrigation", "⚠️ Humidity unavailable, using 50%%");
+            humidity = 50.0;
+          }
+          if (isnan(wind)) {
+            ESP_LOGW("irrigation", "⚠️ Wind speed unavailable, using 10 km/h");
+            wind = 10.0;
+          }
+          if (isnan(rain_mm) || rain_mm < 0) {
+            ESP_LOGI("irrigation", "ℹ️ Rain forecast not available - assuming 0mm (no rain forecast)");
+            rain_mm = 0.0;
+          }
+          
+          ESP_LOGI("irrigation", "📊 Weather Conditions:");
+          ESP_LOGI("irrigation", "   Temperature: %.1f°C", temp);
+          ESP_LOGI("irrigation", "   Humidity: %.0f%%", humidity);
+          ESP_LOGI("irrigation", "   Wind Speed: %.1f km/h", wind);
+          ESP_LOGI("irrigation", "   Rain Forecast: %.1f mm", rain_mm);
+          
+          // ═══════════════════════════════════════════════
+          // TEMPERATURE FACTOR
+          // ═══════════════════════════════════════════════
+          float temp_factor = 1.0;
+          if (temp < 10) {
+            temp_factor = 0.3;  // Very cold - minimal watering
+          } else if (temp < 15) {
+            temp_factor = 0.5;  // Cool
+          } else if (temp < 20) {
+            temp_factor = 0.8;  // Mild
+          } else if (temp < 25) {
+            temp_factor = 1.0;  // Normal
+          } else if (temp < 28) {
+            temp_factor = 1.3;  // Warm
+          } else if (temp < 32) {
+            temp_factor = 1.6;  // Hot
+          } else {
+            temp_factor = 1.9;  // Very hot
+          }
+          id(pw_temperature_factor) = temp_factor;
+          ESP_LOGI("irrigation", "🌡️ Temperature Factor: %.2f", temp_factor);
+          
+          // ═══════════════════════════════════════════════
+          // HUMIDITY FACTOR
+          // ═══════════════════════════════════════════════
+          float humidity_factor = 1.0;
+          if (humidity < 30) {
+            humidity_factor = 1.3;  // Very dry - more water needed
+          } else if (humidity < 50) {
+            humidity_factor = 1.15;  // Dry
+          } else if (humidity < 70) {
+            humidity_factor = 1.0;  // Normal
+          } else if (humidity < 85) {
+            humidity_factor = 0.85;  // Humid - less evaporation
+          } else {
+            humidity_factor = 0.7;  // Very humid
+          }
+          id(pw_humidity_factor) = humidity_factor;
+          ESP_LOGI("irrigation", "💨 Humidity Factor: %.2f", humidity_factor);
+          
+          // ═══════════════════════════════════════════════
+          // WIND FACTOR
+          // ═══════════════════════════════════════════════
+          float wind_factor = 1.0;
+          if (wind < 10) {
+            wind_factor = 1.0;  // Calm
+          } else if (wind < 20) {
+            wind_factor = 1.1;  // Light wind - slight increase in evaporation
+          } else if (wind < 30) {
+            wind_factor = 1.2;  // Moderate wind
+          } else {
+            wind_factor = 1.3;  // Strong wind - high evaporation
+          }
+          id(pw_wind_factor) = wind_factor;
+          ESP_LOGI("irrigation", "🌬️ Wind Factor: %.2f", wind_factor);
+          
+          // ═══════════════════════════════════════════════
+          // RAIN FORECAST FACTOR (using actual precipitation mm)
+          // ═══════════════════════════════════════════════
+          // This is MORE ACCURATE than probability because we know actual amounts!
+          // 0mm = 1.0 (no rain, normal watering)
+          // 0.1-0.5mm = 0.9 (trace/light drizzle expected)
+          // 0.5-1mm = 0.7 (light rain expected)
+          // 1-2mm = 0.5 (light-moderate rain)
+          // 2-5mm = 0.3 (moderate rain)
+          // 5-10mm = 0.15 (heavy rain)
+          // >10mm = 0.1 (very heavy rain)
+          
+          float rain_factor = 1.0;
+          if (rain_mm > 10.0) {
+            rain_factor = 0.1;  // Very heavy rain forecast - minimal watering
+          } else if (rain_mm > 5.0) {
+            rain_factor = 0.15;  // Heavy rain forecast
+          } else if (rain_mm > 2.0) {
+            rain_factor = 0.3;  // Moderate rain forecast
+          } else if (rain_mm > 1.0) {
+            rain_factor = 0.5;  // Light-moderate rain
+          } else if (rain_mm > 0.5) {
+            rain_factor = 0.7;  // Light rain forecast
+          } else if (rain_mm > 0.1) {
+            rain_factor = 0.9;  // Trace amounts/drizzle
+          } else {
+            rain_factor = 1.0;  // No rain forecast
+          }
+          id(pw_rain_factor) = rain_factor;
+          ESP_LOGI("irrigation", "🌧️ Rain Factor: %.2f (%.1fmm forecast)", rain_factor, rain_mm);
+          
+          // ═══════════════════════════════════════════════
+          // SEASONAL ADJUSTMENT FACTOR
+          // ═══════════════════════════════════════════════
+          auto time = id(homeassistant_time).now();
+          float seasonal_factor = 1.0;
+          if (time.is_valid()) {
+            int month = time.month;
+            switch (month) {
+              case 1:  seasonal_factor = id(seasonal_jan); break;
+              case 2:  seasonal_factor = id(seasonal_feb); break;
+              case 3:  seasonal_factor = id(seasonal_mar); break;
+              case 4:  seasonal_factor = id(seasonal_apr); break;
+              case 5:  seasonal_factor = id(seasonal_may); break;
+              case 6:  seasonal_factor = id(seasonal_jun); break;
+              case 7:  seasonal_factor = id(seasonal_jul); break;
+              case 8:  seasonal_factor = id(seasonal_aug); break;
+              case 9:  seasonal_factor = id(seasonal_sep); break;
+              case 10: seasonal_factor = id(seasonal_oct); break;
+              case 11: seasonal_factor = id(seasonal_nov); break;
+              case 12: seasonal_factor = id(seasonal_dec); break;
+            }
+          }
+          ESP_LOGI("irrigation", "📅 Seasonal Factor: %.2f (month %d)", seasonal_factor, time.month);
+          
+          // ═══════════════════════════════════════════════
+          // SOIL TYPE ADJUSTMENT FACTOR
+          // ═══════════════════════════════════════════════
+          float soil_factor = 1.0;
+          const char* soil_name = "Unknown";
+          if (id(soil_type) == 0) {
+            soil_factor = 1.15;  // Sand: drains fast
+            soil_name = "Sand";
+          } else if (id(soil_type) == 1) {
+            soil_factor = 1.0;   // Loam: balanced
+            soil_name = "Loam";
+          } else if (id(soil_type) == 2) {
+            soil_factor = 0.85;  // Clay: holds moisture
+            soil_name = "Clay";
+          }
+          ESP_LOGI("irrigation", "🌱 Soil Factor: %.2f (%s)", soil_factor, soil_name);
+          
+          // ═══════════════════════════════════════════════
+          // CALCULATE FINAL MULTIPLIER
+          // ═══════════════════════════════════════════════
+          float combined_multiplier = temp_factor * humidity_factor * wind_factor * rain_factor * seasonal_factor * soil_factor;
+          
+          // Apply reasonable limits (0.1 to 2.0)
+          if (combined_multiplier < 0.1) combined_multiplier = 0.1;
+          if (combined_multiplier > 2.0) combined_multiplier = 2.0;
+          
+          id(pw_current_multiplier) = combined_multiplier;
+          id(pw_last_calculation_time) = id(homeassistant_time).now().timestamp;
+          
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "✅ FINAL MULTIPLIER: %.2f", combined_multiplier);
+          ESP_LOGI("irrigation", "   Weather: Temp:%.2f Hum:%.2f Wind:%.2f Rain:%.2f", 
+                   temp_factor, humidity_factor, wind_factor, rain_factor);
+          ESP_LOGI("irrigation", "   Season: %.2f | Soil: %.2f", seasonal_factor, soil_factor);
+          ESP_LOGI("irrigation", "   Combined: %.2f × %.2f × %.2f × %.2f × %.2f × %.2f = %.2f",
+                   temp_factor, humidity_factor, wind_factor, rain_factor, seasonal_factor, soil_factor, combined_multiplier);
+          
+          // Apply to sprinkler controller
+          id($devicename1).set_multiplier(combined_multiplier);
+          
+          ESP_LOGI("irrigation", "💧 Predictive Watering™ multiplier applied to system");
+          ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
+
+  # ============================================================
+  # RESTORE PREDICTIVE WATERING MULTIPLIER (after Smart ET)
+  # ============================================================
+  - id: restore_pw_multiplier
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(smart_et_enabled)) {
+            return;  // Only restore if Smart ET is enabled
+          }
+          
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "🔄 Restoring Predictive Watering multiplier...");
+          
+          // Reset ET multiplier
+          id(et_duration_multiplier) = 1.0;
+          
+          // Restore Predictive Watering's weather-based multiplier
+          float pw_mult = id(pw_current_multiplier);
+          id($devicename1).set_multiplier(pw_mult);
+          
+          ESP_LOGI("irrigation", "   ✅ Multiplier restored to %.2fx (Predictive Watering)", pw_mult);
+          ESP_LOGI("irrigation", "   ℹ️ Smart ET watering complete");
+
+  # ============================================================
+  # SMART ET WATERING SCRIPT
+  # ============================================================
+  - id: calculate_smart_et
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(smart_et_enabled)) {
+            return;
+          }
+          
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "🌱 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "🌱 SMART ET WATERING - Daily Calculation");
+          ESP_LOGI("irrigation", "🌱 ═══════════════════════════════════════════════");
+          
+          // Get weather data
+          float temp = id(outside_temperature).state;
+          float humidity = id(outside_humidity).state;
+          float wind = id(wind_speed).state;
+          
+          // Validate
+          if (isnan(temp)) temp = 20.0;
+          if (isnan(humidity)) humidity = 50.0;
+          if (isnan(wind)) wind = 10.0;
+          
+          // ═══════════════════════════════════════════════
+          // CALCULATE REFERENCE ET (ET0) - Simplified Penman-Monteith
+          // ═══════════════════════════════════════════════
+          
+          // Temperature factor (base ET increases with temperature)
+          float temp_et = 0.0;
+          if (temp < 10) {
+            temp_et = 1.0;
+          } else if (temp < 15) {
+            temp_et = 2.0;
+          } else if (temp < 20) {
+            temp_et = 3.5;
+          } else if (temp < 25) {
+            temp_et = 5.0;
+          } else if (temp < 30) {
+            temp_et = 6.5;
+          } else {
+            temp_et = 8.0;
+          }
+          
+          // Humidity adjustment (dry air increases ET)
+          float humidity_adj = 1.0;
+          if (humidity < 30) {
+            humidity_adj = 1.4;
+          } else if (humidity < 50) {
+            humidity_adj = 1.2;
+          } else if (humidity < 70) {
+            humidity_adj = 1.0;
+          } else if (humidity < 85) {
+            humidity_adj = 0.8;
+          } else {
+            humidity_adj = 0.6;
+          }
+          
+          // Wind adjustment (wind increases ET)
+          float wind_adj = 1.0;
+          if (wind < 10) {
+            wind_adj = 1.0;
+          } else if (wind < 20) {
+            wind_adj = 1.15;
+          } else if (wind < 30) {
+            wind_adj = 1.3;
+          } else {
+            wind_adj = 1.5;
+          }
+          
+          // ═══════════════════════════════════════════════
+          // SOIL TYPE ADJUSTMENT
+          // ═══════════════════════════════════════════════
+          float soil_adj = 1.0;
+          if (id(soil_type) == 0) {
+            soil_adj = 1.15;  // Sand: drains fast, needs more frequent watering
+          } else if (id(soil_type) == 1) {
+            soil_adj = 1.0;   // Loam: balanced
+          } else if (id(soil_type) == 2) {
+            soil_adj = 0.85;  // Clay: holds moisture longer
+          }
+          
+          // Calculate daily ET in mm (with soil adjustment)
+          float daily_et = temp_et * humidity_adj * wind_adj * soil_adj;
+          id(et_daily_et) = daily_et;
+          
+          ESP_LOGI("irrigation", "📊 ET Calculation:");
+          ESP_LOGI("irrigation", "   Temperature ET: %.1f mm", temp_et);
+          ESP_LOGI("irrigation", "   Humidity Adj: %.2fx", humidity_adj);
+          ESP_LOGI("irrigation", "   Wind Adj: %.2fx", wind_adj);
+          ESP_LOGI("irrigation", "   Soil Adj: %.2fx (Sand=1.15, Loam=1.0, Clay=0.85)", soil_adj);
+          ESP_LOGI("irrigation", "   Daily ET: %.1f mm/day", daily_et);
+          
+          // ═══════════════════════════════════════════════
+          // CHECK FOR RAINFALL
+          // ═══════════════════════════════════════════════
+          float rainfall = 0.0;
+          
+          // PRIORITY 1: Use actual precipitation forecast if available (most accurate!)
+          float rain_forecast_mm = id(rain_probability).state;
+          if (!isnan(rain_forecast_mm) && rain_forecast_mm >= 0) {
+            rainfall = rain_forecast_mm;
+            ESP_LOGI("irrigation", "🌧️ Using precipitation forecast: %.1f mm", rainfall);
+          } else {
+            // FALLBACK: Estimate from weather condition if forecast unavailable
+            std::string weather = id(weather_forecast_home).state;
+            
+            if (weather == "pouring") {
+              rainfall = 15.0;  // Heavy rain: 15mm
+            } else if (weather == "rainy") {
+              rainfall = 8.0;   // Rain: 8mm
+            } else if (weather == "snowy-rainy") {
+              rainfall = 5.0;   // Light rain: 5mm
+            }
+            
+            if (rainfall > 0) {
+              ESP_LOGI("irrigation", "🌧️ Estimated rainfall from weather condition (%s): %.1f mm", weather.c_str(), rainfall);
+            } else {
+              ESP_LOGI("irrigation", "🌧️ No rainfall expected (forecast unavailable, weather: %s)", weather.c_str());
+            }
+          }
+          
+          // ═══════════════════════════════════════════════
+          // UPDATE SOIL MOISTURE DEFICIT
+          // ═══════════════════════════════════════════════
+          float old_deficit = id(et_soil_moisture_deficit);
+          
+          // Add ET (water lost)
+          id(et_soil_moisture_deficit) += daily_et;
+          
+          // Subtract rainfall (water gained)
+          id(et_soil_moisture_deficit) -= rainfall;
+          
+          // Don't let deficit go negative (soil can't be oversaturated for our purposes)
+          if (id(et_soil_moisture_deficit) < 0) {
+            id(et_soil_moisture_deficit) = 0;
+          }
+          
+          float new_deficit = id(et_soil_moisture_deficit);
+          
+          ESP_LOGI("irrigation", "💧 Moisture Balance:");
+          ESP_LOGI("irrigation", "   Previous Deficit: %.1f mm", old_deficit);
+          ESP_LOGI("irrigation", "   + ET Lost: %.1f mm", daily_et);
+          ESP_LOGI("irrigation", "   - Rainfall: %.1f mm", rainfall);
+          ESP_LOGI("irrigation", "   = New Deficit: %.1f mm", new_deficit);
+          ESP_LOGI("irrigation", "   Threshold: %.1f mm", id(et_water_threshold));
+          
+          // ═══════════════════════════════════════════════
+          // CHECK IF IRRIGATION NEEDED
+          // ═══════════════════════════════════════════════
+          if (new_deficit >= id(et_water_threshold)) {
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "🚨 DEFICIT THRESHOLD REACHED!");
+            ESP_LOGI("irrigation", "   Irrigation is NEEDED");
+            
+            // ═══════════════════════════════════════════════
+            // CALCULATE SMART ET DURATION MULTIPLIER
+            // ═══════════════════════════════════════════════
+            // Adjust watering duration based on deficit severity
+            float threshold = id(et_water_threshold);
+            float deficit_ratio = new_deficit / threshold;
+            
+            // Duration multiplier scales with how far over threshold we are
+            // At threshold (1.0x): multiply by 1.0
+            // 20% over (1.2x): multiply by 1.2
+            // 50% over (1.5x): multiply by 1.5
+            // Cap at 2.0x for safety
+            float et_multiplier = deficit_ratio;
+            if (et_multiplier > 2.0) et_multiplier = 2.0;
+            if (et_multiplier < 1.0) et_multiplier = 1.0;
+            
+            id(et_duration_multiplier) = et_multiplier;
+            
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "💧 Smart ET Duration Adjustment:");
+            ESP_LOGI("irrigation", "   Deficit: %.1f mm (%.0f%% over threshold)", new_deficit, (deficit_ratio - 1.0) * 100);
+            ESP_LOGI("irrigation", "   ET Multiplier: %.2fx", et_multiplier);
+            
+            // Calculate combined multiplier with Predictive Watering
+            float pw_mult = id($devicename1).multiplier();
+            float combined = pw_mult * et_multiplier;
+            if (combined > 2.0) combined = 2.0;  // Safety cap
+            
+            ESP_LOGI("irrigation", "   Predictive Watering: %.2fx", pw_mult);
+            ESP_LOGI("irrigation", "   Combined Multiplier: %.2fx", combined);
+            ESP_LOGI("irrigation", "   (Example: 15min zone → %.1f min)", 15.0 * combined);
+            
+            // Apply ET multiplier temporarily
+            id($devicename1).set_multiplier(combined);
+            
+            // Check if system is enabled and not in rain delay
+            if (!id(irrigation_system_enable).state) {
+              ESP_LOGW("irrigation", "   ❌ System is DISABLED - cannot water");
+              id(et_duration_multiplier) = 1.0;  // Reset multiplier
+            } else if (id(rain_delay_end_time) > id(homeassistant_time).now().timestamp) {
+              ESP_LOGW("irrigation", "   ❌ Rain delay is ACTIVE - cannot water");
+              id(et_duration_multiplier) = 1.0;  // Reset multiplier
+            } else if (id(is_time_restricted)) {
+              ESP_LOGW("irrigation", "   ⏰ Time restricted - will water when allowed");
+              id(et_pending_irrigation) = true;
+            } else {
+              // Check if current time matches Smart ET schedule
+              auto time = id(homeassistant_time).now();
+              int current_hour = time.hour;
+              int current_minute = time.minute;
+              
+              // Convert schedule to 24-hour format
+              int schedule_hour = id(et_schedule_hour);
+              if (id(et_schedule_am_pm) == 1 && schedule_hour != 12) {
+                schedule_hour += 12;  // PM conversion
+              } else if (id(et_schedule_am_pm) == 0 && schedule_hour == 12) {
+                schedule_hour = 0;  // Midnight conversion
+              }
+              
+              // Check if we're within 5 minutes of scheduled time
+              bool time_match = (current_hour == schedule_hour && abs(current_minute - id(et_schedule_minute)) < 5);
+              
+              if (time_match) {
+                ESP_LOGI("irrigation", "");
+                ESP_LOGI("irrigation", "   ✅ Starting irrigation cycle NOW (scheduled time)");
+                id(et_pending_irrigation) = false;
+                
+                // Start all enabled zones (will use the combined multiplier)
+                id(start_all_zones_cycle_soak).press();
+                
+                // Reset deficit after watering
+                // Calculate actual water applied (assuming we filled the deficit)
+                float water_applied = new_deficit * et_multiplier;
+                ESP_LOGI("irrigation", "   Estimated water applied: %.1f mm", water_applied);
+                
+                id(et_soil_moisture_deficit) = 0;
+                id(et_last_water_time) = id(homeassistant_time).now().timestamp;
+              } else {
+                ESP_LOGI("irrigation", "");
+                ESP_LOGI("irrigation", "   ⏰ Watering PENDING - waiting for scheduled time");
+                ESP_LOGI("irrigation", "   Scheduled: %d:%02d %s", 
+                         id(et_schedule_hour), 
+                         id(et_schedule_minute),
+                         id(et_schedule_am_pm) == 0 ? "AM" : "PM");
+                ESP_LOGI("irrigation", "   Current: %d:%02d %s", 
+                         current_hour > 12 ? current_hour - 12 : (current_hour == 0 ? 12 : current_hour),
+                         current_minute,
+                         current_hour >= 12 ? "PM" : "AM");
+                id(et_pending_irrigation) = true;
+              }
+              
+              // Note: Multiplier will be restored after watering completes
+            }
+          } else {
+            ESP_LOGI("irrigation", "   ✅ Deficit below threshold - no watering needed");
+            id(et_pending_irrigation) = false;
+            id(et_duration_multiplier) = 1.0;  // Reset when not watering
+          }
+          
+          id(et_last_calculation_time) = id(homeassistant_time).now().timestamp;
+          ESP_LOGI("irrigation", "🌱 ═══════════════════════════════════════════════");
+
   # Request NORMAL mode start: start now if idle, otherwise queue it (queued_type = 3)
   - id: request_normal_start
     mode: restart
@@ -3827,11 +5440,24 @@ script:
           ESP_LOGI("irrigation", "🚀 run_zone_with_cycles STARTED - mode should be SINGLE (not restart)");
           id(irrigation_busy) = true;
           
+          // Get custom zone name
+          std::string zone_name = "Zone " + std::to_string(zone + 1);
+          switch(zone) {
+            case 0: zone_name = id(zone1_name).state; break;
+            case 1: zone_name = id(zone2_name).state; break;
+            case 2: zone_name = id(zone3_name).state; break;
+            case 3: zone_name = id(zone4_name).state; break;
+            case 4: zone_name = id(zone5_name).state; break;
+            case 5: zone_name = id(zone6_name).state; break;
+            case 6: zone_name = id(zone7_name).state; break;
+            case 7: zone_name = id(zone8_name).state; break;
+          }
+          
           // Get multiplier first
           float multiplier = id($devicename1).multiplier();
           
-          ESP_LOGI("irrigation", "🌊 ZONE %d START | Mode: %s | Duration: %ds | Multiplier: %.2f",
-                   zone + 1,
+          ESP_LOGI("irrigation", "🌊 %s (Zone %d) START | Mode: %s | Duration: %ds | Multiplier: %.2f",
+                   zone_name.c_str(), zone + 1,
                    (force_normal || !id(cycle_soak_switch).state) ? "NORMAL" : "CYCLE&SOAK",
                    duration, multiplier);
           
@@ -3901,6 +5527,60 @@ script:
             - delay: !lambda 'return (int)(duration * id($devicename1).multiplier() + 3) * 1000;'
             - lambda: |-
                 ESP_LOGI("irrigation", "Zone %d COMPLETE (normal mode)", zone);
+                
+                // ═══════════════════════════════════════════════
+                // TRACK WATER USAGE
+                // ═══════════════════════════════════════════════
+                float actual_duration_min = (duration * id($devicename1).multiplier()) / 60.0;
+                float flow_rate = 0.0;
+                float water_used = 0.0;
+                
+                // Get flow rate for this zone
+                switch(zone) {
+                  case 0: flow_rate = id(zone1_flow_rate); break;
+                  case 1: flow_rate = id(zone2_flow_rate); break;
+                  case 2: flow_rate = id(zone3_flow_rate); break;
+                  case 3: flow_rate = id(zone4_flow_rate); break;
+                  case 4: flow_rate = id(zone5_flow_rate); break;
+                  case 5: flow_rate = id(zone6_flow_rate); break;
+                  case 6: flow_rate = id(zone7_flow_rate); break;
+                  case 7: flow_rate = id(zone8_flow_rate); break;
+                }
+                
+                // Calculate water used (flow_rate L/min × duration min)
+                water_used = flow_rate * actual_duration_min;
+                
+                // Update zone water usage
+                switch(zone) {
+                  case 0: id(zone1_water_used) += water_used; break;
+                  case 1: id(zone2_water_used) += water_used; break;
+                  case 2: id(zone3_water_used) += water_used; break;
+                  case 3: id(zone4_water_used) += water_used; break;
+                  case 4: id(zone5_water_used) += water_used; break;
+                  case 5: id(zone6_water_used) += water_used; break;
+                  case 6: id(zone7_water_used) += water_used; break;
+                  case 7: id(zone8_water_used) += water_used; break;
+                }
+                
+                // Update total system water usage
+                id(total_water_used) += water_used;
+                
+                // Get custom zone name
+                std::string zone_name = "Zone " + std::to_string(zone + 1);
+                switch(zone) {
+                  case 0: zone_name = id(zone1_name).state; break;
+                  case 1: zone_name = id(zone2_name).state; break;
+                  case 2: zone_name = id(zone3_name).state; break;
+                  case 3: zone_name = id(zone4_name).state; break;
+                  case 4: zone_name = id(zone5_name).state; break;
+                  case 5: zone_name = id(zone6_name).state; break;
+                  case 6: zone_name = id(zone7_name).state; break;
+                  case 7: zone_name = id(zone8_name).state; break;
+                }
+                
+                ESP_LOGI("irrigation", "💧 WATER USED - %s (Zone %d): %.1f L (%.1f min × %.1f L/min) | System Total: %.1f L",
+                         zone_name.c_str(), zone + 1, water_used, actual_duration_min, flow_rate, id(total_water_used));
+                
                 if (!id(in_program_run)) {
                   id(irrigation_busy) = false;
                   id(drain_queue).execute();
@@ -3951,6 +5631,61 @@ script:
             # Cleanup
             - lambda: |-
                 ESP_LOGI("irrigation", "Zone %d COMPLETE (cycle & soak)", zone);
+                
+                // ═══════════════════════════════════════════════
+                // TRACK WATER USAGE
+                // ═══════════════════════════════════════════════
+                // In cycle & soak mode, total time = cycles × cycle_duration (no multiplier)
+                float actual_duration_min = (id(total_cycles) * id(cycle_duration_minutes));
+                float flow_rate = 0.0;
+                float water_used = 0.0;
+                
+                // Get flow rate for this zone
+                switch(zone) {
+                  case 0: flow_rate = id(zone1_flow_rate); break;
+                  case 1: flow_rate = id(zone2_flow_rate); break;
+                  case 2: flow_rate = id(zone3_flow_rate); break;
+                  case 3: flow_rate = id(zone4_flow_rate); break;
+                  case 4: flow_rate = id(zone5_flow_rate); break;
+                  case 5: flow_rate = id(zone6_flow_rate); break;
+                  case 6: flow_rate = id(zone7_flow_rate); break;
+                  case 7: flow_rate = id(zone8_flow_rate); break;
+                }
+                
+                // Calculate water used (flow_rate L/min × duration min)
+                water_used = flow_rate * actual_duration_min;
+                
+                // Update zone water usage
+                switch(zone) {
+                  case 0: id(zone1_water_used) += water_used; break;
+                  case 1: id(zone2_water_used) += water_used; break;
+                  case 2: id(zone3_water_used) += water_used; break;
+                  case 3: id(zone4_water_used) += water_used; break;
+                  case 4: id(zone5_water_used) += water_used; break;
+                  case 5: id(zone6_water_used) += water_used; break;
+                  case 6: id(zone7_water_used) += water_used; break;
+                  case 7: id(zone8_water_used) += water_used; break;
+                }
+                
+                // Update total system water usage
+                id(total_water_used) += water_used;
+                
+                // Get custom zone name
+                std::string zone_name = "Zone " + std::to_string(zone + 1);
+                switch(zone) {
+                  case 0: zone_name = id(zone1_name).state; break;
+                  case 1: zone_name = id(zone2_name).state; break;
+                  case 2: zone_name = id(zone3_name).state; break;
+                  case 3: zone_name = id(zone4_name).state; break;
+                  case 4: zone_name = id(zone5_name).state; break;
+                  case 5: zone_name = id(zone6_name).state; break;
+                  case 6: zone_name = id(zone7_name).state; break;
+                  case 7: zone_name = id(zone8_name).state; break;
+                }
+                
+                ESP_LOGI("irrigation", "💧 WATER USED - %s (Zone %d): %.1f L (%d cycles × %d min × %.1f L/min) | System Total: %.1f L",
+                         zone_name.c_str(), zone + 1, water_used, id(total_cycles), id(cycle_duration_minutes), flow_rate, id(total_water_used));
+                
                 if (!id(in_program_run)) {
                   id(irrigation_busy) = false;
                   id(drain_queue).execute();
@@ -4196,6 +5931,12 @@ script:
           id(irrigation_busy) = false;
           id(in_program_run) = false;
       
+      # Reset valve status to Idle
+      - text_sensor.template.publish:
+          id: dev1_valve_status
+          state: "Idle"
+      - logger.log: "Valve status reset to Idle"
+      
       # Restore Auto Advance after completion
       - delay: 500ms
       - switch.turn_on: dev1_auto_advance
@@ -4366,6 +6107,12 @@ script:
           id(in_program_run) = false;
           id(irrigation_busy) = false;
       
+      # Reset valve status to Idle
+      - text_sensor.template.publish:
+          id: dev1_valve_status
+          state: "Idle"
+      - logger.log: "Valve status reset to Idle"
+      
       # Restore Auto Advance
       - delay: 500ms
       - switch.turn_on: dev1_auto_advance
@@ -4423,6 +6170,101 @@ script:
           
           id(is_time_restricted) = blocked;
 
+###############################################
+# Customizable Zone Names
+###############################################
+text:
+  - platform: template
+    name: "$dev1_zone1 Name"
+    id: zone1_name
+    icon: "mdi:rename-box"
+    optimistic: true
+    min_length: 1
+    max_length: 30
+    initial_value: "Front Lawn"
+    mode: text
+    restore_value: true
+
+  - platform: template
+    name: "$dev1_zone2 Name"
+    id: zone2_name
+    icon: "mdi:rename-box"
+    optimistic: true
+    min_length: 1
+    max_length: 30
+    initial_value: "Back Lawn"
+    mode: text
+    restore_value: true
+
+  - platform: template
+    name: "$dev1_zone3 Name"
+    id: zone3_name
+    icon: "mdi:rename-box"
+    optimistic: true
+    min_length: 1
+    max_length: 30
+    initial_value: "Garden Beds"
+    mode: text
+    restore_value: true
+
+  - platform: template
+    name: "$dev1_zone4 Name"
+    id: zone4_name
+    icon: "mdi:rename-box"
+    optimistic: true
+    min_length: 1
+    max_length: 30
+    initial_value: "Side Yard"
+    mode: text
+    restore_value: true
+
+  - platform: template
+    name: "$dev1_zone5 Name"
+    id: zone5_name
+    icon: "mdi:rename-box"
+    optimistic: true
+    min_length: 1
+    max_length: 30
+    initial_value: "Zone 5"
+    mode: text
+    restore_value: true
+
+  - platform: template
+    name: "$dev1_zone6 Name"
+    id: zone6_name
+    icon: "mdi:rename-box"
+    optimistic: true
+    min_length: 1
+    max_length: 30
+    initial_value: "Zone 6"
+    mode: text
+    restore_value: true
+
+  - platform: template
+    name: "$dev1_zone7 Name"
+    id: zone7_name
+    icon: "mdi:rename-box"
+    optimistic: true
+    min_length: 1
+    max_length: 30
+    initial_value: "Zone 7"
+    mode: text
+    restore_value: true
+
+  - platform: template
+    name: "$dev1_zone8 Name"
+    id: zone8_name
+    icon: "mdi:rename-box"
+    optimistic: true
+    min_length: 1
+    max_length: 30
+    initial_value: "Zone 8"
+    mode: text
+    restore_value: true
+
+###############################################
+# Select Components
+###############################################
 select:
   # AM-PM selector
   - platform: template
@@ -4464,6 +6306,22 @@ select:
     set_action:
       - lambda: |-
           id(restrict_end_am_pm) = (x == "AM") ? 0 : 1;
+
+  # Smart ET Schedule AM-PM
+  - platform: template
+    id: et_schedule_am_pm_select
+    name: "$dev1_what ET Schedule AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(et_schedule_am_pm) = (x == "AM") ? 0 : 1;
+          ESP_LOGI("irrigation", "Smart ET schedule AM/PM updated to %s", x.c_str());
 
 # Program A schedule type
   - platform: template
@@ -4836,6 +6694,48 @@ select:
           else if (x == "Program B") id(zone8_program) = 2;
           else if (x == "Program C") id(zone8_program) = 3;
 
+  # ═══════════════════════════════════════════════════════════
+  # SOIL TYPE SELECTOR (Whanganui - Sandy Soil)
+  # ═══════════════════════════════════════════════════════════
+  - platform: template
+    id: soil_type_select
+    name: "$dev1_what Soil Type"
+    icon: "mdi:sprout"
+    optimistic: true
+    options:
+      - "Sand"
+      - "Loam"
+      - "Clay"
+    initial_option: "Sand"  # Whanganui default
+    restore_value: true
+    set_action:
+      - lambda: |-
+          if (x == "Sand") {
+            id(soil_type) = 0;
+            // Auto-adjust cycle & soak for sand (fast drainage)
+            id(cycle_duration_minutes) = 10;
+            id(soak_duration_minutes) = 5;
+            ESP_LOGI("irrigation", "🌱 Soil Type: SAND");
+            ESP_LOGI("irrigation", "   ET Factor: 1.15x (drains fast, needs more frequent)");
+            ESP_LOGI("irrigation", "   Cycle/Soak: 10min/5min (light, frequent applications)");
+          } else if (x == "Loam") {
+            id(soil_type) = 1;
+            // Standard cycle & soak for loam (balanced)
+            id(cycle_duration_minutes) = 15;
+            id(soak_duration_minutes) = 10;
+            ESP_LOGI("irrigation", "🌱 Soil Type: LOAM");
+            ESP_LOGI("irrigation", "   ET Factor: 1.00x (balanced moisture retention)");
+            ESP_LOGI("irrigation", "   Cycle/Soak: 15min/10min (standard applications)");
+          } else if (x == "Clay") {
+            id(soil_type) = 2;
+            // Long soak for clay (slow drainage, prevent runoff)
+            id(cycle_duration_minutes) = 10;
+            id(soak_duration_minutes) = 15;
+            ESP_LOGI("irrigation", "🌱 Soil Type: CLAY");
+            ESP_LOGI("irrigation", "   ET Factor: 0.85x (holds moisture longer)");
+            ESP_LOGI("irrigation", "   Cycle/Soak: 10min/15min (prevent runoff)");
+          }
+
 ###############################################
 # Main Sprinkler Controller
 ###############################################
@@ -4845,6 +6745,230 @@ switch:
   - platform: restart
     name: "Restart $esphome_comment"
     icon: "mdi:restart"
+
+  # ═══════════════════════════════════════════════════════════
+  # PREDICTIVE WATERING™ MASTER SWITCH
+  # ═══════════════════════════════════════════════════════════
+  - platform: template
+    name: "$dev1_what Predictive Watering™"
+    id: predictive_watering_switch
+    icon: "mdi:weather-partly-rainy"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: |-
+          id(predictive_watering_enabled) = true;
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "💧 PREDICTIVE WATERING™ ENABLED");
+          ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
+      - script.execute: calculate_predictive_watering
+    on_turn_off:
+      - lambda: |-
+          id(predictive_watering_enabled) = false;
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "❌ ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "❌ PREDICTIVE WATERING™ DISABLED");
+          ESP_LOGI("irrigation", "❌ ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "❌ Reverting to standard seasonal multiplier");
+          
+          // Revert to basic seasonal multiplier
+          auto time = id(homeassistant_time).now();
+          if (!time.is_valid()) {
+            id($devicename1).set_multiplier(1.0);
+            return;
+          }
+          
+          int month = time.month;
+          float temp = id(outside_temperature).state;
+          if (isnan(temp)) temp = 20.0;
+          
+          float multiplier = 1.0;
+          if (month >= 12 || month <= 2) {
+            multiplier = 1.3;
+            if (temp > 25) multiplier = 1.6;
+            if (temp > 30) multiplier = 1.8;
+          } else if (month >= 6 && month <= 8) {
+            multiplier = 0.5;
+            if (temp < 10) multiplier = 0.3;
+          } else {
+            multiplier = 0.8;
+            if (temp > 20) multiplier = 1.0;
+          }
+          
+          id($devicename1).set_multiplier(multiplier);
+          ESP_LOGI("irrigation", "✓ Multiplier set to %.2f (basic seasonal)", multiplier);
+
+  # ═══════════════════════════════════════════════════════════
+  # MASTER VALVE ENABLE (Hunter Pro-C Style)
+  # ═══════════════════════════════════════════════════════════
+  # Optional feature - system works fine without master valve
+  # When ENABLED: Master valve opens automatically with any zone
+  # When DISABLED: Zones work independently (normal operation)
+  
+  - platform: template
+    name: "$dev1_what Enable Master Valve"
+    id: master_valve_enable_switch
+    icon: "mdi:valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF  # Off by default - optional feature
+    on_turn_on:
+      - lambda: |-
+          id(master_valve_enabled) = true;
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "🔧 MASTER VALVE ENABLED");
+          ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "🔧 Master valve will open automatically when zones run");
+          ESP_LOGI("irrigation", "🔧 Manual controls are now active");
+          ESP_LOGI("irrigation", "");
+    on_turn_off:
+      - lambda: |-
+          id(master_valve_enabled) = false;
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "❌ ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "❌ MASTER VALVE DISABLED");
+          ESP_LOGI("irrigation", "❌ ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "❌ Zones will operate independently (normal mode)");
+          ESP_LOGI("irrigation", "❌ Master valve manual controls disabled for safety");
+          ESP_LOGI("irrigation", "");
+          
+          // Safety: Turn off master valve if it's currently on
+          if (id(master_valve_relay).state) {
+            ESP_LOGW("irrigation", "⚠️ Master valve was ON - closing for safety");
+            id(master_valve_relay).turn_off();
+          }
+
+  # ═══════════════════════════════════════════════════════════
+  # PER-ZONE MASTER VALVE CONTROL
+  # ═══════════════════════════════════════════════════════════
+  # Control which zones use the master valve (when globally enabled)
+  # Allows zones to bypass master valve for well water, drip systems, etc.
+  
+  - platform: template
+    name: "$dev1_zone1 Use Master Valve"
+    id: zone1_mv_switch
+    icon: "mdi:pipe-valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON  # Default ON
+    lambda: "return id(zone1_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone1_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone1_master_valve_enabled) = false;"
+
+  - platform: template
+    name: "$dev1_zone2 Use Master Valve"
+    id: zone2_mv_switch
+    icon: "mdi:pipe-valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone2_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone2_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone2_master_valve_enabled) = false;"
+
+  - platform: template
+    name: "$dev1_zone3 Use Master Valve"
+    id: zone3_mv_switch
+    icon: "mdi:pipe-valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone3_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone3_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone3_master_valve_enabled) = false;"
+
+  - platform: template
+    name: "$dev1_zone4 Use Master Valve"
+    id: zone4_mv_switch
+    icon: "mdi:pipe-valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone4_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone4_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone4_master_valve_enabled) = false;"
+
+  - platform: template
+    name: "$dev1_zone5 Use Master Valve"
+    id: zone5_mv_switch
+    icon: "mdi:pipe-valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone5_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone5_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone5_master_valve_enabled) = false;"
+
+  - platform: template
+    name: "$dev1_zone6 Use Master Valve"
+    id: zone6_mv_switch
+    icon: "mdi:pipe-valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone6_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone6_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone6_master_valve_enabled) = false;"
+
+  - platform: template
+    name: "$dev1_zone7 Use Master Valve"
+    id: zone7_mv_switch
+    icon: "mdi:pipe-valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone7_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone7_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone7_master_valve_enabled) = false;"
+
+  - platform: template
+    name: "$dev1_zone8 Use Master Valve"
+    id: zone8_mv_switch
+    icon: "mdi:pipe-valve"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(zone8_master_valve_enabled);"
+    turn_on_action:
+      - lambda: "id(zone8_master_valve_enabled) = true;"
+    turn_off_action:
+      - lambda: "id(zone8_master_valve_enabled) = false;"
+
+  # ═══════════════════════════════════════════════════════════
+  # SMART ET WATERING MASTER SWITCH
+  # ═══════════════════════════════════════════════════════════
+  - platform: template
+    name: "$dev1_what Smart ET Watering"
+    id: smart_et_switch
+    icon: "mdi:sprinkler-variant"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - lambda: |-
+          id(smart_et_enabled) = true;
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "🌱 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "🌱 SMART ET WATERING ENABLED");
+          ESP_LOGI("irrigation", "🌱 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "🌱 System will automatically water based on ET");
+          ESP_LOGI("irrigation", "🌱 Scheduled watering is OVERRIDDEN");
+      - script.execute: calculate_smart_et
+    on_turn_off:
+      - lambda: |-
+          id(smart_et_enabled) = false;
+          id(et_pending_irrigation) = false;
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "❌ ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "❌ SMART ET WATERING DISABLED");
+          ESP_LOGI("irrigation", "❌ ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "❌ Reverting to scheduled watering");
 
   # Manual Master Valve Test Button
   - platform: template
@@ -5135,108 +7259,6 @@ switch:
       - lambda: "id(zone8_schedule_enabled) = true;"
     turn_off_action:
       - lambda: "id(zone8_schedule_enabled) = false;"
-
-# Master Valve per-zone enable (Hunter Pro-C style)
-# Each zone can independently enable/disable master valve usage
-  - platform: template
-    name: "Zone 1 - Use Master Valve"
-    id: zone1_mv_switch
-    icon: "mdi:valve"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    lambda: "return id(zone1_master_valve_enabled);"
-    turn_on_action:
-      - lambda: |-
-          id(zone1_master_valve_enabled) = true;
-          ESP_LOGI("irrigation", "Zone 1: Master Valve ENABLED");
-    turn_off_action:
-      - lambda: |-
-          id(zone1_master_valve_enabled) = false;
-          ESP_LOGI("irrigation", "Zone 1: Master Valve DISABLED");
-          
-  - platform: template
-    name: "Zone 2 - Use Master Valve"
-    id: zone2_mv_switch
-    icon: "mdi:valve"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    lambda: "return id(zone2_master_valve_enabled);"
-    turn_on_action:
-      - lambda: "id(zone2_master_valve_enabled) = true;"
-    turn_off_action:
-      - lambda: "id(zone2_master_valve_enabled) = false;"
-      
-  - platform: template
-    name: "Zone 3 - Use Master Valve"
-    id: zone3_mv_switch
-    icon: "mdi:valve"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    lambda: "return id(zone3_master_valve_enabled);"
-    turn_on_action:
-      - lambda: "id(zone3_master_valve_enabled) = true;"
-    turn_off_action:
-      - lambda: "id(zone3_master_valve_enabled) = false;"
-      
-  - platform: template
-    name: "Zone 4 - Use Master Valve"
-    id: zone4_mv_switch
-    icon: "mdi:valve"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    lambda: "return id(zone4_master_valve_enabled);"
-    turn_on_action:
-      - lambda: "id(zone4_master_valve_enabled) = true;"
-    turn_off_action:
-      - lambda: "id(zone4_master_valve_enabled) = false;"
-      
-  - platform: template
-    name: "Zone 5 - Use Master Valve"
-    id: zone5_mv_switch
-    icon: "mdi:valve"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    lambda: "return id(zone5_master_valve_enabled);"
-    turn_on_action:
-      - lambda: "id(zone5_master_valve_enabled) = true;"
-    turn_off_action:
-      - lambda: "id(zone5_master_valve_enabled) = false;"
-      
-  - platform: template
-    name: "Zone 6 - Use Master Valve"
-    id: zone6_mv_switch
-    icon: "mdi:valve"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    lambda: "return id(zone6_master_valve_enabled);"
-    turn_on_action:
-      - lambda: "id(zone6_master_valve_enabled) = true;"
-    turn_off_action:
-      - lambda: "id(zone6_master_valve_enabled) = false;"
-      
-  - platform: template
-    name: "Zone 7 - Use Master Valve"
-    id: zone7_mv_switch
-    icon: "mdi:valve"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    lambda: "return id(zone7_master_valve_enabled);"
-    turn_on_action:
-      - lambda: "id(zone7_master_valve_enabled) = true;"
-    turn_off_action:
-      - lambda: "id(zone7_master_valve_enabled) = false;"
-      
-  - platform: template
-    name: "Zone 8 - Use Master Valve"
-    id: zone8_mv_switch
-    icon: "mdi:valve"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    lambda: "return id(zone8_master_valve_enabled);"
-    turn_on_action:
-      - lambda: "id(zone8_master_valve_enabled) = true;"
-    turn_off_action:
-      - lambda: "id(zone8_master_valve_enabled) = false;"
 
 # Program enable switches
   - platform: template
@@ -5821,6 +7843,9 @@ sprinkler:
               id(irrigation_busy) = false;
               id(drain_queue).execute();
             }
+            
+            // Reset valve status to Idle when main switch turns off
+            id(dev1_valve_status).publish_state("Idle");
 
       on_turn_on:
         - lambda: |-
@@ -5996,6 +8021,108 @@ sprinkler:
 
 
 button:
+  # Manual Predictive Watering calculation trigger
+  - platform: template
+    name: "$dev1_what Recalculate Predictive Watering"
+    icon: "mdi:refresh"
+    on_press:
+      - script.execute: calculate_predictive_watering
+
+  # Smart ET buttons
+  - platform: template
+    name: "$dev1_what Recalculate Smart ET"
+    icon: "mdi:calculator"
+    on_press:
+      - script.execute: calculate_smart_et
+
+  - platform: template
+    name: "$dev1_what Reset ET Deficit"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          id(et_soil_moisture_deficit) = 0;
+          id(et_pending_irrigation) = false;
+          ESP_LOGI("irrigation", "🌱 Smart ET: Deficit manually reset to 0mm");
+
+  # ═══════════════════════════════════════════════
+  # MASTER VALVE CONTROLS (Hunter Pro-C Style)
+  # ═══════════════════════════════════════════════
+  
+  - platform: template
+    name: "$dev1_what Master Valve ON"
+    icon: "mdi:valve-open"
+    on_press:
+      - lambda: |-
+          if (!id(master_valve_enabled)) {
+            ESP_LOGW("irrigation", "⚠️ Master Valve is DISABLED in settings - enable it first!");
+            return;
+          }
+          ESP_LOGI("irrigation", "🔧 MANUAL: Master Valve turned ON");
+          id(master_valve_relay).turn_on();
+      - delay: 100ms
+      - lambda: |-
+          if (id(master_valve_relay).state) {
+            ESP_LOGI("irrigation", "✅ Master Valve is now OPEN");
+          }
+
+  - platform: template
+    name: "$dev1_what Master Valve OFF"
+    icon: "mdi:valve-closed"
+    on_press:
+      - lambda: |-
+          ESP_LOGI("irrigation", "🔧 MANUAL: Master Valve turned OFF");
+          id(master_valve_relay).turn_off();
+      - delay: 100ms
+      - lambda: |-
+          if (!id(master_valve_relay).state) {
+            ESP_LOGI("irrigation", "✅ Master Valve is now CLOSED");
+          }
+
+  - platform: template
+    name: "$dev1_what Test Master Valve"
+    icon: "mdi:test-tube"
+    on_press:
+      - lambda: |-
+          if (!id(master_valve_enabled)) {
+            ESP_LOGW("irrigation", "⚠️ Master Valve is DISABLED in settings - enable it first!");
+            return;
+          }
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "🧪 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "🧪 MASTER VALVE TEST");
+          ESP_LOGI("irrigation", "🧪 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "Opening master valve for 10 seconds...");
+      
+      - lambda: "id(master_valve_relay).turn_on();"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (1s)\");"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (2s)\");"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (3s)\");"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (4s)\");"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (5s)\");"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (6s)\");"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (7s)\");"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (8s)\");"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (9s)\");"
+      - delay: 1s
+      - lambda: "ESP_LOGI(\"irrigation\", \"✅ Master Valve OPEN (10s)\");"
+      
+      - lambda: "id(master_valve_relay).turn_off();"
+      - lambda: |-
+          ESP_LOGI("irrigation", "🔒 Master Valve CLOSED");
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "✅ Master Valve test complete!");
+          ESP_LOGI("irrigation", "   If you heard/saw water flow, master valve is working!");
+          ESP_LOGI("irrigation", "");
+
   - platform: template
     id: start_all_zones_normal
     name: "$dev1_what Start All Zones (Normal)"
@@ -6528,3 +8655,117 @@ button:
             duration: !lambda "return id(quick_run_duration).state * 60;"
             add_delay: true
             allow_queue: true
+
+  # ═══════════════════════════════════════════════
+  # WATER USAGE RESET BUTTONS (Hunter Pro-C Style)
+  # ═══════════════════════════════════════════════
+  
+  - platform: template
+    name: "$dev1_what Reset All Water Usage"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "💧 RESETTING ALL WATER USAGE COUNTERS");
+          ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "Previous Total: %.1f L", id(total_water_used));
+          
+          // Reset all zone counters
+          id(zone1_water_used) = 0;
+          id(zone2_water_used) = 0;
+          id(zone3_water_used) = 0;
+          id(zone4_water_used) = 0;
+          id(zone5_water_used) = 0;
+          id(zone6_water_used) = 0;
+          id(zone7_water_used) = 0;
+          id(zone8_water_used) = 0;
+          
+          // Reset total
+          id(total_water_used) = 0;
+          
+          // Set reset timestamp
+          id(water_usage_reset_time) = id(homeassistant_time).now().timestamp;
+          
+          ESP_LOGI("irrigation", "✅ All water usage counters reset to 0 L");
+          ESP_LOGI("irrigation", "");
+
+  - platform: template
+    name: "$dev1_zone1 Reset Water Usage"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          float previous = id(zone1_water_used);
+          id(total_water_used) -= previous;
+          id(zone1_water_used) = 0;
+          ESP_LOGI("irrigation", "💧 Zone 1 water usage reset (was %.1f L) - System total now: %.1f L", previous, id(total_water_used));
+
+  - platform: template
+    name: "$dev1_zone2 Reset Water Usage"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          float previous = id(zone2_water_used);
+          id(total_water_used) -= previous;
+          id(zone2_water_used) = 0;
+          ESP_LOGI("irrigation", "💧 Zone 2 water usage reset (was %.1f L) - System total now: %.1f L", previous, id(total_water_used));
+
+  - platform: template
+    name: "$dev1_zone3 Reset Water Usage"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          float previous = id(zone3_water_used);
+          id(total_water_used) -= previous;
+          id(zone3_water_used) = 0;
+          ESP_LOGI("irrigation", "💧 Zone 3 water usage reset (was %.1f L) - System total now: %.1f L", previous, id(total_water_used));
+
+  - platform: template
+    name: "$dev1_zone4 Reset Water Usage"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          float previous = id(zone4_water_used);
+          id(total_water_used) -= previous;
+          id(zone4_water_used) = 0;
+          ESP_LOGI("irrigation", "💧 Zone 4 water usage reset (was %.1f L) - System total now: %.1f L", previous, id(total_water_used));
+
+  - platform: template
+    name: "$dev1_zone5 Reset Water Usage"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          float previous = id(zone5_water_used);
+          id(total_water_used) -= previous;
+          id(zone5_water_used) = 0;
+          ESP_LOGI("irrigation", "💧 Zone 5 water usage reset (was %.1f L) - System total now: %.1f L", previous, id(total_water_used));
+
+  - platform: template
+    name: "$dev1_zone6 Reset Water Usage"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          float previous = id(zone6_water_used);
+          id(total_water_used) -= previous;
+          id(zone6_water_used) = 0;
+          ESP_LOGI("irrigation", "💧 Zone 6 water usage reset (was %.1f L) - System total now: %.1f L", previous, id(total_water_used));
+
+  - platform: template
+    name: "$dev1_zone7 Reset Water Usage"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          float previous = id(zone7_water_used);
+          id(total_water_used) -= previous;
+          id(zone7_water_used) = 0;
+          ESP_LOGI("irrigation", "💧 Zone 7 water usage reset (was %.1f L) - System total now: %.1f L", previous, id(total_water_used));
+
+  - platform: template
+    name: "$dev1_zone8 Reset Water Usage"
+    icon: "mdi:water-off"
+    on_press:
+      - lambda: |-
+          float previous = id(zone8_water_used);
+          id(total_water_used) -= previous;
+          id(zone8_water_used) = 0;
+          ESP_LOGI("irrigation", "💧 Zone 8 water usage reset (was %.1f L) - System total now: %.1f L", previous, id(total_water_used));
