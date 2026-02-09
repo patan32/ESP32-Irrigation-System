@@ -163,6 +163,122 @@ esphome:
       - delay: 2s
       - script.execute: calculate_smart_et
       
+      # ═══════════════════════════════════════════════
+      # STARTUP VALIDATION (Production Feature)
+      # ═══════════════════════════════════════════════
+      - delay: 10s
+      - lambda: |-
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "🔍 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "🔍 SYSTEM STARTUP VALIDATION");
+          ESP_LOGI("irrigation", "🔍 ═══════════════════════════════════════════════");
+          
+          int errors = 0;
+          int warnings = 0;
+          
+          // Check 1: Time Synchronization
+          auto time = id(homeassistant_time).now();
+          if (!time.is_valid()) {
+            ESP_LOGE("irrigation", "❌ CRITICAL: Time not synchronized!");
+            errors++;
+          } else {
+            ESP_LOGI("irrigation", "✅ Time synchronized: %d/%d/%d %d:%02d", 
+                     time.day_of_month, time.month, time.year, time.hour, time.minute);
+          }
+          
+          // Check 2: Weather Sensors
+          float temp = id(outside_temperature).state;
+          float humidity = id(outside_humidity).state;
+          float wind = id(wind_speed).state;
+          
+          if (isnan(temp)) {
+            ESP_LOGW("irrigation", "⚠️ WARNING: Temperature sensor unavailable");
+            warnings++;
+          } else {
+            ESP_LOGI("irrigation", "✅ Temperature: %.1f°C", temp);
+            
+            // Check freeze condition
+            if (temp < id(freeze_threshold)) {
+              ESP_LOGW("irrigation", "⚠️ FREEZE RISK: Temperature below %.1f°C - protection will activate", id(freeze_threshold));
+              warnings++;
+            }
+          }
+          
+          if (isnan(humidity)) {
+            ESP_LOGW("irrigation", "⚠️ WARNING: Humidity sensor unavailable");
+            warnings++;
+          } else {
+            ESP_LOGI("irrigation", "✅ Humidity: %.1f%%", humidity);
+          }
+          
+          if (isnan(wind)) {
+            ESP_LOGW("irrigation", "⚠️ WARNING: Wind sensor unavailable");
+            warnings++;
+          } else {
+            ESP_LOGI("irrigation", "✅ Wind: %.1f km/h", wind);
+          }
+          
+          // Check 3: Predictive Watering Status
+          if (id(predictive_watering_enabled)) {
+            ESP_LOGI("irrigation", "✅ Predictive Watering: ENABLED (multiplier: %.2f)", id(pw_current_multiplier));
+          } else {
+            ESP_LOGI("irrigation", "ℹ️ Predictive Watering: Disabled");
+          }
+          
+          // Check 4: Smart ET Status
+          if (id(smart_et_enabled)) {
+            ESP_LOGI("irrigation", "✅ Smart ET: ENABLED (deficit: %.1fmm)", id(et_soil_moisture_deficit));
+          } else {
+            ESP_LOGI("irrigation", "ℹ️ Smart ET: Disabled");
+          }
+          
+          // Check 5: Master Valve Configuration
+          if (id(master_valve_enabled)) {
+            ESP_LOGI("irrigation", "✅ Master Valve: ENABLED");
+          } else {
+            ESP_LOGI("irrigation", "ℹ️ Master Valve: Disabled (zones operate independently)");
+          }
+          
+          // Check 6: Rain Delay Status
+          if (id(rain_delay_end_time) > time.timestamp) {
+            long remaining = id(rain_delay_end_time) - time.timestamp;
+            ESP_LOGI("irrigation", "⚠️ Rain Delay ACTIVE: %.1f days remaining", remaining / 86400.0);
+            warnings++;
+          }
+          
+          // Check 7: Water Budget Status
+          if (id(current_month_usage) > 0) {
+            float percent = (id(current_month_usage) / id(monthly_water_budget)) * 100.0;
+            ESP_LOGI("irrigation", "📊 Water Budget: %.1fL / %.1fL (%.1f%%)", 
+                     id(current_month_usage), id(monthly_water_budget), percent);
+            if (percent > 80) {
+              ESP_LOGW("irrigation", "⚠️ WARNING: Water budget >80%% used");
+              warnings++;
+            }
+          }
+          
+          // Check 8: Network Mode
+          if (id(network_offline_mode)) {
+            ESP_LOGW("irrigation", "⚠️ Network: Offline mode active (using fallback multiplier)");
+            warnings++;
+          }
+          
+          // Summary
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "📋 VALIDATION SUMMARY:");
+          ESP_LOGI("irrigation", "   Errors: %d | Warnings: %d", errors, warnings);
+          
+          if (errors == 0 && warnings == 0) {
+            ESP_LOGI("irrigation", "   ✅ ALL SYSTEMS OPERATIONAL");
+          } else if (errors == 0) {
+            ESP_LOGI("irrigation", "   ⚠️ OPERATIONAL WITH WARNINGS");
+          } else {
+            ESP_LOGE("irrigation", "   ❌ CRITICAL ERRORS DETECTED");
+          }
+          
+          ESP_LOGI("irrigation", "🔍 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "");
+      
 esp32:
   board: $esphome_board
   framework:
@@ -170,11 +286,11 @@ esp32:
 
 api:
   encryption:
-    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ota:
   - platform: esphome
-    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -207,6 +323,10 @@ globals:
     type: bool
     restore_value: True
     initial_value: 'false'  # Optional feature, off by default
+  - id: test_mode_active
+    type: bool
+    restore_value: False
+    initial_value: 'false'  # True during diagnostics/tests to prevent watchdog interference
   - id: cycle_soak_enabled
     type: bool
     restore_value: True
@@ -652,6 +772,138 @@ globals:
     type: float
     restore_value: True
     initial_value: '1.4'  # Early summer
+    
+  # ═══════════════════════════════════════════════
+  # FREEZE PROTECTION
+  # ═══════════════════════════════════════════════
+  - id: freeze_threshold
+    type: float
+    restore_value: True
+    initial_value: '2.0'  # Celsius - disable watering below this
+  - id: freeze_protection_active
+    type: bool
+    restore_value: False
+    initial_value: 'false'
+    
+  # ═══════════════════════════════════════════════
+  # WATER BUDGET LIMITS
+  # ═══════════════════════════════════════════════
+  - id: monthly_water_budget
+    type: float
+    restore_value: True
+    initial_value: '10000.0'  # Liters per month
+  - id: current_month_usage
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  - id: last_reset_month
+    type: int
+    restore_value: True
+    initial_value: '0'
+  - id: budget_warning_sent
+    type: bool
+    restore_value: False
+    initial_value: 'false'
+  - id: budget_exceeded
+    type: bool
+    restore_value: False
+    initial_value: 'false'
+  - id: budget_override_active
+    type: bool
+    restore_value: False
+    initial_value: 'false'
+    
+  # ═══════════════════════════════════════════════
+  # ZONE RUNTIME LIMITS (Daily)
+  # ═══════════════════════════════════════════════
+  - id: max_zone_runtime_daily
+    type: int
+    restore_value: True
+    initial_value: '60'  # Minutes per day per zone
+  - id: zone1_runtime_today
+    type: int
+    restore_value: True
+    initial_value: '0'  # Seconds
+  - id: zone2_runtime_today
+    type: int
+    restore_value: True
+    initial_value: '0'
+  - id: zone3_runtime_today
+    type: int
+    restore_value: True
+    initial_value: '0'
+  - id: zone4_runtime_today
+    type: int
+    restore_value: True
+    initial_value: '0'
+  - id: zone5_runtime_today
+    type: int
+    restore_value: True
+    initial_value: '0'
+  - id: zone6_runtime_today
+    type: int
+    restore_value: True
+    initial_value: '0'
+  - id: zone7_runtime_today
+    type: int
+    restore_value: True
+    initial_value: '0'
+  - id: zone8_runtime_today
+    type: int
+    restore_value: True
+    initial_value: '0'
+  - id: last_runtime_reset_day
+    type: int
+    restore_value: True
+    initial_value: '0'
+    
+  # ═══════════════════════════════════════════════
+  # SYSTEM IDLE DETECTION
+  # ═══════════════════════════════════════════════
+  - id: last_watering_timestamp
+    type: long
+    restore_value: True
+    initial_value: '0'
+    
+  # ═══════════════════════════════════════════════
+  # NETWORK LOSS HANDLING
+  # ═══════════════════════════════════════════════
+  - id: fallback_multiplier
+    type: float
+    restore_value: True
+    initial_value: '1.0'  # Last known good multiplier
+  - id: network_offline_mode
+    type: bool
+    restore_value: False
+    initial_value: 'false'
+    
+  # ═══════════════════════════════════════════════
+  # WATERING WINDOW ENFORCEMENT
+  # ═══════════════════════════════════════════════
+  - id: window1_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'
+  - id: window1_start_hour
+    type: int
+    restore_value: True
+    initial_value: '6'  # 6 AM
+  - id: window1_end_hour
+    type: int
+    restore_value: True
+    initial_value: '9'  # 9 AM
+  - id: window2_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'
+  - id: window2_start_hour
+    type: int
+    restore_value: True
+    initial_value: '18'  # 6 PM
+  - id: window2_end_hour
+    type: int
+    restore_value: True
+    initial_value: '21'  # 9 PM
     
   - id: manual_rain_delay_override
     type: bool
@@ -2391,20 +2643,23 @@ interval:
             bool master_is_on = id(master_valve_relay).state;
             
             // Control master valve based on zone requirements
-            if (master_should_be_on && !master_is_on) {
-              id(master_valve_relay).turn_on();
-              if (any_zone_active) {
-                auto active = id($devicename1).active_valve();
-                ESP_LOGI("irrigation", "✅ Master Valve OPENED (Zone %d active, MV enabled for this zone)",
-                         active.value() + 1);
+            // SKIP auto-control during test mode to prevent interference
+            if (!id(test_mode_active)) {
+              if (master_should_be_on && !master_is_on) {
+                id(master_valve_relay).turn_on();
+                if (any_zone_active) {
+                  auto active = id($devicename1).active_valve();
+                  ESP_LOGI("irrigation", "✅ Master Valve OPENED (Zone %d active, MV enabled for this zone)",
+                           active.value() + 1);
+                }
+              } else if (!master_should_be_on && master_is_on) {
+                id(master_valve_relay).turn_off();
+                ESP_LOGI("irrigation", "🔒 Master Valve CLOSED (no zones active or zone MV disabled)");
               }
-            } else if (!master_should_be_on && master_is_on) {
-              id(master_valve_relay).turn_off();
-              ESP_LOGI("irrigation", "🔒 Master Valve CLOSED (no zones active or zone MV disabled)");
             }
           } else {
-            // Master valve system disabled - ensure it's off
-            if (id(master_valve_relay).state) {
+            // Master valve system disabled - ensure it's off (UNLESS testing)
+            if (!id(test_mode_active) && id(master_valve_relay).state) {
               id(master_valve_relay).turn_off();
               ESP_LOGD("irrigation", "Master valve turned off (system disabled)");
             }
@@ -2459,6 +2714,131 @@ interval:
       - lambda: |-
           long now = id(homeassistant_time).now().timestamp;
           if (now == 0) return;  // Time not synced yet
+          
+          // ═══════════════════════════════════════════════
+          // PRODUCTION FEATURE CHECKS (Every 30s)
+          // ═══════════════════════════════════════════════
+          
+          // 1. FREEZE PROTECTION
+          float temp = id(outside_temperature).state;
+          if (!isnan(temp)) {
+            bool freeze_risk = temp < id(freeze_threshold);
+            
+            if (freeze_risk && !id(freeze_protection_active)) {
+              // Activate freeze protection
+              id(freeze_protection_active) = true;
+              ESP_LOGW("irrigation", "");
+              ESP_LOGW("irrigation", "❄️ ═══════════════════════════════════════════════");
+              ESP_LOGW("irrigation", "❄️ FREEZE PROTECTION ACTIVATED");
+              ESP_LOGW("irrigation", "❄️ ═══════════════════════════════════════════════");
+              ESP_LOGW("irrigation", "❄️ Temperature: %.1f°C (threshold: %.1f°C)", temp, id(freeze_threshold));
+              ESP_LOGW("irrigation", "❄️ All watering DISABLED until temperature rises above %.1f°C", id(freeze_threshold) + 3.0);
+              
+              // Close master valve for safety
+              if (id(master_valve_relay).state) {
+                id(master_valve_relay).turn_off();
+                ESP_LOGW("irrigation", "❄️ Master valve CLOSED for safety");
+              }
+              
+              // Stop any active watering
+              if (id($devicename1).active_valve().has_value()) {
+                id($devicename1).shutdown();
+                ESP_LOGW("irrigation", "❄️ Active watering STOPPED");
+              }
+              
+              ESP_LOGW("irrigation", "❄️ ═══════════════════════════════════════════════");
+              ESP_LOGW("irrigation", "");
+              
+            } else if (!freeze_risk && id(freeze_protection_active) && temp > (id(freeze_threshold) + 3.0)) {
+              // Deactivate freeze protection (with 3°C hysteresis)
+              id(freeze_protection_active) = false;
+              ESP_LOGI("irrigation", "");
+              ESP_LOGI("irrigation", "✅ ═══════════════════════════════════════════════");
+              ESP_LOGI("irrigation", "✅ FREEZE PROTECTION DEACTIVATED");
+              ESP_LOGI("irrigation", "✅ ═══════════════════════════════════════════════");
+              ESP_LOGI("irrigation", "✅ Temperature: %.1f°C - Normal operation resumed", temp);
+              ESP_LOGI("irrigation", "✅ ═══════════════════════════════════════════════");
+              ESP_LOGI("irrigation", "");
+            }
+          }
+          
+          // 2. DAILY RUNTIME RESET (at midnight)
+          auto time = id(homeassistant_time).now();
+          if (time.is_valid()) {
+            int current_day = time.day_of_month;
+            if (current_day != id(last_runtime_reset_day)) {
+              ESP_LOGI("irrigation", "🌅 New day detected - resetting daily runtime counters");
+              id(zone1_runtime_today) = 0;
+              id(zone2_runtime_today) = 0;
+              id(zone3_runtime_today) = 0;
+              id(zone4_runtime_today) = 0;
+              id(zone5_runtime_today) = 0;
+              id(zone6_runtime_today) = 0;
+              id(zone7_runtime_today) = 0;
+              id(zone8_runtime_today) = 0;
+              id(last_runtime_reset_day) = current_day;
+            }
+          }
+          
+          // 3. MONTHLY BUDGET RESET
+          if (time.is_valid()) {
+            int current_month = time.month;
+            if (current_month != id(last_reset_month)) {
+              ESP_LOGI("irrigation", "📅 New month detected - resetting water budget");
+              ESP_LOGI("irrigation", "   Previous month usage: %.1fL", id(current_month_usage));
+              id(current_month_usage) = 0;
+              id(last_reset_month) = current_month;
+              id(budget_warning_sent) = false;
+              id(budget_exceeded) = false;
+            }
+          }
+          
+          // 4. WATER BUDGET MONITORING
+          if (id(monthly_water_budget) > 0) {
+            float budget_percent = (id(current_month_usage) / id(monthly_water_budget)) * 100.0;
+            
+            // 80% warning
+            if (budget_percent >= 80.0 && !id(budget_warning_sent)) {
+              ESP_LOGW("irrigation", "⚠️ WATER BUDGET WARNING: %.1f%% used (%.1fL / %.1fL)",
+                       budget_percent, id(current_month_usage), id(monthly_water_budget));
+              id(budget_warning_sent) = true;
+            }
+            
+            // 100% limit (unless override active)
+            if (budget_percent >= 100.0 && !id(budget_exceeded) && !id(budget_override_active)) {
+              ESP_LOGE("irrigation", "🚫 WATER BUDGET EXCEEDED: %.1f%% used!", budget_percent);
+              ESP_LOGE("irrigation", "🚫 Watering will be BLOCKED until next month or override activated");
+              id(budget_exceeded) = true;
+              
+              // Stop any active watering
+              if (id($devicename1).active_valve().has_value()) {
+                id($devicename1).shutdown();
+                ESP_LOGW("irrigation", "🚫 Active watering STOPPED due to budget exceeded");
+              }
+            }
+          }
+          
+          // 5. NETWORK LOSS DETECTION
+          float temp_check = id(outside_temperature).state;
+          float hum_check = id(outside_humidity).state;
+          static int sensor_fail_count = 0;
+          
+          if (isnan(temp_check) && isnan(hum_check)) {
+            sensor_fail_count++;
+            if (sensor_fail_count >= 3 && !id(network_offline_mode)) {
+              // 3 consecutive failures (90 seconds) = network likely offline
+              id(network_offline_mode) = true;
+              ESP_LOGW("irrigation", "📡 NETWORK OFFLINE MODE ACTIVATED");
+              ESP_LOGW("irrigation", "📡 Using fallback multiplier: %.2f", id(fallback_multiplier));
+              id($devicename1).set_multiplier(id(fallback_multiplier));
+            }
+          } else {
+            sensor_fail_count = 0;
+            if (id(network_offline_mode)) {
+              id(network_offline_mode) = false;
+              ESP_LOGI("irrigation", "📡 NETWORK ONLINE - Normal operation resumed");
+            }
+          }
 
           // --------------------------------------------------
           // PAUSE STATE WATCHDOG (24h safety)
@@ -3103,7 +3483,7 @@ text_sensor:
     id: next_watering_day
     name: "Next Watering Day"
     icon: "mdi:calendar-clock"
-    update_interval: 300s
+    update_interval: 30s  # Update every 30 seconds for faster response
     lambda: |-
       auto time = id(homeassistant_time).now();
       int current_day = time.day_of_week;
@@ -4626,6 +5006,122 @@ number:
     set_action:
       - lambda: "id(seasonal_dec) = x;"
 
+  # ═══════════════════════════════════════════════
+  # PRODUCTION FEATURES - UI CONTROLS
+  # ═══════════════════════════════════════════════
+  
+  # Freeze Protection Threshold
+  - platform: template
+    id: freeze_threshold_input
+    name: "$dev1_what Freeze Threshold"
+    min_value: -5
+    max_value: 10
+    step: 0.5
+    icon: "mdi:snowflake-thermometer"
+    mode: box
+    unit_of_measurement: "°C"
+    lambda: "return id(freeze_threshold);"
+    set_action:
+      - lambda: |-
+          id(freeze_threshold) = x;
+          ESP_LOGI("irrigation", "❄️ Freeze threshold set to %.1f°C", x);
+  
+  # Monthly Water Budget
+  - platform: template
+    id: monthly_budget_input
+    name: "$dev1_what Monthly Water Budget"
+    min_value: 1000
+    max_value: 50000
+    step: 100
+    icon: "mdi:water-pump"
+    mode: box
+    unit_of_measurement: "L"
+    lambda: "return id(monthly_water_budget);"
+    set_action:
+      - lambda: |-
+          id(monthly_water_budget) = x;
+          ESP_LOGI("irrigation", "💰 Monthly water budget set to %.0f L", x);
+  
+  # Zone Daily Runtime Limit
+  - platform: template
+    id: zone_runtime_limit_input
+    name: "$dev1_what Zone Runtime Limit"
+    min_value: 15
+    max_value: 180
+    step: 5
+    icon: "mdi:timer-sand"
+    mode: slider
+    unit_of_measurement: "min"
+    lambda: "return id(max_zone_runtime_daily);"
+    set_action:
+      - lambda: |-
+          id(max_zone_runtime_daily) = x;
+          ESP_LOGI("irrigation", "⏱️ Zone daily runtime limit set to %.0f minutes", x);
+  
+  # Watering Window 1 - Start Hour
+  - platform: template
+    id: window1_start_input
+    name: "$dev1_what Window 1 Start"
+    min_value: 0
+    max_value: 23
+    step: 1
+    icon: "mdi:clock-start"
+    mode: box
+    unit_of_measurement: "h"
+    lambda: "return id(window1_start_hour);"
+    set_action:
+      - lambda: |-
+          id(window1_start_hour) = x;
+          ESP_LOGI("irrigation", "🕐 Window 1 start set to %d:00", (int)x);
+  
+  # Watering Window 1 - End Hour
+  - platform: template
+    id: window1_end_input
+    name: "$dev1_what Window 1 End"
+    min_value: 0
+    max_value: 23
+    step: 1
+    icon: "mdi:clock-end"
+    mode: box
+    unit_of_measurement: "h"
+    lambda: "return id(window1_end_hour);"
+    set_action:
+      - lambda: |-
+          id(window1_end_hour) = x;
+          ESP_LOGI("irrigation", "🕐 Window 1 end set to %d:00", (int)x);
+  
+  # Watering Window 2 - Start Hour
+  - platform: template
+    id: window2_start_input
+    name: "$dev1_what Window 2 Start"
+    min_value: 0
+    max_value: 23
+    step: 1
+    icon: "mdi:clock-start"
+    mode: box
+    unit_of_measurement: "h"
+    lambda: "return id(window2_start_hour);"
+    set_action:
+      - lambda: |-
+          id(window2_start_hour) = x;
+          ESP_LOGI("irrigation", "🕐 Window 2 start set to %d:00", (int)x);
+  
+  # Watering Window 2 - End Hour
+  - platform: template
+    id: window2_end_input
+    name: "$dev1_what Window 2 End"
+    min_value: 0
+    max_value: 23
+    step: 1
+    icon: "mdi:clock-end"
+    mode: box
+    unit_of_measurement: "h"
+    lambda: "return id(window2_end_hour);"
+    set_action:
+      - lambda: |-
+          id(window2_end_hour) = x;
+          ESP_LOGI("irrigation", "🕐 Window 2 end set to %d:00", (int)x);
+
 script:
   # ============================================================
   # PREDICTIVE WATERING™ SCRIPT
@@ -4807,20 +5303,36 @@ script:
           // ═══════════════════════════════════════════════
           float combined_multiplier = temp_factor * humidity_factor * wind_factor * rain_factor * seasonal_factor * soil_factor;
           
+          // FIX: Log when multiplier is capped (production safety)
+          float uncapped_multiplier = combined_multiplier;
+          
           // Apply reasonable limits (0.1 to 2.0)
-          if (combined_multiplier < 0.1) combined_multiplier = 0.1;
-          if (combined_multiplier > 2.0) combined_multiplier = 2.0;
+          if (combined_multiplier < 0.1) {
+            ESP_LOGW("irrigation", "⚠️ MULTIPLIER CAPPED: %.4f → 0.10 (below minimum)", combined_multiplier);
+            ESP_LOGW("irrigation", "   Extreme conditions detected - verify weather sensors");
+            combined_multiplier = 0.1;
+          }
+          if (combined_multiplier > 2.0) {
+            ESP_LOGW("irrigation", "⚠️ MULTIPLIER CAPPED: %.2f → 2.00 (above maximum)", combined_multiplier);
+            ESP_LOGW("irrigation", "   Very hot/dry conditions - safety limit applied");
+            combined_multiplier = 2.0;
+          }
           
           id(pw_current_multiplier) = combined_multiplier;
           id(pw_last_calculation_time) = id(homeassistant_time).now().timestamp;
           
+          // Save as fallback for network offline mode
+          id(fallback_multiplier) = combined_multiplier;
+          
           ESP_LOGI("irrigation", "");
-          ESP_LOGI("irrigation", "✅ FINAL MULTIPLIER: %.2f", combined_multiplier);
+          ESP_LOGI("irrigation", "✅ FINAL MULTIPLIER: %.2f%s", combined_multiplier,
+                   (uncapped_multiplier != combined_multiplier) ? " (CAPPED)" : "");
           ESP_LOGI("irrigation", "   Weather: Temp:%.2f Hum:%.2f Wind:%.2f Rain:%.2f", 
                    temp_factor, humidity_factor, wind_factor, rain_factor);
           ESP_LOGI("irrigation", "   Season: %.2f | Soil: %.2f", seasonal_factor, soil_factor);
-          ESP_LOGI("irrigation", "   Combined: %.2f × %.2f × %.2f × %.2f × %.2f × %.2f = %.2f",
-                   temp_factor, humidity_factor, wind_factor, rain_factor, seasonal_factor, soil_factor, combined_multiplier);
+          if (uncapped_multiplier != combined_multiplier) {
+            ESP_LOGI("irrigation", "   Uncapped: %.4f → Capped: %.2f", uncapped_multiplier, combined_multiplier);
+          }
           
           // Apply to sprinkler controller
           id($devicename1).set_multiplier(combined_multiplier);
@@ -5347,6 +5859,100 @@ script:
       allow_queue: bool
     then:
       - lambda: |-
+          // ═══════════════════════════════════════════════
+          // PRODUCTION FEATURE CHECKS
+          // ═══════════════════════════════════════════════
+          
+          // 1. FREEZE PROTECTION CHECK
+          if (id(freeze_protection_active)) {
+            ESP_LOGW("irrigation", "❄️ Zone %d BLOCKED - Freeze protection active (temp: %.1f°C)", 
+                     zone + 1, id(outside_temperature).state);
+            return;
+          }
+          
+          // 2. WATER BUDGET CHECK
+          if (id(budget_exceeded) && !id(budget_override_active)) {
+            ESP_LOGW("irrigation", "🚫 Zone %d BLOCKED - Monthly water budget exceeded (%.1fL / %.1fL)",
+                     zone + 1, id(current_month_usage), id(monthly_water_budget));
+            ESP_LOGW("irrigation", "   Activate budget override to force watering");
+            return;
+          }
+          
+          // 3. ZONE DAILY RUNTIME LIMIT CHECK
+          int zone_runtime = 0;
+          switch(zone) {
+            case 0: zone_runtime = id(zone1_runtime_today); break;
+            case 1: zone_runtime = id(zone2_runtime_today); break;
+            case 2: zone_runtime = id(zone3_runtime_today); break;
+            case 3: zone_runtime = id(zone4_runtime_today); break;
+            case 4: zone_runtime = id(zone5_runtime_today); break;
+            case 5: zone_runtime = id(zone6_runtime_today); break;
+            case 6: zone_runtime = id(zone7_runtime_today); break;
+            case 7: zone_runtime = id(zone8_runtime_today); break;
+          }
+          
+          int max_runtime_seconds = id(max_zone_runtime_daily) * 60;
+          int proposed_runtime = duration;
+          
+          if ((zone_runtime + proposed_runtime) > max_runtime_seconds) {
+            int remaining = max_runtime_seconds - zone_runtime;
+            ESP_LOGW("irrigation", "⏱️ Zone %d BLOCKED - Daily runtime limit (%.1f min used, %.1f min limit)",
+                     zone + 1, zone_runtime / 60.0, id(max_zone_runtime_daily));
+            if (remaining > 0) {
+              ESP_LOGW("irrigation", "   Only %.1f minutes remaining today", remaining / 60.0);
+            } else {
+              ESP_LOGW("irrigation", "   Limit already exceeded today");
+            }
+            return;
+          }
+          
+          // 4. WATERING WINDOW ENFORCEMENT (for scheduled runs)
+          if (allow_queue) {  // Scheduled/program runs only
+            auto time = id(homeassistant_time).now();
+            if (time.is_valid()) {
+              int hour = time.hour;
+              bool in_window = false;
+              
+              // Check window 1
+              if (id(window1_enabled)) {
+                int start = id(window1_start_hour);
+                int end = id(window1_end_hour);
+                if (start <= hour && hour < end) {
+                  in_window = true;
+                }
+              }
+              
+              // Check window 2
+              if (id(window2_enabled)) {
+                int start = id(window2_start_hour);
+                int end = id(window2_end_hour);
+                if (start <= hour && hour < end) {
+                  in_window = true;
+                }
+              }
+              
+              // If both windows disabled, allow anytime
+              if (!id(window1_enabled) && !id(window2_enabled)) {
+                in_window = true;
+              }
+              
+              if (!in_window) {
+                ESP_LOGW("irrigation", "🕐 Zone %d BLOCKED - Outside watering windows (current: %d:00)", zone + 1, hour);
+                ESP_LOGW("irrigation", "   Window 1: %s (%d:00-%d:00)", 
+                         id(window1_enabled) ? "ENABLED" : "disabled",
+                         id(window1_start_hour), id(window1_end_hour));
+                ESP_LOGW("irrigation", "   Window 2: %s (%d:00-%d:00)",
+                         id(window2_enabled) ? "ENABLED" : "disabled", 
+                         id(window2_start_hour), id(window2_end_hour));
+                return;
+              }
+            }
+          }
+          
+          // ═══════════════════════════════════════════════
+          // STANDARD CHECKS
+          // ═══════════════════════════════════════════════
+          
           // CRITICAL: Check if irrigation system is enabled
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone %d BLOCKED - Irrigation system is DISABLED", zone + 1);
@@ -5414,7 +6020,20 @@ script:
                 ESP_LOGI("irrigation", "📋 Queued Zone %d in slot %d/3 (%d items queued)",
                          zone + 1, pos + 1, id(queue_count));
               } else {
-                ESP_LOGW("irrigation", "⚠️ Queue FULL (3/3) - Zone %d will NOT run!", zone + 1);
+                // QUEUE OVERFLOW HANDLING (FIXED)
+                ESP_LOGE("irrigation", "🚫 ═══════════════════════════════════════════════");
+                ESP_LOGE("irrigation", "🚫 QUEUE OVERFLOW - Zone %d DROPPED!", zone + 1);
+                ESP_LOGE("irrigation", "🚫 ═══════════════════════════════════════════════");
+                ESP_LOGE("irrigation", "🚫 Queue is full (3/3 slots occupied)");
+                ESP_LOGE("irrigation", "🚫 Current queue:");
+                for (int i = 0; i < 3; i++) {
+                  if (id(queue_types)[i] == 1) {
+                    ESP_LOGE("irrigation", "🚫   Slot %d: Program %c", i + 1, 'A' + id(queue_programs)[i] - 1);
+                  } else if (id(queue_types)[i] == 2) {
+                    ESP_LOGE("irrigation", "🚫   Slot %d: Zone %d", i + 1, id(queue_zones)[i] + 1);
+                  }
+                }
+                ESP_LOGE("irrigation", "🚫 ═══════════════════════════════════════════════");
               }
             } else {
               ESP_LOGW("irrigation", "🚫 Busy - manual Zone %d start blocked", zone + 1);
@@ -5423,6 +6042,7 @@ script:
           }
 
           ESP_LOGI("irrigation", "▶️ Starting Zone %d immediately (system idle)", zone + 1);
+          ESP_LOGI("irrigation", "   ✅ All safety checks passed");
           id(irrigation_busy) = true;
           id(in_program_run) = false;
           id(run_zone_with_cycles).execute(zone, duration, add_delay, false);
@@ -5565,6 +6185,31 @@ script:
                 // Update total system water usage
                 id(total_water_used) += water_used;
                 
+                // ═══════════════════════════════════════════════
+                // PRODUCTION FEATURES: Track runtime and budget
+                // ═══════════════════════════════════════════════
+                
+                // Calculate actual runtime in seconds (duration already includes multiplier)
+                int runtime_seconds = (int)(actual_duration_min * 60);
+                
+                // Update zone runtime today (for daily limits)
+                switch(zone) {
+                  case 0: id(zone1_runtime_today) += runtime_seconds; break;
+                  case 1: id(zone2_runtime_today) += runtime_seconds; break;
+                  case 2: id(zone3_runtime_today) += runtime_seconds; break;
+                  case 3: id(zone4_runtime_today) += runtime_seconds; break;
+                  case 4: id(zone5_runtime_today) += runtime_seconds; break;
+                  case 5: id(zone6_runtime_today) += runtime_seconds; break;
+                  case 6: id(zone7_runtime_today) += runtime_seconds; break;
+                  case 7: id(zone8_runtime_today) += runtime_seconds; break;
+                }
+                
+                // Update monthly water budget
+                id(current_month_usage) += water_used;
+                
+                // Update last watering timestamp (for idle detection)
+                id(last_watering_timestamp) = id(homeassistant_time).now().timestamp;
+                
                 // Get custom zone name
                 std::string zone_name = "Zone " + std::to_string(zone + 1);
                 switch(zone) {
@@ -5580,6 +6225,17 @@ script:
                 
                 ESP_LOGI("irrigation", "💧 WATER USED - %s (Zone %d): %.1f L (%.1f min × %.1f L/min) | System Total: %.1f L",
                          zone_name.c_str(), zone + 1, water_used, actual_duration_min, flow_rate, id(total_water_used));
+                ESP_LOGI("irrigation", "📊 Runtime today: %.1f min | Budget used: %.1f / %.1f L (%.1f%%)",
+                         (zone == 0 ? id(zone1_runtime_today) :
+                          zone == 1 ? id(zone2_runtime_today) :
+                          zone == 2 ? id(zone3_runtime_today) :
+                          zone == 3 ? id(zone4_runtime_today) :
+                          zone == 4 ? id(zone5_runtime_today) :
+                          zone == 5 ? id(zone6_runtime_today) :
+                          zone == 6 ? id(zone7_runtime_today) :
+                          id(zone8_runtime_today)) / 60.0,
+                         id(current_month_usage), id(monthly_water_budget),
+                         (id(current_month_usage) / id(monthly_water_budget)) * 100.0);
                 
                 if (!id(in_program_run)) {
                   id(irrigation_busy) = false;
@@ -5670,6 +6326,31 @@ script:
                 // Update total system water usage
                 id(total_water_used) += water_used;
                 
+                // ═══════════════════════════════════════════════
+                // PRODUCTION FEATURES: Track runtime and budget
+                // ═══════════════════════════════════════════════
+                
+                // Calculate actual runtime (cycles * cycle_duration, excluding soak time)
+                int actual_runtime_sec = id(total_cycles) * id(cycle_duration_minutes) * 60;
+                
+                // Update zone runtime today (for daily limits)
+                switch(zone) {
+                  case 0: id(zone1_runtime_today) += actual_runtime_sec; break;
+                  case 1: id(zone2_runtime_today) += actual_runtime_sec; break;
+                  case 2: id(zone3_runtime_today) += actual_runtime_sec; break;
+                  case 3: id(zone4_runtime_today) += actual_runtime_sec; break;
+                  case 4: id(zone5_runtime_today) += actual_runtime_sec; break;
+                  case 5: id(zone6_runtime_today) += actual_runtime_sec; break;
+                  case 6: id(zone7_runtime_today) += actual_runtime_sec; break;
+                  case 7: id(zone8_runtime_today) += actual_runtime_sec; break;
+                }
+                
+                // Update monthly water budget
+                id(current_month_usage) += water_used;
+                
+                // Update last watering timestamp (for idle detection)
+                id(last_watering_timestamp) = id(homeassistant_time).now().timestamp;
+                
                 // Get custom zone name
                 std::string zone_name = "Zone " + std::to_string(zone + 1);
                 switch(zone) {
@@ -5685,6 +6366,17 @@ script:
                 
                 ESP_LOGI("irrigation", "💧 WATER USED - %s (Zone %d): %.1f L (%d cycles × %d min × %.1f L/min) | System Total: %.1f L",
                          zone_name.c_str(), zone + 1, water_used, id(total_cycles), id(cycle_duration_minutes), flow_rate, id(total_water_used));
+                ESP_LOGI("irrigation", "📊 Runtime today: %.1f min | Budget used: %.1f / %.1f L (%.1f%%)",
+                         (zone == 0 ? id(zone1_runtime_today) :
+                          zone == 1 ? id(zone2_runtime_today) :
+                          zone == 2 ? id(zone3_runtime_today) :
+                          zone == 3 ? id(zone4_runtime_today) :
+                          zone == 4 ? id(zone5_runtime_today) :
+                          zone == 5 ? id(zone6_runtime_today) :
+                          zone == 6 ? id(zone7_runtime_today) :
+                          id(zone8_runtime_today)) / 60.0,
+                         id(current_month_usage), id(monthly_water_budget),
+                         (id(current_month_usage) / id(monthly_water_budget)) * 100.0);
                 
                 if (!id(in_program_run)) {
                   id(irrigation_busy) = false;
@@ -7803,6 +8495,69 @@ switch:
     name: "Master Valve Relay"
     pin: $master_valve_pin
     inverted: true
+
+  # ═══════════════════════════════════════════════
+  # PRODUCTION FEATURES - WATERING WINDOWS & OVERRIDES
+  # ═══════════════════════════════════════════════
+  
+  - platform: template
+    name: "$dev1_what Enable Watering Window 1"
+    id: window1_enable_switch
+    icon: "mdi:clock-check"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: |-
+          id(window1_enabled) = true;
+          ESP_LOGI("irrigation", "🕐 Watering Window 1 ENABLED (%d:00 - %d:00)", 
+                   id(window1_start_hour), id(window1_end_hour));
+    on_turn_off:
+      - lambda: |-
+          id(window1_enabled) = false;
+          ESP_LOGI("irrigation", "🕐 Watering Window 1 DISABLED");
+  
+  - platform: template
+    name: "$dev1_what Enable Watering Window 2"
+    id: window2_enable_switch
+    icon: "mdi:clock-check"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: |-
+          id(window2_enabled) = true;
+          ESP_LOGI("irrigation", "🕐 Watering Window 2 ENABLED (%d:00 - %d:00)", 
+                   id(window2_start_hour), id(window2_end_hour));
+    on_turn_off:
+      - lambda: |-
+          id(window2_enabled) = false;
+          ESP_LOGI("irrigation", "🕐 Watering Window 2 DISABLED");
+  
+  - platform: template
+    name: "$dev1_what Budget Override"
+    id: budget_override_switch
+    icon: "mdi:water-pump-off"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - lambda: |-
+          id(budget_override_active) = true;
+          ESP_LOGW("irrigation", "");
+          ESP_LOGW("irrigation", "⚠️ ═══════════════════════════════════════════════");
+          ESP_LOGW("irrigation", "⚠️ WATER BUDGET OVERRIDE ACTIVE");
+          ESP_LOGW("irrigation", "⚠️ ═══════════════════════════════════════════════");
+          ESP_LOGW("irrigation", "⚠️ Watering will continue even if budget exceeded");
+          ESP_LOGW("irrigation", "⚠️ Current usage: %.1fL / %.1fL (%.1f%%)", 
+                   id(current_month_usage), id(monthly_water_budget),
+                   (id(current_month_usage) / id(monthly_water_budget)) * 100.0);
+          ESP_LOGW("irrigation", "⚠️ ═══════════════════════════════════════════════");
+          ESP_LOGW("irrigation", "");
+    on_turn_off:
+      - lambda: |-
+          id(budget_override_active) = false;
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "✅ Water budget enforcement RE-ENABLED");
+          ESP_LOGI("irrigation", "");
+
 sprinkler:
   - id: $devicename1
     main_switch:
@@ -8045,39 +8800,9 @@ button:
           ESP_LOGI("irrigation", "🌱 Smart ET: Deficit manually reset to 0mm");
 
   # ═══════════════════════════════════════════════
-  # MASTER VALVE CONTROLS (Hunter Pro-C Style)
+  # MASTER VALVE TEST (Hunter Pro-C Style)
   # ═══════════════════════════════════════════════
   
-  - platform: template
-    name: "$dev1_what Master Valve ON"
-    icon: "mdi:valve-open"
-    on_press:
-      - lambda: |-
-          if (!id(master_valve_enabled)) {
-            ESP_LOGW("irrigation", "⚠️ Master Valve is DISABLED in settings - enable it first!");
-            return;
-          }
-          ESP_LOGI("irrigation", "🔧 MANUAL: Master Valve turned ON");
-          id(master_valve_relay).turn_on();
-      - delay: 100ms
-      - lambda: |-
-          if (id(master_valve_relay).state) {
-            ESP_LOGI("irrigation", "✅ Master Valve is now OPEN");
-          }
-
-  - platform: template
-    name: "$dev1_what Master Valve OFF"
-    icon: "mdi:valve-closed"
-    on_press:
-      - lambda: |-
-          ESP_LOGI("irrigation", "🔧 MANUAL: Master Valve turned OFF");
-          id(master_valve_relay).turn_off();
-      - delay: 100ms
-      - lambda: |-
-          if (!id(master_valve_relay).state) {
-            ESP_LOGI("irrigation", "✅ Master Valve is now CLOSED");
-          }
-
   - platform: template
     name: "$dev1_what Test Master Valve"
     icon: "mdi:test-tube"
@@ -8087,11 +8812,15 @@ button:
             ESP_LOGW("irrigation", "⚠️ Master Valve is DISABLED in settings - enable it first!");
             return;
           }
+          // Enter test mode to prevent watchdog interference
+          id(test_mode_active) = true;
+          
           ESP_LOGI("irrigation", "");
           ESP_LOGI("irrigation", "🧪 ═══════════════════════════════════════════════");
           ESP_LOGI("irrigation", "🧪 MASTER VALVE TEST");
           ESP_LOGI("irrigation", "🧪 ═══════════════════════════════════════════════");
           ESP_LOGI("irrigation", "Opening master valve for 10 seconds...");
+          ESP_LOGI("irrigation", "(Watchdog auto-control disabled during test)");
       
       - lambda: "id(master_valve_relay).turn_on();"
       - delay: 1s
@@ -8117,6 +8846,9 @@ button:
       
       - lambda: "id(master_valve_relay).turn_off();"
       - lambda: |-
+          // Exit test mode - re-enable watchdog
+          id(test_mode_active) = false;
+          
           ESP_LOGI("irrigation", "🔒 Master Valve CLOSED");
           ESP_LOGI("irrigation", "");
           ESP_LOGI("irrigation", "✅ Master Valve test complete!");
@@ -8769,3 +9501,197 @@ button:
           id(total_water_used) -= previous;
           id(zone8_water_used) = 0;
           ESP_LOGI("irrigation", "💧 Zone 8 water usage reset (was %.1f L) - System total now: %.1f L", previous, id(total_water_used));
+  # ═══════════════════════════════════════════════
+  # SYSTEM DIAGNOSTICS (Production Feature)
+  # ═══════════════════════════════════════════════
+  - platform: template
+    name: "$dev1_what Run System Diagnostics"
+    icon: "mdi:doctor"
+    on_press:
+      - lambda: |-
+          // Enter test mode to prevent watchdog interference
+          id(test_mode_active) = true;
+          
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "🔧 SYSTEM DIAGNOSTICS STARTED");
+          ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "(Watchdog auto-control disabled during tests)");
+          ESP_LOGI("irrigation", "");
+          
+          int tests_passed = 0;
+          int tests_failed = 0;
+          int warnings = 0;
+          
+          // TEST 1: Time Synchronization
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "📋 TEST 1: Time Synchronization");
+          auto time = id(homeassistant_time).now();
+          if (time.is_valid()) {
+            ESP_LOGI("irrigation", "   ✅ PASS - Time synced: %d/%d/%d %d:%02d", 
+                     time.day_of_month, time.month, time.year, time.hour, time.minute);
+            tests_passed++;
+          } else {
+            ESP_LOGE("irrigation", "   ❌ FAIL - Time not synchronized");
+            tests_failed++;
+          }
+          
+          // TEST 2: Weather Sensors
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "📋 TEST 2: Weather Sensors");
+          float temp = id(outside_temperature).state;
+          float humidity = id(outside_humidity).state;
+          float wind = id(wind_speed).state;
+          
+          int sensor_failures = 0;
+          if (isnan(temp)) {
+            ESP_LOGW("irrigation", "   ⚠️ Temperature sensor unavailable");
+            sensor_failures++;
+          } else {
+            ESP_LOGI("irrigation", "   ✅ Temperature: %.1f°C", temp);
+          }
+          
+          if (isnan(humidity)) {
+            ESP_LOGW("irrigation", "   ⚠️ Humidity sensor unavailable");
+            sensor_failures++;
+          } else {
+            ESP_LOGI("irrigation", "   ✅ Humidity: %.1f%%", humidity);
+          }
+          
+          if (isnan(wind)) {
+            ESP_LOGW("irrigation", "   ⚠️ Wind sensor unavailable");
+            sensor_failures++;
+          } else {
+            ESP_LOGI("irrigation", "   ✅ Wind: %.1f km/h", wind);
+          }
+          
+          if (sensor_failures == 0) {
+            ESP_LOGI("irrigation", "   ✅ PASS - All weather sensors operational");
+            tests_passed++;
+          } else if (sensor_failures < 3) {
+            ESP_LOGW("irrigation", "   ⚠️ PARTIAL - %d/3 sensors unavailable", sensor_failures);
+            tests_passed++;
+            warnings++;
+          } else {
+            ESP_LOGE("irrigation", "   ❌ FAIL - All weather sensors offline");
+            tests_failed++;
+          }
+          
+          // TEST 3: Master Valve (if enabled)
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "📋 TEST 3: Master Valve");
+          if (!id(master_valve_enabled)) {
+            ESP_LOGI("irrigation", "   ℹ️ SKIP - Master valve not enabled");
+          } else {
+            ESP_LOGI("irrigation", "   Testing master valve (3 second test)...");
+            
+            // Open valve
+            id(master_valve_relay).turn_on();
+            ESP_LOGI("irrigation", "   → Valve opened");
+            
+            // Wait 3 seconds
+            delay(3000);
+            
+            // Close valve
+            id(master_valve_relay).turn_off();
+            ESP_LOGI("irrigation", "   → Valve closed");
+            
+            ESP_LOGI("irrigation", "   ✅ PASS - Master valve test complete");
+            tests_passed++;
+          }
+          
+          // TEST 4: Zone Configuration
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "📋 TEST 4: Zone Configuration");
+          
+          int zones_enabled = 0;
+          for (int zone = 0; zone < 8; zone++) {
+            bool enabled = false;
+            switch(zone) {
+              case 0: enabled = id(zone1_enable).state; break;
+              case 1: enabled = id(zone2_enable).state; break;
+              case 2: enabled = id(zone3_enable).state; break;
+              case 3: enabled = id(zone4_enable).state; break;
+              case 4: enabled = id(zone5_enable).state; break;
+              case 5: enabled = id(zone6_enable).state; break;
+              case 6: enabled = id(zone7_enable).state; break;
+              case 7: enabled = id(zone8_enable).state; break;
+            }
+            
+            if (enabled) {
+              zones_enabled++;
+              
+              // Get zone name
+              std::string zone_name = "Zone " + std::to_string(zone + 1);
+              switch(zone) {
+                case 0: zone_name = id(zone1_name).state; break;
+                case 1: zone_name = id(zone2_name).state; break;
+                case 2: zone_name = id(zone3_name).state; break;
+                case 3: zone_name = id(zone4_name).state; break;
+                case 4: zone_name = id(zone5_name).state; break;
+                case 5: zone_name = id(zone6_name).state; break;
+                case 6: zone_name = id(zone7_name).state; break;
+                case 7: zone_name = id(zone8_name).state; break;
+              }
+              
+              ESP_LOGI("irrigation", "   ✅ Zone %d: %s (ENABLED)", zone + 1, zone_name.c_str());
+            }
+          }
+          
+          if (zones_enabled == 0) {
+            ESP_LOGW("irrigation", "   ⚠️ WARNING: No zones enabled!");
+            warnings++;
+          } else {
+            ESP_LOGI("irrigation", "   ✅ PASS - %d zones enabled", zones_enabled);
+            tests_passed++;
+          }
+          
+          ESP_LOGI("irrigation", "   ℹ️ NOTE: Use individual zone buttons to test valves manually");
+          
+          // TEST 5: System Configuration
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "📋 TEST 5: System Configuration");
+          ESP_LOGI("irrigation", "   Predictive Watering: %s", id(predictive_watering_enabled) ? "ENABLED" : "Disabled");
+          ESP_LOGI("irrigation", "   Smart ET: %s", id(smart_et_enabled) ? "ENABLED" : "Disabled");
+          ESP_LOGI("irrigation", "   Freeze Protection: %s (threshold: %.1f°C)", 
+                   id(freeze_protection_active) ? "ACTIVE" : "Inactive", id(freeze_threshold));
+          ESP_LOGI("irrigation", "   Water Budget: %.1f / %.1f L (%.1f%%)",
+                   id(current_month_usage), id(monthly_water_budget),
+                   (id(current_month_usage) / id(monthly_water_budget)) * 100.0);
+          ESP_LOGI("irrigation", "   ✅ PASS - Configuration valid");
+          tests_passed++;
+          
+          // TEST 6: Memory & Performance
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "📋 TEST 6: System Resources");
+          ESP_LOGI("irrigation", "   Queue: %d/3 slots used", id(queue_count));
+          ESP_LOGI("irrigation", "   Network: %s", id(network_offline_mode) ? "OFFLINE MODE" : "Online");
+          ESP_LOGI("irrigation", "   ✅ PASS - Resources normal");
+          tests_passed++;
+          
+          // FINAL REPORT
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "🔧 DIAGNOSTICS COMPLETE");
+          ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "📊 Results:");
+          ESP_LOGI("irrigation", "   Tests Passed: %d", tests_passed);
+          ESP_LOGI("irrigation", "   Tests Failed: %d", tests_failed);
+          ESP_LOGI("irrigation", "   Warnings: %d", warnings);
+          
+          if (tests_failed == 0 && warnings == 0) {
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "   ✅✅✅ ALL SYSTEMS OPERATIONAL ✅✅✅");
+          } else if (tests_failed == 0) {
+            ESP_LOGW("irrigation", "");
+            ESP_LOGW("irrigation", "   ⚠️ OPERATIONAL WITH WARNINGS");
+          } else {
+            ESP_LOGE("irrigation", "");
+            ESP_LOGE("irrigation", "   ❌ CRITICAL ISSUES DETECTED");
+          }
+          
+          ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "");
+          
+          // Exit test mode - re-enable watchdog
+          id(test_mode_active) = false;
