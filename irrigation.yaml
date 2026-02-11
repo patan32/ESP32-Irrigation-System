@@ -10,7 +10,20 @@ substitutions:
   dev1_zone6: Lawn Zone6
   dev1_zone7: Lawn Zone7
   dev1_zone8: Lawn Zone8
-  master_valve_pin: GPIO27  # Master valve control (like Hunter Pro-C) - optional
+  
+  # ═══════════════════════════════════════════════════════════
+  # GPIO PIN ASSIGNMENTS
+  # ═══════════════════════════════════════════════════════════
+  # Change these to match your wiring - all in one place!
+  master_valve_pin: GPIO27  # Master valve control (like Hunter Pro-C)
+  zone1_pin: GPIO13         # Zone 1 valve control
+  zone2_pin: GPIO33         # Zone 2 valve control
+  zone3_pin: GPIO04         # Zone 3 valve control
+  zone4_pin: GPIO14         # Zone 4 valve control
+  zone5_pin: GPIO16         # Zone 5 valve control
+  zone6_pin: GPIO32         # Zone 6 valve control
+  zone7_pin: GPIO25         # Zone 7 valve control
+  zone8_pin: GPIO26         # Zone 8 valve control
   
   # ═══════════════════════════════════════════════════════════
   # HOME ASSISTANT ENTITY REFERENCES
@@ -298,11 +311,11 @@ esp32:
 
 api:
   encryption:
-    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    key: ""
 
 ota:
   - platform: esphome
-    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    password: ""
 
 wifi:
   ssid: !secret wifi_ssid
@@ -8994,7 +9007,7 @@ switch:
             id(zone1_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 1 watering completed (%ld seconds) - timestamp saved", duration);
           }
-    pin: GPIO13
+    pin: $zone1_pin
     inverted: true
 
   - platform: gpio
@@ -9038,7 +9051,7 @@ switch:
             id(zone2_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 2 watering completed (%ld seconds) - timestamp saved", duration);
           }
-    pin: GPIO33
+    pin: $zone2_pin
     inverted: true
 
   - platform: gpio
@@ -9082,7 +9095,7 @@ switch:
             id(zone3_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 3 watering completed (%ld seconds) - timestamp saved", duration);
           }
-    pin: GPIO04
+    pin: $zone3_pin
     inverted: true
 
   - platform: gpio
@@ -9125,7 +9138,7 @@ switch:
             id(zone4_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 4 watering completed (%ld seconds) - timestamp saved", duration);
           }
-    pin: GPIO14
+    pin: $zone4_pin
     inverted: true
 
   - platform: gpio
@@ -9168,7 +9181,7 @@ switch:
             id(zone5_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 5 watering completed (%ld seconds) - timestamp saved", duration);
           }
-    pin: GPIO16
+    pin: $zone5_pin
     inverted: true
 
   - platform: gpio
@@ -9211,7 +9224,7 @@ switch:
             id(zone6_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 6 watering completed (%ld seconds) - timestamp saved", duration);
           }
-    pin: GPIO32
+    pin: $zone6_pin
     inverted: true
 
   - platform: gpio
@@ -9254,7 +9267,7 @@ switch:
             id(zone7_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 7 watering completed (%ld seconds) - timestamp saved", duration);
           }
-    pin: GPIO25
+    pin: $zone7_pin
     inverted: true
 
   - platform: gpio
@@ -9297,7 +9310,7 @@ switch:
             id(zone8_last_watered) = id(homeassistant_time).now().timestamp;
             ESP_LOGI("irrigation", "Zone 8 watering completed (%ld seconds) - timestamp saved", duration);
           }
-    pin: GPIO26
+    pin: $zone8_pin
     inverted: true
 
 # Master Valve (Optional - like Hunter Pro-C)
