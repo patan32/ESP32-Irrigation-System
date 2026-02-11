@@ -11,8 +11,20 @@ substitutions:
   dev1_zone7: Lawn Zone7
   dev1_zone8: Lawn Zone8
   master_valve_pin: GPIO27  # Master valve control (like Hunter Pro-C) - optional
-  software_revision: V2.2-PW
-  date_revision: 2025 02 05
+  
+  # ═══════════════════════════════════════════════════════════
+  # HOME ASSISTANT ENTITY REFERENCES
+  # ═══════════════════════════════════════════════════════════
+  # Change these to match your Home Assistant entity names
+  ha_weather_entity: weather.home
+  ha_weather_forecast_entity: weather.home
+  ha_temperature_entity: weather.home
+  ha_humidity_entity: weather.forecast_home
+  ha_wind_speed_entity: weather.home
+  ha_rain_probability_entity: sensor.home_rain_forecast_0d
+  
+  software_revision: V3.14-Production
+  date_revision: 2025 02 11
   sensor_update_frequency: 1s
   log_level: info # Enable levels logging https://esphome.io/components/logger.html
   # none, error, warn, info, debug (default), verbose, very_verbose
@@ -24,8 +36,8 @@ substitutions:
   esphome_board: esp32dev
   esp32_board: "esp32dev"
   esphome_comment: Irrigation Control System
-  esphome_project_name: AG.Irrigation Control System
-  esphome_project_version: ICS, $software_revision
+  esphome_project_name: Ronald.Irrigation Control System
+  esphome_project_version: $software_revision
   uom: Min # this overrides the uom in sprinkler -> run_duration
 
 #Define Project Details and ESP Board Type
@@ -286,11 +298,11 @@ esp32:
 
 api:
   encryption:
-    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ota:
   - platform: esphome
-    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -441,21 +453,7 @@ globals:
     restore_value: False
     initial_value: '1.0'  # Smart ET's additional multiplier based on deficit
   
-  # Smart ET Schedule Time
-  - id: et_schedule_hour
-    type: int
-    restore_value: True
-    initial_value: '6'  # Default 6 AM
-    
-  - id: et_schedule_minute
-    type: int
-    restore_value: True
-    initial_value: '0'  # Default :00
-    
-  - id: et_schedule_am_pm
-    type: int
-    restore_value: True
-    initial_value: '0'  # 0=AM, 1=PM
+  # NOTE: Smart ET automatically checks at Window 1 start time (no separate schedule time needed)
 
   # ═══════════════════════════════════════════════
   # WATER USAGE TRACKING (Hunter Pro-C Style)
@@ -887,11 +885,27 @@ globals:
   - id: window1_start_hour
     type: int
     restore_value: True
-    initial_value: '6'  # 6 AM
+    initial_value: '6'  # 6 AM (stored as 24-hour)
+  - id: window1_start_minute
+    type: int
+    restore_value: True
+    initial_value: '0'  # :00
+  - id: window1_start_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'  # 0=AM, 1=PM
   - id: window1_end_hour
     type: int
     restore_value: True
-    initial_value: '9'  # 9 AM
+    initial_value: '9'  # 9 AM (stored as 24-hour)
+  - id: window1_end_minute
+    type: int
+    restore_value: True
+    initial_value: '0'  # :00
+  - id: window1_end_am_pm
+    type: int
+    restore_value: True
+    initial_value: '0'  # 0=AM, 1=PM
   - id: window2_enabled
     type: bool
     restore_value: True
@@ -899,11 +913,57 @@ globals:
   - id: window2_start_hour
     type: int
     restore_value: True
-    initial_value: '18'  # 6 PM
+    initial_value: '18'  # 6 PM (stored as 24-hour)
+  - id: window2_start_minute
+    type: int
+    restore_value: True
+    initial_value: '0'  # :00
+  - id: window2_start_am_pm
+    type: int
+    restore_value: True
+    initial_value: '1'  # 0=AM, 1=PM
   - id: window2_end_hour
     type: int
     restore_value: True
-    initial_value: '21'  # 9 PM
+    initial_value: '21'  # 9 PM (stored as 24-hour)
+  - id: window2_end_minute
+    type: int
+    restore_value: True
+    initial_value: '0'  # :00
+  - id: window2_end_am_pm
+    type: int
+    restore_value: True
+    initial_value: '1'  # 0=AM, 1=PM
+    
+  # WATERING WINDOW 3 (Optional - for additional ET run or special watering)
+  - id: window3_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'false'  # Disabled by default
+  - id: window3_start_hour
+    type: int
+    restore_value: True
+    initial_value: '14'  # 2 PM (stored as 24-hour)
+  - id: window3_start_minute
+    type: int
+    restore_value: True
+    initial_value: '0'  # :00
+  - id: window3_start_am_pm
+    type: int
+    restore_value: True
+    initial_value: '1'  # 0=AM, 1=PM
+  - id: window3_end_hour
+    type: int
+    restore_value: True
+    initial_value: '17'  # 5 PM (stored as 24-hour)
+  - id: window3_end_minute
+    type: int
+    restore_value: True
+    initial_value: '0'  # :00
+  - id: window3_end_am_pm
+    type: int
+    restore_value: True
+    initial_value: '1'  # 0=AM, 1=PM
     
   - id: manual_rain_delay_override
     type: bool
@@ -1358,7 +1418,7 @@ time:
         then:
           - script.execute: calculate_smart_et
       
-      # Check for pending Smart ET irrigation at scheduled time
+      # Check for pending Smart ET irrigation - triggers when ANY window opens
       - seconds: 0
         minutes: 0,5,10,15,20,25,30,35,40,45,50,55  # Check every 5 minutes
         then:
@@ -1366,24 +1426,47 @@ time:
               if (id(smart_et_enabled) && id(et_pending_irrigation)) {
                 if (!id(is_time_restricted) && id(irrigation_system_enable).state) {
                   
-                  // Check if current time matches Smart ET schedule
+                  // Check if we're currently in ANY enabled watering window
                   auto time = id(homeassistant_time).now();
                   int current_hour = time.hour;
                   int current_minute = time.minute;
+                  int current_time_minutes = (current_hour * 60) + current_minute;
                   
-                  // Convert schedule to 24-hour format
-                  int schedule_hour = id(et_schedule_hour);
-                  if (id(et_schedule_am_pm) == 1 && schedule_hour != 12) {
-                    schedule_hour += 12;  // PM conversion
-                  } else if (id(et_schedule_am_pm) == 0 && schedule_hour == 12) {
-                    schedule_hour = 0;  // Midnight conversion
+                  bool in_window = false;
+                  std::string active_window = "";
+                  
+                  // Check Window 1
+                  if (id(window1_enabled)) {
+                    int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
+                    int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
+                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                      in_window = true;
+                      active_window = "ET Watering Window 1";
+                    }
                   }
                   
-                  // Check if we're within 5 minutes of scheduled time
-                  bool time_match = (current_hour == schedule_hour && abs(current_minute - id(et_schedule_minute)) < 5);
+                  // Check Window 2
+                  if (!in_window && id(window2_enabled)) {
+                    int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
+                    int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
+                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                      in_window = true;
+                      active_window = "ET Watering Window 2";
+                    }
+                  }
                   
-                  if (time_match) {
-                    ESP_LOGI("irrigation", "🌱 Smart ET: Executing pending irrigation at scheduled time");
+                  // Check Window 3
+                  if (!in_window && id(window3_enabled)) {
+                    int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
+                    int end_min = (id(window3_end_hour) * 60) + id(window3_end_minute);
+                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                      in_window = true;
+                      active_window = "ET Watering Window 3";
+                    }
+                  }
+                  
+                  if (in_window) {
+                    ESP_LOGI("irrigation", "🌱 Smart ET: Executing pending irrigation (%s is open)", active_window.c_str());
                     
                     // Recalculate and apply ET multiplier
                     float deficit = id(et_soil_moisture_deficit);
@@ -3129,22 +3212,141 @@ text_sensor:
       char buf[80];
       
       if (id(et_pending_irrigation)) {
-        // Show scheduled time when pending
-        snprintf(buf, sizeof(buf), "PENDING - Next: %d:%02d %s", 
-                 id(et_schedule_hour),
-                 id(et_schedule_minute),
-                 id(et_schedule_am_pm) == 0 ? "AM" : "PM");
+        // Find next window that will open
+        int current_hour = time.hour;
+        int current_minute = time.minute;
+        int current_time_minutes = (current_hour * 60) + current_minute;
+        
+        int next_window_min = 2400; // Impossible value
+        int next_window_num = 0;
+        
+        // Check Window 1
+        if (id(window1_enabled)) {
+          int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
+          if (start_min > current_time_minutes && start_min < next_window_min) {
+            next_window_min = start_min;
+            next_window_num = 1;
+          }
+        }
+        
+        // Check Window 2
+        if (id(window2_enabled)) {
+          int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
+          if (start_min > current_time_minutes && start_min < next_window_min) {
+            next_window_min = start_min;
+            next_window_num = 2;
+          }
+        }
+        
+        // Check Window 3
+        if (id(window3_enabled)) {
+          int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
+          if (start_min > current_time_minutes && start_min < next_window_min) {
+            next_window_min = start_min;
+            next_window_num = 3;
+          }
+        }
+        
+        // If no window today, check tomorrow's earliest
+        if (next_window_min == 2400) {
+          if (id(window1_enabled)) {
+            int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
+            if (start_min < next_window_min) {
+              next_window_min = start_min;
+              next_window_num = 1;
+            }
+          }
+          if (id(window2_enabled)) {
+            int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
+            if (start_min < next_window_min) {
+              next_window_min = start_min;
+              next_window_num = 2;
+            }
+          }
+          if (id(window3_enabled)) {
+            int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
+            if (start_min < next_window_min) {
+              next_window_min = start_min;
+              next_window_num = 3;
+            }
+          }
+        }
+        
+        // Convert to 12-hour format
+        int next_hour_24 = next_window_min / 60;
+        int next_min = next_window_min % 60;
+        int hour_12 = (next_hour_24 == 0 || next_hour_24 == 12) ? 12 : next_hour_24 % 12;
+        const char* ampm = (next_hour_24 < 12) ? "AM" : "PM";
+        
+        snprintf(buf, sizeof(buf), "PENDING - Win%d: %d:%02d %s", next_window_num, hour_12, next_min, ampm);
         return {buf};
       }
       
       if (deficit >= threshold) {
-        // Show that watering is ready and when it will happen
+        // Find next window for "READY" status
+        int current_hour = time.hour;
+        int current_minute = time.minute;
+        int current_time_minutes = (current_hour * 60) + current_minute;
+        
+        int next_window_min = 2400;
+        int next_window_num = 0;
+        
+        // Check all 3 windows
+        if (id(window1_enabled)) {
+          int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
+          if (start_min > current_time_minutes && start_min < next_window_min) {
+            next_window_min = start_min;
+            next_window_num = 1;
+          }
+        }
+        if (id(window2_enabled)) {
+          int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
+          if (start_min > current_time_minutes && start_min < next_window_min) {
+            next_window_min = start_min;
+            next_window_num = 2;
+          }
+        }
+        if (id(window3_enabled)) {
+          int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
+          if (start_min > current_time_minutes && start_min < next_window_min) {
+            next_window_min = start_min;
+            next_window_num = 3;
+          }
+        }
+        
+        // If no window today, check tomorrow
+        if (next_window_min == 2400) {
+          if (id(window1_enabled)) {
+            int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
+            if (start_min < next_window_min) {
+              next_window_min = start_min;
+              next_window_num = 1;
+            }
+          }
+          if (id(window2_enabled)) {
+            int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
+            if (start_min < next_window_min) {
+              next_window_min = start_min;
+              next_window_num = 2;
+            }
+          }
+          if (id(window3_enabled)) {
+            int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
+            if (start_min < next_window_min) {
+              next_window_min = start_min;
+              next_window_num = 3;
+            }
+          }
+        }
+        
         float deficit_ratio = deficit / threshold;
-        snprintf(buf, sizeof(buf), "READY @ %d:%02d %s (%.0f%% over)", 
-                 id(et_schedule_hour),
-                 id(et_schedule_minute),
-                 id(et_schedule_am_pm) == 0 ? "AM" : "PM",
-                 (deficit_ratio - 1.0) * 100);
+        int next_hour_24 = next_window_min / 60;
+        int next_min = next_window_min % 60;
+        int hour_12 = (next_hour_24 == 0 || next_hour_24 == 12) ? 12 : next_hour_24 % 12;
+        const char* ampm = (next_hour_24 < 12) ? "AM" : "PM";
+        
+        snprintf(buf, sizeof(buf), "READY @ Win%d %d:%02d %s", 
+                 next_window_num, hour_12, next_min, ampm);
         return {buf};
       }
       
@@ -3379,7 +3581,7 @@ text_sensor:
 # Weather state from Home Assistant
   - platform: homeassistant
     id: weather_forecast_home
-    entity_id: weather.home
+    entity_id: $ha_weather_entity
     internal: true
     on_value:
       then:
@@ -3504,6 +3706,93 @@ text_sensor:
         }
       }
       return {"None scheduled"};
+
+# ET Watering Window 1 Display (12-hour format with minutes)
+  - platform: template
+    id: window1_display
+    name: "ET Watering Window 1"
+    icon: "mdi:clock-time-four"
+    update_interval: 60s
+    lambda: |-
+      if (!id(window1_enabled)) {
+        return {"Disabled"};
+      }
+      
+      // Get stored 24-hour times
+      int start_24 = id(window1_start_hour);
+      int start_min = id(window1_start_minute);
+      int end_24 = id(window1_end_hour);
+      int end_min = id(window1_end_minute);
+      
+      // Convert to 12-hour format
+      int start_12 = (start_24 == 0 || start_24 == 12) ? 12 : start_24 % 12;
+      const char* start_ampm = (start_24 < 12) ? "AM" : "PM";
+      
+      int end_12 = (end_24 == 0 || end_24 == 12) ? 12 : end_24 % 12;
+      const char* end_ampm = (end_24 < 12) ? "AM" : "PM";
+      
+      char buffer[50];
+      sprintf(buffer, "%d:%02d %s - %d:%02d %s", 
+              start_12, start_min, start_ampm, end_12, end_min, end_ampm);
+      return {buffer};
+
+# ET Watering Window 2 Display (12-hour format with minutes)
+  - platform: template
+    id: window2_display
+    name: "ET Watering Window 2"
+    icon: "mdi:clock-time-eight"
+    update_interval: 60s
+    lambda: |-
+      if (!id(window2_enabled)) {
+        return {"Disabled"};
+      }
+      
+      // Get stored 24-hour times
+      int start_24 = id(window2_start_hour);
+      int start_min = id(window2_start_minute);
+      int end_24 = id(window2_end_hour);
+      int end_min = id(window2_end_minute);
+      
+      // Convert to 12-hour format
+      int start_12 = (start_24 == 0 || start_24 == 12) ? 12 : start_24 % 12;
+      const char* start_ampm = (start_24 < 12) ? "AM" : "PM";
+      
+      int end_12 = (end_24 == 0 || end_24 == 12) ? 12 : end_24 % 12;
+      const char* end_ampm = (end_24 < 12) ? "AM" : "PM";
+      
+      char buffer[50];
+      sprintf(buffer, "%d:%02d %s - %d:%02d %s", 
+              start_12, start_min, start_ampm, end_12, end_min, end_ampm);
+      return {buffer};
+
+# ET Watering Window 3 Display (12-hour format with minutes)
+  - platform: template
+    id: window3_display
+    name: "ET Watering Window 3"
+    icon: "mdi:clock-time-two"
+    update_interval: 60s
+    lambda: |-
+      if (!id(window3_enabled)) {
+        return {"Disabled"};
+      }
+      
+      // Get stored 24-hour times
+      int start_24 = id(window3_start_hour);
+      int start_min = id(window3_start_minute);
+      int end_24 = id(window3_end_hour);
+      int end_min = id(window3_end_minute);
+      
+      // Convert to 12-hour format
+      int start_12 = (start_24 == 0 || start_24 == 12) ? 12 : start_24 % 12;
+      const char* start_ampm = (start_24 < 12) ? "AM" : "PM";
+      
+      int end_12 = (end_24 == 0 || end_24 == 12) ? 12 : end_24 % 12;
+      const char* end_ampm = (end_24 < 12) ? "AM" : "PM";
+      
+      char buffer[50];
+      sprintf(buffer, "%d:%02d %s - %d:%02d %s", 
+              start_12, start_min, start_ampm, end_12, end_min, end_ampm);
+      return {buffer};
 
 # Cycle & Soak detailed status
   - platform: template
@@ -3818,14 +4107,14 @@ sensor:
   # Internal sensors from Home Assistant (no template.publish here)
   - platform: homeassistant
     id: ha_temperature
-    entity_id: weather.home
+    entity_id: $ha_weather_entity
     attribute: temperature
     internal: true
 
-  # Humidity from Met.no (weather.forecast_home) since Open-Meteo doesn't provide it
+  # Humidity from weather forecast entity
   - platform: homeassistant
     id: ha_humidity
-    entity_id: weather.forecast_home
+    entity_id: $ha_weather_forecast_entity
     attribute: humidity
     internal: true
 
@@ -3860,7 +4149,7 @@ sensor:
   # Wind speed sensor from Home Assistant
   - platform: homeassistant
     id: wind_speed
-    entity_id: weather.home
+    entity_id: $ha_weather_entity
     attribute: wind_speed
     internal: true
     filters:
@@ -3876,16 +4165,18 @@ sensor:
   #       - name: "Rain Forecast Today"
   #         unique_id: home_rain_forecast_0d
   #         state: >
-  #           {% set forecast = state_attr('weather.home', 'forecast') %}
+  #           {% set forecast = state_attr('YOUR_WEATHER_ENTITY', 'forecast') %}
   #           {% if forecast and forecast|length > 0 %}
   #             {{ forecast[0].precipitation | default(0) }}
   #           {% else %}
   #             0
   #           {% endif %}
   #         unit_of_measurement: "mm"
+  # NOTE: Replace YOUR_WEATHER_ENTITY with your actual weather entity (e.g., weather.home)
+  # Then update ha_rain_probability_entity in substitutions to match your sensor name
   - platform: homeassistant
     id: rain_probability
-    entity_id: sensor.home_rain_forecast_0d
+    entity_id: $ha_rain_probability_entity
     internal: true
     on_value:
       then:
@@ -4166,9 +4457,9 @@ sensor:
     update_interval: 10s
     lambda: "return id(total_water_used);"
   
-  # Days Since Water Usage Reset
+  # Days Into Current Water Budget Period
   - platform: template
-    name: "$dev1_what Days Since Usage Reset"
+    name: "$dev1_what Days Into Budget Period"
     icon: "mdi:calendar-clock"
     unit_of_measurement: "days"
     accuracy_decimals: 1
@@ -4246,35 +4537,6 @@ number:
       - lambda: |-
           id(et_water_threshold) = x;
           ESP_LOGI("irrigation", "ET threshold updated to %.0f mm", x);
-
-  # Smart ET Schedule Time
-  - platform: template
-    id: et_schedule_hour_input
-    name: "$dev1_what ET Schedule Hour"
-    min_value: 1
-    max_value: 12
-    step: 1
-    icon: "mdi:clock-time-four-outline"
-    mode: box
-    lambda: "return id(et_schedule_hour);"
-    set_action:
-      - lambda: |-
-          id(et_schedule_hour) = (int)x;
-          ESP_LOGI("irrigation", "Smart ET schedule hour updated to %d", (int)x);
-
-  - platform: template
-    id: et_schedule_minute_input
-    name: "$dev1_what ET Schedule Minute"
-    min_value: 0
-    max_value: 59
-    step: 5
-    icon: "mdi:clock-outline"
-    mode: box
-    lambda: "return id(et_schedule_minute);"
-    set_action:
-      - lambda: |-
-          id(et_schedule_minute) = (int)x;
-          ESP_LOGI("irrigation", "Smart ET schedule minute updated to %02d", (int)x);
 
   # Quick run duration
   - platform: template
@@ -5058,69 +5320,309 @@ number:
           id(max_zone_runtime_daily) = x;
           ESP_LOGI("irrigation", "⏱️ Zone daily runtime limit set to %.0f minutes", x);
   
-  # Watering Window 1 - Start Hour
+  # Watering Window 1 - Start Hour (12-hour format)
   - platform: template
     id: window1_start_input
-    name: "$dev1_what Window 1 Start"
-    min_value: 0
-    max_value: 23
+    name: "$dev1_what Window 1 Start Hour"
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(window1_start_hour);"
+    lambda: |-
+      // Convert stored 24-hour to 12-hour for display
+      int hour_24 = id(window1_start_hour);
+      if (hour_24 == 0) return 12;  // Midnight = 12 AM
+      if (hour_24 <= 12) return hour_24;
+      return hour_24 - 12;  // PM hours
     set_action:
       - lambda: |-
-          id(window1_start_hour) = x;
-          ESP_LOGI("irrigation", "🕐 Window 1 start set to %d:00", (int)x);
+          // Convert 12-hour + AM/PM to 24-hour for storage
+          int hour_12 = (int)x;
+          int hour_24;
+          
+          if (id(window1_start_am_pm) == 0) {  // AM
+            hour_24 = (hour_12 == 12) ? 0 : hour_12;  // 12 AM = 0, others stay same
+          } else {  // PM
+            hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;  // 12 PM = 12, others +12
+          }
+          
+          id(window1_start_hour) = hour_24;
+          
+          const char* am_pm = id(window1_start_am_pm) == 0 ? "AM" : "PM";
+          ESP_LOGI("irrigation", "🕐 Window 1 start set to %d:%02d %s (%d:%02d 24h)", 
+                   hour_12, id(window1_start_minute), am_pm, hour_24, id(window1_start_minute));
   
-  # Watering Window 1 - End Hour
+  # Watering Window 1 - Start Minute
+  - platform: template
+    id: window1_start_minute_input
+    name: "$dev1_what Window 1 Start Minute"
+    min_value: 0
+    max_value: 59
+    step: 5
+    icon: "mdi:clock-start"
+    mode: box
+    unit_of_measurement: "min"
+    lambda: "return id(window1_start_minute);"
+    set_action:
+      - lambda: |-
+          id(window1_start_minute) = (int)x;
+          ESP_LOGI("irrigation", "🕐 Window 1 start minute set to :%02d", (int)x);
+  
+  # Watering Window 1 - End Hour (12-hour format)
   - platform: template
     id: window1_end_input
-    name: "$dev1_what Window 1 End"
-    min_value: 0
-    max_value: 23
+    name: "$dev1_what Window 1 End Hour"
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-end"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(window1_end_hour);"
+    lambda: |-
+      // Convert stored 24-hour to 12-hour for display
+      int hour_24 = id(window1_end_hour);
+      if (hour_24 == 0) return 12;  // Midnight = 12 AM
+      if (hour_24 <= 12) return hour_24;
+      return hour_24 - 12;  // PM hours
     set_action:
       - lambda: |-
-          id(window1_end_hour) = x;
-          ESP_LOGI("irrigation", "🕐 Window 1 end set to %d:00", (int)x);
+          // Convert 12-hour + AM/PM to 24-hour for storage
+          int hour_12 = (int)x;
+          int hour_24;
+          
+          if (id(window1_end_am_pm) == 0) {  // AM
+            hour_24 = (hour_12 == 12) ? 0 : hour_12;  // 12 AM = 0, others stay same
+          } else {  // PM
+            hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;  // 12 PM = 12, others +12
+          }
+          
+          id(window1_end_hour) = hour_24;
+          
+          const char* am_pm = id(window1_end_am_pm) == 0 ? "AM" : "PM";
+          ESP_LOGI("irrigation", "🕐 Window 1 end set to %d:%02d %s (%d:%02d 24h)", 
+                   hour_12, id(window1_end_minute), am_pm, hour_24, id(window1_end_minute));
   
-  # Watering Window 2 - Start Hour
+  # Watering Window 1 - End Minute
+  - platform: template
+    id: window1_end_minute_input
+    name: "$dev1_what Window 1 End Minute"
+    min_value: 0
+    max_value: 59
+    step: 5
+    icon: "mdi:clock-end"
+    mode: box
+    unit_of_measurement: "min"
+    lambda: "return id(window1_end_minute);"
+    set_action:
+      - lambda: |-
+          id(window1_end_minute) = (int)x;
+          ESP_LOGI("irrigation", "🕐 Window 1 end minute set to :%02d", (int)x);
+  
+  # Watering Window 2 - Start Hour (12-hour format)
   - platform: template
     id: window2_start_input
-    name: "$dev1_what Window 2 Start"
-    min_value: 0
-    max_value: 23
+    name: "$dev1_what Window 2 Start Hour"
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(window2_start_hour);"
+    lambda: |-
+      // Convert stored 24-hour to 12-hour for display
+      int hour_24 = id(window2_start_hour);
+      if (hour_24 == 0) return 12;  // Midnight = 12 AM
+      if (hour_24 <= 12) return hour_24;
+      return hour_24 - 12;  // PM hours
     set_action:
       - lambda: |-
-          id(window2_start_hour) = x;
-          ESP_LOGI("irrigation", "🕐 Window 2 start set to %d:00", (int)x);
+          // Convert 12-hour + AM/PM to 24-hour for storage
+          int hour_12 = (int)x;
+          int hour_24;
+          
+          if (id(window2_start_am_pm) == 0) {  // AM
+            hour_24 = (hour_12 == 12) ? 0 : hour_12;  // 12 AM = 0, others stay same
+          } else {  // PM
+            hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;  // 12 PM = 12, others +12
+          }
+          
+          id(window2_start_hour) = hour_24;
+          
+          const char* am_pm = id(window2_start_am_pm) == 0 ? "AM" : "PM";
+          ESP_LOGI("irrigation", "🕐 Window 2 start set to %d:%02d %s (%d:%02d 24h)", 
+                   hour_12, id(window2_start_minute), am_pm, hour_24, id(window2_start_minute));
   
-  # Watering Window 2 - End Hour
+  # Watering Window 2 - Start Minute
+  - platform: template
+    id: window2_start_minute_input
+    name: "$dev1_what Window 2 Start Minute"
+    min_value: 0
+    max_value: 59
+    step: 5
+    icon: "mdi:clock-start"
+    mode: box
+    unit_of_measurement: "min"
+    lambda: "return id(window2_start_minute);"
+    set_action:
+      - lambda: |-
+          id(window2_start_minute) = (int)x;
+          ESP_LOGI("irrigation", "🕐 Window 2 start minute set to :%02d", (int)x);
+  
+  # Watering Window 2 - End Hour (12-hour format)
   - platform: template
     id: window2_end_input
-    name: "$dev1_what Window 2 End"
-    min_value: 0
-    max_value: 23
+    name: "$dev1_what Window 2 End Hour"
+    min_value: 1
+    max_value: 12
     step: 1
     icon: "mdi:clock-end"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(window2_end_hour);"
+    lambda: |-
+      // Convert stored 24-hour to 12-hour for display
+      int hour_24 = id(window2_end_hour);
+      if (hour_24 == 0) return 12;  // Midnight = 12 AM
+      if (hour_24 <= 12) return hour_24;
+      return hour_24 - 12;  // PM hours
     set_action:
       - lambda: |-
-          id(window2_end_hour) = x;
-          ESP_LOGI("irrigation", "🕐 Window 2 end set to %d:00", (int)x);
+          // Convert 12-hour + AM/PM to 24-hour for storage
+          int hour_12 = (int)x;
+          int hour_24;
+          
+          if (id(window2_end_am_pm) == 0) {  // AM
+            hour_24 = (hour_12 == 12) ? 0 : hour_12;  // 12 AM = 0, others stay same
+          } else {  // PM
+            hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;  // 12 PM = 12, others +12
+          }
+          
+          id(window2_end_hour) = hour_24;
+          
+          const char* am_pm = id(window2_end_am_pm) == 0 ? "AM" : "PM";
+          ESP_LOGI("irrigation", "🕐 Window 2 end set to %d:%02d %s (%d:%02d 24h)", 
+                   hour_12, id(window2_end_minute), am_pm, hour_24, id(window2_end_minute));
+  
+  # Watering Window 2 - End Minute
+  - platform: template
+    id: window2_end_minute_input
+    name: "$dev1_what Window 2 End Minute"
+    min_value: 0
+    max_value: 59
+    step: 5
+    icon: "mdi:clock-end"
+    mode: box
+    unit_of_measurement: "min"
+    lambda: "return id(window2_end_minute);"
+    set_action:
+      - lambda: |-
+          id(window2_end_minute) = (int)x;
+          ESP_LOGI("irrigation", "🕐 Window 2 end minute set to :%02d", (int)x);
+  
+  # ═══════════════════════════════════════════════════════════
+  # WATERING WINDOW 3 (Optional - for additional ET runs)
+  # ═══════════════════════════════════════════════════════════
+  
+  # Watering Window 3 - Start Hour (12-hour format)
+  - platform: template
+    id: window3_start_input
+    name: "$dev1_what Window 3 Start Hour"
+    min_value: 1
+    max_value: 12
+    step: 1
+    icon: "mdi:clock-start"
+    mode: box
+    unit_of_measurement: "h"
+    lambda: |-
+      // Convert stored 24-hour to 12-hour for display
+      int hour_24 = id(window3_start_hour);
+      if (hour_24 == 0) return 12;  // Midnight = 12 AM
+      if (hour_24 <= 12) return hour_24;
+      return hour_24 - 12;  // PM hours
+    set_action:
+      - lambda: |-
+          // Convert 12-hour + AM/PM to 24-hour for storage
+          int hour_12 = (int)x;
+          int hour_24;
+          
+          if (id(window3_start_am_pm) == 0) {  // AM
+            hour_24 = (hour_12 == 12) ? 0 : hour_12;  // 12 AM = 0, others stay same
+          } else {  // PM
+            hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;  // 12 PM = 12, others +12
+          }
+          
+          id(window3_start_hour) = hour_24;
+          
+          const char* am_pm = id(window3_start_am_pm) == 0 ? "AM" : "PM";
+          ESP_LOGI("irrigation", "🕐 Window 3 start set to %d:%02d %s (%d:%02d 24h)", 
+                   hour_12, id(window3_start_minute), am_pm, hour_24, id(window3_start_minute));
+  
+  # Watering Window 3 - Start Minute
+  - platform: template
+    id: window3_start_minute_input
+    name: "$dev1_what Window 3 Start Minute"
+    min_value: 0
+    max_value: 59
+    step: 5
+    icon: "mdi:clock-start"
+    mode: box
+    unit_of_measurement: "min"
+    lambda: "return id(window3_start_minute);"
+    set_action:
+      - lambda: |-
+          id(window3_start_minute) = (int)x;
+          ESP_LOGI("irrigation", "🕐 Window 3 start minute set to :%02d", (int)x);
+  
+  # Watering Window 3 - End Hour (12-hour format)
+  - platform: template
+    id: window3_end_input
+    name: "$dev1_what Window 3 End Hour"
+    min_value: 1
+    max_value: 12
+    step: 1
+    icon: "mdi:clock-end"
+    mode: box
+    unit_of_measurement: "h"
+    lambda: |-
+      // Convert stored 24-hour to 12-hour for display
+      int hour_24 = id(window3_end_hour);
+      if (hour_24 == 0) return 12;  // Midnight = 12 AM
+      if (hour_24 <= 12) return hour_24;
+      return hour_24 - 12;  // PM hours
+    set_action:
+      - lambda: |-
+          // Convert 12-hour + AM/PM to 24-hour for storage
+          int hour_12 = (int)x;
+          int hour_24;
+          
+          if (id(window3_end_am_pm) == 0) {  // AM
+            hour_24 = (hour_12 == 12) ? 0 : hour_12;  // 12 AM = 0, others stay same
+          } else {  // PM
+            hour_24 = (hour_12 == 12) ? 12 : hour_12 + 12;  // 12 PM = 12, others +12
+          }
+          
+          id(window3_end_hour) = hour_24;
+          
+          const char* am_pm = id(window3_end_am_pm) == 0 ? "AM" : "PM";
+          ESP_LOGI("irrigation", "🕐 Window 3 end set to %d:%02d %s (%d:%02d 24h)", 
+                   hour_12, id(window3_end_minute), am_pm, hour_24, id(window3_end_minute));
+  
+  # Watering Window 3 - End Minute
+  - platform: template
+    id: window3_end_minute_input
+    name: "$dev1_what Window 3 End Minute"
+    min_value: 0
+    max_value: 59
+    step: 5
+    icon: "mdi:clock-end"
+    mode: box
+    unit_of_measurement: "min"
+    lambda: "return id(window3_end_minute);"
+    set_action:
+      - lambda: |-
+          id(window3_end_minute) = (int)x;
+          ESP_LOGI("irrigation", "🕐 Window 3 end minute set to :%02d", (int)x);
 
 script:
   # ============================================================
@@ -5571,21 +6073,68 @@ script:
               auto time = id(homeassistant_time).now();
               int current_hour = time.hour;
               int current_minute = time.minute;
+              int day_of_week = time.day_of_week;  // 1=Sunday, 2=Monday, etc.
               
-              // Convert schedule to 24-hour format
-              int schedule_hour = id(et_schedule_hour);
-              if (id(et_schedule_am_pm) == 1 && schedule_hour != 12) {
-                schedule_hour += 12;  // PM conversion
-              } else if (id(et_schedule_am_pm) == 0 && schedule_hour == 12) {
-                schedule_hour = 0;  // Midnight conversion
+              // CHECK ET SCHEDULE DAYS FIRST
+              bool day_enabled = false;
+              if ((day_of_week == 2 && id(et_schedule_monday).state) ||
+                  (day_of_week == 3 && id(et_schedule_tuesday).state) ||
+                  (day_of_week == 4 && id(et_schedule_wednesday).state) ||
+                  (day_of_week == 5 && id(et_schedule_thursday).state) ||
+                  (day_of_week == 6 && id(et_schedule_friday).state) ||
+                  (day_of_week == 7 && id(et_schedule_saturday).state) ||
+                  (day_of_week == 1 && id(et_schedule_sunday).state)) {
+                day_enabled = true;
               }
               
-              // Check if we're within 5 minutes of scheduled time
-              bool time_match = (current_hour == schedule_hour && abs(current_minute - id(et_schedule_minute)) < 5);
+              if (!day_enabled) {
+                const char* days[] = {"", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+                ESP_LOGW("irrigation", "   📅 Today is %s - NOT an ET schedule day", days[day_of_week]);
+                ESP_LOGW("irrigation", "   Watering will wait for next ET schedule day");
+                id(et_pending_irrigation) = true;
+                return;
+              }
               
-              if (time_match) {
+              ESP_LOGI("irrigation", "   📅 ET Schedule day check: PASS (today is enabled)");
+              
+              // Check if we're currently in ANY enabled watering window
+              int current_time_minutes = (current_hour * 60) + current_minute;
+              bool in_window = false;
+              std::string active_window = "";
+              
+              // Check Window 1
+              if (id(window1_enabled)) {
+                int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
+                int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
+                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                  in_window = true;
+                  active_window = "Window 1";
+                }
+              }
+              
+              // Check Window 2
+              if (!in_window && id(window2_enabled)) {
+                int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
+                int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
+                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                  in_window = true;
+                  active_window = "Window 2";
+                }
+              }
+              
+              // Check Window 3
+              if (!in_window && id(window3_enabled)) {
+                int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
+                int end_min = (id(window3_end_hour) * 60) + id(window3_end_minute);
+                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                  in_window = true;
+                  active_window = "Window 3";
+                }
+              }
+              
+              if (in_window) {
                 ESP_LOGI("irrigation", "");
-                ESP_LOGI("irrigation", "   ✅ Starting irrigation cycle NOW (scheduled time)");
+                ESP_LOGI("irrigation", "   ✅ Starting irrigation cycle NOW (%s is open)", active_window.c_str());
                 id(et_pending_irrigation) = false;
                 
                 // Start all enabled zones (will use the combined multiplier)
@@ -5600,12 +6149,76 @@ script:
                 id(et_last_water_time) = id(homeassistant_time).now().timestamp;
               } else {
                 ESP_LOGI("irrigation", "");
-                ESP_LOGI("irrigation", "   ⏰ Watering PENDING - waiting for scheduled time");
-                ESP_LOGI("irrigation", "   Scheduled: %d:%02d %s", 
-                         id(et_schedule_hour), 
-                         id(et_schedule_minute),
-                         id(et_schedule_am_pm) == 0 ? "AM" : "PM");
-                ESP_LOGI("irrigation", "   Current: %d:%02d %s", 
+                ESP_LOGI("irrigation", "   ⏰ Watering PENDING - waiting for next window to open");
+                
+                // Find next window that will open
+                int next_window_min = 2400; // 24 hours in minutes (impossible value)
+                std::string next_window_name = "Unknown";
+                
+                // Check Window 1
+                if (id(window1_enabled)) {
+                  int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
+                  if (start_min > current_time_minutes && start_min < next_window_min) {
+                    next_window_min = start_min;
+                    next_window_name = "ET Watering Window 1";
+                  }
+                }
+                
+                // Check Window 2
+                if (id(window2_enabled)) {
+                  int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
+                  if (start_min > current_time_minutes && start_min < next_window_min) {
+                    next_window_min = start_min;
+                    next_window_name = "ET Watering Window 2";
+                  }
+                }
+                
+                // Check Window 3
+                if (id(window3_enabled)) {
+                  int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
+                  if (start_min > current_time_minutes && start_min < next_window_min) {
+                    next_window_min = start_min;
+                    next_window_name = "ET Watering Window 3";
+                  }
+                }
+                
+                // If no window found today, check tomorrow's first window
+                if (next_window_min == 2400) {
+                  // Find earliest window for tomorrow
+                  int earliest_min = 2400;
+                  if (id(window1_enabled)) {
+                    int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
+                    if (start_min < earliest_min) {
+                      earliest_min = start_min;
+                      next_window_name = "ET Watering Window 1 (tomorrow)";
+                    }
+                  }
+                  if (id(window2_enabled)) {
+                    int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
+                    if (start_min < earliest_min) {
+                      earliest_min = start_min;
+                      next_window_name = "ET Watering Window 2 (tomorrow)";
+                    }
+                  }
+                  if (id(window3_enabled)) {
+                    int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
+                    if (start_min < earliest_min) {
+                      earliest_min = start_min;
+                      next_window_name = "ET Watering Window 3 (tomorrow)";
+                    }
+                  }
+                  next_window_min = earliest_min;
+                }
+                
+                // Convert next window time to 12-hour format
+                int next_hour_24 = next_window_min / 60;
+                int next_min = next_window_min % 60;
+                int next_hour_12 = (next_hour_24 == 0 || next_hour_24 == 12) ? 12 : next_hour_24 % 12;
+                const char* next_ampm = (next_hour_24 < 12) ? "AM" : "PM";
+                
+                ESP_LOGI("irrigation", "   Next window: %s at %d:%02d %s", 
+                         next_window_name.c_str(), next_hour_12, next_min, next_ampm);
+                ESP_LOGI("irrigation", "   Current time: %d:%02d %s", 
                          current_hour > 12 ? current_hour - 12 : (current_hour == 0 ? 12 : current_hour),
                          current_minute,
                          current_hour >= 12 ? "PM" : "AM");
@@ -5910,40 +6523,58 @@ script:
           if (allow_queue) {  // Scheduled/program runs only
             auto time = id(homeassistant_time).now();
             if (time.is_valid()) {
-              int hour = time.hour;
+              int current_hour = time.hour;
+              int current_minute = time.minute;
+              int current_time_minutes = (current_hour * 60) + current_minute;  // Total minutes since midnight
               bool in_window = false;
               
               // Check window 1
               if (id(window1_enabled)) {
-                int start = id(window1_start_hour);
-                int end = id(window1_end_hour);
-                if (start <= hour && hour < end) {
+                int start_minutes = (id(window1_start_hour) * 60) + id(window1_start_minute);
+                int end_minutes = (id(window1_end_hour) * 60) + id(window1_end_minute);
+                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
                   in_window = true;
                 }
               }
               
               // Check window 2
               if (id(window2_enabled)) {
-                int start = id(window2_start_hour);
-                int end = id(window2_end_hour);
-                if (start <= hour && hour < end) {
+                int start_minutes = (id(window2_start_hour) * 60) + id(window2_start_minute);
+                int end_minutes = (id(window2_end_hour) * 60) + id(window2_end_minute);
+                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
                   in_window = true;
                 }
               }
               
-              // If both windows disabled, allow anytime
-              if (!id(window1_enabled) && !id(window2_enabled)) {
+              // Check window 3
+              if (id(window3_enabled)) {
+                int start_minutes = (id(window3_start_hour) * 60) + id(window3_start_minute);
+                int end_minutes = (id(window3_end_hour) * 60) + id(window3_end_minute);
+                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
+                  in_window = true;
+                }
+              }
+              
+              // If all windows disabled, allow anytime
+              if (!id(window1_enabled) && !id(window2_enabled) && !id(window3_enabled)) {
                 in_window = true;
               }
               
               if (!in_window) {
-                ESP_LOGW("irrigation", "🕐 Zone %d BLOCKED - Outside watering windows (current: %d:00)", zone + 1, hour);
-                ESP_LOGW("irrigation", "   Window 1: %s (%d:00-%d:00)", 
+                ESP_LOGW("irrigation", "🕐 Zone %d BLOCKED - Outside watering windows (current: %d:%02d)", 
+                         zone + 1, current_hour, current_minute);
+                ESP_LOGW("irrigation", "   Window 1: %s (%d:%02d-%d:%02d)", 
                          id(window1_enabled) ? "ENABLED" : "disabled",
-                         id(window1_start_hour), id(window1_end_hour));
-                ESP_LOGW("irrigation", "   Window 2: %s (%d:00-%d:00)",
+                         id(window1_start_hour), id(window1_start_minute),
+                         id(window1_end_hour), id(window1_end_minute));
+                ESP_LOGW("irrigation", "   Window 2: %s (%d:%02d-%d:%02d)",
                          id(window2_enabled) ? "ENABLED" : "disabled", 
-                         id(window2_start_hour), id(window2_end_hour));
+                         id(window2_start_hour), id(window2_start_minute),
+                         id(window2_end_hour), id(window2_end_minute));
+                ESP_LOGW("irrigation", "   Window 3: %s (%d:%02d-%d:%02d)",
+                         id(window3_enabled) ? "ENABLED" : "disabled", 
+                         id(window3_start_hour), id(window3_start_minute),
+                         id(window3_end_hour), id(window3_end_minute));
                 return;
               }
             }
@@ -6999,10 +7630,10 @@ select:
       - lambda: |-
           id(restrict_end_am_pm) = (x == "AM") ? 0 : 1;
 
-  # Smart ET Schedule AM-PM
+  # Watering Window 1 Start AM-PM
   - platform: template
-    id: et_schedule_am_pm_select
-    name: "$dev1_what ET Schedule AM-PM"
+    id: window1_start_am_pm_select
+    name: "$dev1_what Window 1 Start AM-PM"
     icon: "mdi:clock"
     optimistic: true
     options:
@@ -7012,8 +7643,88 @@ select:
     restore_value: true
     set_action:
       - lambda: |-
-          id(et_schedule_am_pm) = (x == "AM") ? 0 : 1;
-          ESP_LOGI("irrigation", "Smart ET schedule AM/PM updated to %s", x.c_str());
+          id(window1_start_am_pm) = (x == "AM") ? 0 : 1;
+          ESP_LOGI("irrigation", "🕐 Window 1 start AM/PM updated to %s", x.c_str());
+
+  # Watering Window 1 End AM-PM
+  - platform: template
+    id: window1_end_am_pm_select
+    name: "$dev1_what Window 1 End AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "AM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(window1_end_am_pm) = (x == "AM") ? 0 : 1;
+          ESP_LOGI("irrigation", "🕐 Window 1 end AM/PM updated to %s", x.c_str());
+
+  # Watering Window 2 Start AM-PM
+  - platform: template
+    id: window2_start_am_pm_select
+    name: "$dev1_what Window 2 Start AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "PM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(window2_start_am_pm) = (x == "AM") ? 0 : 1;
+          ESP_LOGI("irrigation", "🕐 Window 2 start AM/PM updated to %s", x.c_str());
+
+  # Watering Window 2 End AM-PM
+  - platform: template
+    id: window2_end_am_pm_select
+    name: "$dev1_what Window 2 End AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "PM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(window2_end_am_pm) = (x == "AM") ? 0 : 1;
+          ESP_LOGI("irrigation", "🕐 Window 2 end AM/PM updated to %s", x.c_str());
+
+  # Watering Window 3 Start AM-PM
+  - platform: template
+    id: window3_start_am_pm_select
+    name: "$dev1_what Window 3 Start AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "PM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(window3_start_am_pm) = (x == "AM") ? 0 : 1;
+          ESP_LOGI("irrigation", "🕐 Window 3 start AM/PM updated to %s", x.c_str());
+
+  # Watering Window 3 End AM-PM
+  - platform: template
+    id: window3_end_am_pm_select
+    name: "$dev1_what Window 3 End AM-PM"
+    icon: "mdi:clock"
+    optimistic: true
+    options:
+      - "AM"
+      - "PM"
+    initial_option: "PM"
+    restore_value: true
+    set_action:
+      - lambda: |-
+          id(window3_end_am_pm) = (x == "AM") ? 0 : 1;
+          ESP_LOGI("irrigation", "🕐 Window 3 end AM/PM updated to %s", x.c_str());
 
 # Program A schedule type
   - platform: template
@@ -7706,6 +8417,55 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
 
+  # ═══════════════════════════════════════════════════════════
+  # SMART ET SCHEDULE DAYS
+  # ═══════════════════════════════════════════════════════════
+  # These determine which days Smart ET checks if watering is needed
+  # Default: Mon/Wed/Fri (every 2-3 days optimal for ET)
+  
+  - platform: template
+    name: "ET Schedule - 1 Monday"
+    id: et_schedule_monday
+    icon: "mdi:sprinkler-variant"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON  # Start with Mon/Wed/Fri enabled
+  - platform: template
+    name: "ET Schedule - 2 Tuesday"
+    id: et_schedule_tuesday
+    icon: "mdi:sprinkler-variant"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    name: "ET Schedule - 3 Wednesday"
+    id: et_schedule_wednesday
+    icon: "mdi:sprinkler-variant"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    name: "ET Schedule - 4 Thursday"
+    id: et_schedule_thursday
+    icon: "mdi:sprinkler-variant"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    name: "ET Schedule - 5 Friday"
+    id: et_schedule_friday
+    icon: "mdi:sprinkler-variant"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    name: "ET Schedule - 6 Saturday"
+    id: et_schedule_saturday
+    icon: "mdi:sprinkler-variant"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    name: "ET Schedule - 7 Sunday"
+    id: et_schedule_sunday
+    icon: "mdi:sprinkler-variant"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
   # Cycle and Soak Enable/Disable
   - platform: template
     name: "Cycle and Soak Mode"
@@ -7718,6 +8478,61 @@ switch:
       - lambda: "id(cycle_soak_enabled) = true;"
     turn_off_action:
       - lambda: "id(cycle_soak_enabled) = false;"
+
+  # ═══════════════════════════════════════════════════════════
+  # WATERING WINDOW ENABLE SWITCHES
+  # ═══════════════════════════════════════════════════════════
+  
+  # ET Watering Window 1 Enable
+  - platform: template
+    name: "ET Watering Window 1 Enable"
+    id: window1_enable_switch
+    icon: "mdi:clock-check"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(window1_enabled);"
+    turn_on_action:
+      - lambda: |-
+          id(window1_enabled) = true;
+          ESP_LOGI("irrigation", "🕐 ET Watering Window 1 ENABLED");
+    turn_off_action:
+      - lambda: |-
+          id(window1_enabled) = false;
+          ESP_LOGI("irrigation", "🕐 ET Watering Window 1 DISABLED");
+
+  # ET Watering Window 2 Enable
+  - platform: template
+    name: "ET Watering Window 2 Enable"
+    id: window2_enable_switch
+    icon: "mdi:clock-check"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    lambda: "return id(window2_enabled);"
+    turn_on_action:
+      - lambda: |-
+          id(window2_enabled) = true;
+          ESP_LOGI("irrigation", "🕐 ET Watering Window 2 ENABLED");
+    turn_off_action:
+      - lambda: |-
+          id(window2_enabled) = false;
+          ESP_LOGI("irrigation", "🕐 ET Watering Window 2 DISABLED");
+
+  # ET Watering Window 3 Enable
+  - platform: template
+    name: "ET Watering Window 3 Enable"
+    id: window3_enable_switch
+    icon: "mdi:clock-check"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF  # Disabled by default
+    lambda: "return id(window3_enabled);"
+    turn_on_action:
+      - lambda: |-
+          id(window3_enabled) = true;
+          ESP_LOGI("irrigation", "🕐 ET Watering Window 3 ENABLED");
+    turn_off_action:
+      - lambda: |-
+          id(window3_enabled) = false;
+          ESP_LOGI("irrigation", "🕐 ET Watering Window 3 DISABLED");
 
   # Master Valve Enable (Optional - Hunter Pro-C Style)
   # Global enable/disable for entire master valve system
@@ -8499,38 +9314,6 @@ switch:
   # ═══════════════════════════════════════════════
   # PRODUCTION FEATURES - WATERING WINDOWS & OVERRIDES
   # ═══════════════════════════════════════════════
-  
-  - platform: template
-    name: "$dev1_what Enable Watering Window 1"
-    id: window1_enable_switch
-    icon: "mdi:clock-check"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    on_turn_on:
-      - lambda: |-
-          id(window1_enabled) = true;
-          ESP_LOGI("irrigation", "🕐 Watering Window 1 ENABLED (%d:00 - %d:00)", 
-                   id(window1_start_hour), id(window1_end_hour));
-    on_turn_off:
-      - lambda: |-
-          id(window1_enabled) = false;
-          ESP_LOGI("irrigation", "🕐 Watering Window 1 DISABLED");
-  
-  - platform: template
-    name: "$dev1_what Enable Watering Window 2"
-    id: window2_enable_switch
-    icon: "mdi:clock-check"
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    on_turn_on:
-      - lambda: |-
-          id(window2_enabled) = true;
-          ESP_LOGI("irrigation", "🕐 Watering Window 2 ENABLED (%d:00 - %d:00)", 
-                   id(window2_start_hour), id(window2_end_hour));
-    on_turn_off:
-      - lambda: |-
-          id(window2_enabled) = false;
-          ESP_LOGI("irrigation", "🕐 Watering Window 2 DISABLED");
   
   - platform: template
     name: "$dev1_what Budget Override"
@@ -9516,8 +10299,20 @@ button:
           ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
           ESP_LOGI("irrigation", "🔧 SYSTEM DIAGNOSTICS STARTED");
           ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
-          ESP_LOGI("irrigation", "(Watchdog auto-control disabled during tests)");
+          ESP_LOGI("irrigation", "🔓 ALL RESTRICTIONS BYPASSED:");
+          ESP_LOGI("irrigation", "   - Watchdog auto-control: DISABLED");
+          ESP_LOGI("irrigation", "   - Weather checks: BYPASSED");
+          ESP_LOGI("irrigation", "   - Rain delay: BYPASSED");
+          ESP_LOGI("irrigation", "   - Freeze protection: BYPASSED");
+          ESP_LOGI("irrigation", "   - Water budget: BYPASSED");
+          ESP_LOGI("irrigation", "   - Runtime limits: BYPASSED");
+          ESP_LOGI("irrigation", "   - Watering windows: BYPASSED");
+          ESP_LOGI("irrigation", "   - System enable: BYPASSED");
+          ESP_LOGI("irrigation", "🔓 Diagnostics run UNRESTRICTED for hardware testing");
           ESP_LOGI("irrigation", "");
+          
+          // Update status to show diagnostics running
+          id(dev1_valve_status).publish_state("Running Diagnostics");
           
           int tests_passed = 0;
           int tests_failed = 0;
@@ -9578,19 +10373,23 @@ button:
           }
           
           // TEST 3: Master Valve (if enabled)
+          // Direct hardware control - bypasses all restrictions
           ESP_LOGI("irrigation", "");
           ESP_LOGI("irrigation", "📋 TEST 3: Master Valve");
           if (!id(master_valve_enabled)) {
             ESP_LOGI("irrigation", "   ℹ️ SKIP - Master valve not enabled");
           } else {
-            ESP_LOGI("irrigation", "   Testing master valve (3 second test)...");
+            ESP_LOGI("irrigation", "   Direct hardware test (3 seconds)...");
             
-            // Open valve
+            // Open valve (UNRESTRICTED - diagnostic mode)
             id(master_valve_relay).turn_on();
             ESP_LOGI("irrigation", "   → Valve opened");
             
-            // Wait 3 seconds
-            delay(3000);
+            // Wait 3 seconds (non-blocking)
+            for (int i = 0; i < 30; i++) {
+              delay(100);
+              App.feed_wdt();
+            }
             
             // Close valve
             id(master_valve_relay).turn_off();
@@ -9600,11 +10399,16 @@ button:
             tests_passed++;
           }
           
-          // TEST 4: Zone Configuration
+          // TEST 4: Zone Valve Hardware Tests (3 sec each)
+          // BYPASSES: Weather, rain delay, freeze protection, budget, runtime limits, windows, system enable
+          // ONLY checks zone enable (no point testing disabled zones)
           ESP_LOGI("irrigation", "");
-          ESP_LOGI("irrigation", "📋 TEST 4: Zone Configuration");
+          ESP_LOGI("irrigation", "📋 TEST 4: Zone Valve Hardware Tests");
+          ESP_LOGI("irrigation", "   Direct GPIO control - ALL restrictions bypassed");
+          ESP_LOGI("irrigation", "   Testing enabled zones only (3 seconds each)...");
+          ESP_LOGI("irrigation", "");
           
-          int zones_enabled = 0;
+          int zones_tested = 0;
           for (int zone = 0; zone < 8; zone++) {
             bool enabled = false;
             switch(zone) {
@@ -9619,8 +10423,6 @@ button:
             }
             
             if (enabled) {
-              zones_enabled++;
-              
               // Get zone name
               std::string zone_name = "Zone " + std::to_string(zone + 1);
               switch(zone) {
@@ -9634,19 +10436,72 @@ button:
                 case 7: zone_name = id(zone8_name).state; break;
               }
               
-              ESP_LOGI("irrigation", "   ✅ Zone %d: %s (ENABLED)", zone + 1, zone_name.c_str());
+              ESP_LOGI("irrigation", "   → Testing %s (Zone %d)...", zone_name.c_str(), zone + 1);
+              
+              // Open master valve if enabled and zone requires it
+              bool zone_needs_mv = false;
+              switch(zone) {
+                case 0: zone_needs_mv = id(zone1_master_valve_enabled); break;
+                case 1: zone_needs_mv = id(zone2_master_valve_enabled); break;
+                case 2: zone_needs_mv = id(zone3_master_valve_enabled); break;
+                case 3: zone_needs_mv = id(zone4_master_valve_enabled); break;
+                case 4: zone_needs_mv = id(zone5_master_valve_enabled); break;
+                case 5: zone_needs_mv = id(zone6_master_valve_enabled); break;
+                case 6: zone_needs_mv = id(zone7_master_valve_enabled); break;
+                case 7: zone_needs_mv = id(zone8_master_valve_enabled); break;
+              }
+              
+              if (id(master_valve_enabled) && zone_needs_mv) {
+                id(master_valve_relay).turn_on();
+              }
+              
+              // Turn on zone valve DIRECTLY at GPIO level (bypass sprinkler logic)
+              switch(zone) {
+                case 0: id(${devicename1}_1).turn_on(); break;
+                case 1: id(${devicename1}_2).turn_on(); break;
+                case 2: id(${devicename1}_3).turn_on(); break;
+                case 3: id(${devicename1}_4).turn_on(); break;
+                case 4: id(${devicename1}_5).turn_on(); break;
+                case 5: id(${devicename1}_6).turn_on(); break;
+                case 6: id(${devicename1}_7).turn_on(); break;
+                case 7: id(${devicename1}_8).turn_on(); break;
+              }
+              
+              // Wait 3 seconds for water flow (non-blocking to prevent ESP32 freeze)
+              for (int i = 0; i < 30; i++) {
+                delay(100);  // 100ms × 30 = 3000ms total
+                App.feed_wdt();  // Feed watchdog to prevent timeout
+              }
+              
+              // Turn off zone valve
+              switch(zone) {
+                case 0: id(${devicename1}_1).turn_off(); break;
+                case 1: id(${devicename1}_2).turn_off(); break;
+                case 2: id(${devicename1}_3).turn_off(); break;
+                case 3: id(${devicename1}_4).turn_off(); break;
+                case 4: id(${devicename1}_5).turn_off(); break;
+                case 5: id(${devicename1}_6).turn_off(); break;
+                case 6: id(${devicename1}_7).turn_off(); break;
+                case 7: id(${devicename1}_8).turn_off(); break;
+              }
+              
+              // Close master valve
+              if (id(master_valve_enabled) && zone_needs_mv) {
+                id(master_valve_relay).turn_off();
+              }
+              
+              ESP_LOGI("irrigation", "   ✅ %s test complete", zone_name.c_str());
+              zones_tested++;
             }
           }
           
-          if (zones_enabled == 0) {
-            ESP_LOGW("irrigation", "   ⚠️ WARNING: No zones enabled!");
+          if (zones_tested == 0) {
+            ESP_LOGW("irrigation", "   ⚠️ WARNING: No zones enabled to test!");
             warnings++;
           } else {
-            ESP_LOGI("irrigation", "   ✅ PASS - %d zones enabled", zones_enabled);
+            ESP_LOGI("irrigation", "   ✅ PASS - %d zones tested successfully", zones_tested);
             tests_passed++;
           }
-          
-          ESP_LOGI("irrigation", "   ℹ️ NOTE: Use individual zone buttons to test valves manually");
           
           // TEST 5: System Configuration
           ESP_LOGI("irrigation", "");
@@ -9695,3 +10550,6 @@ button:
           
           // Exit test mode - re-enable watchdog
           id(test_mode_active) = false;
+          
+          // Reset status to Idle
+          id(dev1_valve_status).publish_state("Idle");
