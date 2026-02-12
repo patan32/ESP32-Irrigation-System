@@ -36,7 +36,7 @@ substitutions:
   ha_wind_speed_entity: weather.home
   ha_rain_probability_entity: sensor.home_rain_forecast_0d
   
-  software_revision: V3.14-Production
+  software_revision: V3.20-COMPREHENSIVE-AUDIT
   date_revision: 2025 02 11
   sensor_update_frequency: 1s
   log_level: info # Enable levels logging https://esphome.io/components/logger.html
@@ -311,11 +311,11 @@ esp32:
 
 api:
   encryption:
-    key: ""
+    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ota:
   - platform: esphome
-    password: ""
+    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -384,6 +384,49 @@ globals:
     type: int
     restore_value: True
     initial_value: '5'  # Default 5 seconds between zones
+
+  # ============================================================
+  # WATERING TRIGGER TRACKING
+  # ============================================================
+  # Tracks what triggered the current/last watering session
+  - id: watering_trigger_source
+    type: std::string
+    restore_value: False
+    initial_value: '"Idle"'
+  
+  # Per-zone last trigger tracking
+  - id: zone1_last_trigger
+    type: std::string
+    restore_value: True
+    initial_value: '"Never"'
+  - id: zone2_last_trigger
+    type: std::string
+    restore_value: True
+    initial_value: '"Never"'
+  - id: zone3_last_trigger
+    type: std::string
+    restore_value: True
+    initial_value: '"Never"'
+  - id: zone4_last_trigger
+    type: std::string
+    restore_value: True
+    initial_value: '"Never"'
+  - id: zone5_last_trigger
+    type: std::string
+    restore_value: True
+    initial_value: '"Never"'
+  - id: zone6_last_trigger
+    type: std::string
+    restore_value: True
+    initial_value: '"Never"'
+  - id: zone7_last_trigger
+    type: std::string
+    restore_value: True
+    initial_value: '"Never"'
+  - id: zone8_last_trigger
+    type: std::string
+    restore_value: True
+    initial_value: '"Never"'
 
   # ============================================================
   # PREDICTIVE WATERING™ GLOBALS
@@ -1498,6 +1541,10 @@ time:
                     
                     ESP_LOGI("irrigation", "   ET Multiplier: %.2fx, PW: %.2fx, Combined: %.2fx", 
                              et_multiplier, pw_mult, combined);
+                    
+                    // Set trigger source for tracking
+                    id(watering_trigger_source) = "Smart ET (" + active_window + ")";
+                    ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
                     
                     id($devicename1).set_multiplier(combined);
                     id(start_all_zones_cycle_soak).press();
@@ -3150,6 +3197,75 @@ text_sensor:
               days[day_index], time.day_of_month, time.month, time.year,
               hour_12, time.minute, am_pm.c_str());
       return {std::string(buffer)};
+
+  # ═══════════════════════════════════════════════════════════
+  # WATERING TRIGGER TRACKING DISPLAYS
+  # ═══════════════════════════════════════════════════════════
+  # Shows what triggered the current/last watering session
+  - platform: template
+    id: current_watering_trigger
+    name: "$dev1_what Current Watering Trigger"
+    icon: "mdi:debug-step-over"
+    update_interval: 2s
+    lambda: |-
+      return id(watering_trigger_source);
+  
+  # Per-zone last trigger displays
+  - platform: template
+    id: zone1_last_trigger_display
+    name: "Zone 1 Last Trigger"
+    icon: "mdi:history"
+    lambda: |-
+      return id(zone1_last_trigger);
+  
+  - platform: template
+    id: zone2_last_trigger_display
+    name: "Zone 2 Last Trigger"
+    icon: "mdi:history"
+    lambda: |-
+      return id(zone2_last_trigger);
+  
+  - platform: template
+    id: zone3_last_trigger_display
+    name: "Zone 3 Last Trigger"
+    icon: "mdi:history"
+    lambda: |-
+      return id(zone3_last_trigger);
+  
+  - platform: template
+    id: zone4_last_trigger_display
+    name: "Zone 4 Last Trigger"
+    icon: "mdi:history"
+    lambda: |-
+      return id(zone4_last_trigger);
+  
+  - platform: template
+    id: zone5_last_trigger_display
+    name: "Zone 5 Last Trigger"
+    icon: "mdi:history"
+    lambda: |-
+      return id(zone5_last_trigger);
+  
+  - platform: template
+    id: zone6_last_trigger_display
+    name: "Zone 6 Last Trigger"
+    icon: "mdi:history"
+    lambda: |-
+      return id(zone6_last_trigger);
+  
+  - platform: template
+    id: zone7_last_trigger_display
+    name: "Zone 7 Last Trigger"
+    icon: "mdi:history"
+    lambda: |-
+      return id(zone7_last_trigger);
+  
+  - platform: template
+    id: zone8_last_trigger_display
+    name: "Zone 8 Last Trigger"
+    icon: "mdi:history"
+    lambda: |-
+      return id(zone8_last_trigger);
 
   # Predictive Watering™ status
   - platform: template
@@ -6146,8 +6262,12 @@ script:
               }
               
               if (in_window) {
+                // Set trigger source for tracking
+                id(watering_trigger_source) = "Smart ET (" + active_window + ")";
+                
                 ESP_LOGI("irrigation", "");
                 ESP_LOGI("irrigation", "   ✅ Starting irrigation cycle NOW (%s is open)", active_window.c_str());
+                ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
                 id(et_pending_irrigation) = false;
                 
                 // Start all enabled zones (will use the combined multiplier)
@@ -6470,7 +6590,12 @@ script:
           }
           
           // System is idle - start immediately
-          ESP_LOGI("irrigation", "▶️ STARTING Program %c immediately (system idle)", 'A' + program - 1);
+          const char* prog_names[] = {"", "Program A", "Program B", "Program C"};
+          std::string trigger_name = prog_names[program];
+          id(watering_trigger_source) = trigger_name;
+          
+          ESP_LOGI("irrigation", "▶️ STARTING %s immediately (system idle)", trigger_name.c_str());
+          ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_name.c_str());
           id(irrigation_busy) = true;
           id(in_program_run) = true;
           id(run_program).execute(program);
@@ -6687,6 +6812,13 @@ script:
 
           ESP_LOGI("irrigation", "▶️ Starting Zone %d immediately (system idle)", zone + 1);
           ESP_LOGI("irrigation", "   ✅ All safety checks passed");
+          
+          // Set trigger source
+          std::string zone_names[] = {"Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"};
+          std::string trigger = "Manual: " + zone_names[zone];
+          id(watering_trigger_source) = trigger;
+          ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger.c_str());
+          
           id(irrigation_busy) = true;
           id(in_program_run) = false;
           id(run_zone_with_cycles).execute(zone, duration, add_delay, false);
@@ -8995,6 +9127,8 @@ switch:
           
           // All checks passed - record start time and show active
           id(zone1_start_time) = id(homeassistant_time).now().timestamp;
+          
+          ESP_LOGI("irrigation", "🚀 Zone 1 STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone1 Active"); 
     on_turn_off:
       - text_sensor.template.publish:
@@ -9005,7 +9139,9 @@ switch:
           long duration = id(homeassistant_time).now().timestamp - id(zone1_start_time);
           if (duration > 120) {
             id(zone1_last_watered) = id(homeassistant_time).now().timestamp;
+            id(zone1_last_trigger) = id(watering_trigger_source);
             ESP_LOGI("irrigation", "Zone 1 watering completed (%ld seconds) - timestamp saved", duration);
+            ESP_LOGI("irrigation", "   Last trigger: %s", id(zone1_last_trigger).c_str());
           }
     pin: $zone1_pin
     inverted: true
@@ -9039,6 +9175,8 @@ switch:
           
           // All checks passed - record start time and show active
           id(zone2_start_time) = id(homeassistant_time).now().timestamp;
+          
+          ESP_LOGI("irrigation", "🚀 Zone 2 STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone2 Active"); 
     on_turn_off:
       - text_sensor.template.publish:
@@ -9049,7 +9187,9 @@ switch:
           long duration = id(homeassistant_time).now().timestamp - id(zone2_start_time);
           if (duration > 120) {
             id(zone2_last_watered) = id(homeassistant_time).now().timestamp;
+            id(zone2_last_trigger) = id(watering_trigger_source);
             ESP_LOGI("irrigation", "Zone 2 watering completed (%ld seconds) - timestamp saved", duration);
+            ESP_LOGI("irrigation", "   Last trigger: %s", id(zone2_last_trigger).c_str());
           }
     pin: $zone2_pin
     inverted: true
@@ -9081,8 +9221,10 @@ switch:
             }
           }
           
-          // All checks passed - record start time
+          // All checks passed - record start time and show active
           id(zone3_start_time) = id(homeassistant_time).now().timestamp;
+          
+          ESP_LOGI("irrigation", "🚀 Zone 3 STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone3 Active");
     on_turn_off:
       - text_sensor.template.publish:
@@ -9093,7 +9235,9 @@ switch:
           long duration = id(homeassistant_time).now().timestamp - id(zone3_start_time);
           if (duration > 120) {
             id(zone3_last_watered) = id(homeassistant_time).now().timestamp;
+            id(zone3_last_trigger) = id(watering_trigger_source);
             ESP_LOGI("irrigation", "Zone 3 watering completed (%ld seconds) - timestamp saved", duration);
+            ESP_LOGI("irrigation", "   Last trigger: %s", id(zone3_last_trigger).c_str());
           }
     pin: $zone3_pin
     inverted: true
@@ -9127,16 +9271,22 @@ switch:
           
           // All checks passed - record start time and show active
           id(zone4_start_time) = id(homeassistant_time).now().timestamp;
-          id(dev1_valve_status).publish_state("$dev1_zone4 Active");
+          
+          ESP_LOGI("irrigation", "🚀 Zone 4 STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone4 Active");
  
     on_turn_off:
+      - text_sensor.template.publish:
+          id: dev1_valve_status
+          state: "Idle"
       - lambda: |-
           // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone4_start_time);
           if (duration > 120) {
             id(zone4_last_watered) = id(homeassistant_time).now().timestamp;
+            id(zone4_last_trigger) = id(watering_trigger_source);
             ESP_LOGI("irrigation", "Zone 4 watering completed (%ld seconds) - timestamp saved", duration);
+            ESP_LOGI("irrigation", "   Last trigger: %s", id(zone4_last_trigger).c_str());
           }
     pin: $zone4_pin
     inverted: true
@@ -9170,16 +9320,22 @@ switch:
           
           // All checks passed - record start time and show active
           id(zone5_start_time) = id(homeassistant_time).now().timestamp;
-          id(dev1_valve_status).publish_state("$dev1_zone5 Active");
+          
+          ESP_LOGI("irrigation", "🚀 Zone 5 STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone5 Active");
  
     on_turn_off:
+      - text_sensor.template.publish:
+          id: dev1_valve_status
+          state: "Idle"
       - lambda: |-
           // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone5_start_time);
           if (duration > 120) {
             id(zone5_last_watered) = id(homeassistant_time).now().timestamp;
+            id(zone5_last_trigger) = id(watering_trigger_source);
             ESP_LOGI("irrigation", "Zone 5 watering completed (%ld seconds) - timestamp saved", duration);
+            ESP_LOGI("irrigation", "   Last trigger: %s", id(zone5_last_trigger).c_str());
           }
     pin: $zone5_pin
     inverted: true
@@ -9213,16 +9369,22 @@ switch:
           
           // All checks passed - record start time and show active
           id(zone6_start_time) = id(homeassistant_time).now().timestamp;
-          id(dev1_valve_status).publish_state("$dev1_zone6 Active");
+          
+          ESP_LOGI("irrigation", "🚀 Zone 6 STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone6 Active");
  
     on_turn_off:
+      - text_sensor.template.publish:
+          id: dev1_valve_status
+          state: "Idle"
       - lambda: |-
           // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone6_start_time);
           if (duration > 120) {
             id(zone6_last_watered) = id(homeassistant_time).now().timestamp;
+            id(zone6_last_trigger) = id(watering_trigger_source);
             ESP_LOGI("irrigation", "Zone 6 watering completed (%ld seconds) - timestamp saved", duration);
+            ESP_LOGI("irrigation", "   Last trigger: %s", id(zone6_last_trigger).c_str());
           }
     pin: $zone6_pin
     inverted: true
@@ -9256,16 +9418,22 @@ switch:
           
           // All checks passed - record start time and show active
           id(zone7_start_time) = id(homeassistant_time).now().timestamp;
-          id(dev1_valve_status).publish_state("$dev1_zone7 Active");
+          
+          ESP_LOGI("irrigation", "🚀 Zone 7 STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone7 Active");
  
     on_turn_off:
+      - text_sensor.template.publish:
+          id: dev1_valve_status
+          state: "Idle"
       - lambda: |-
           // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone7_start_time);
           if (duration > 120) {
             id(zone7_last_watered) = id(homeassistant_time).now().timestamp;
+            id(zone7_last_trigger) = id(watering_trigger_source);
             ESP_LOGI("irrigation", "Zone 7 watering completed (%ld seconds) - timestamp saved", duration);
+            ESP_LOGI("irrigation", "   Last trigger: %s", id(zone7_last_trigger).c_str());
           }
     pin: $zone7_pin
     inverted: true
@@ -9299,16 +9467,22 @@ switch:
           
           // All checks passed - record start time and show active
           id(zone8_start_time) = id(homeassistant_time).now().timestamp;
-          id(dev1_valve_status).publish_state("$dev1_zone8 Active");
+          
+          ESP_LOGI("irrigation", "🚀 Zone 8 STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone8 Active");
  
     on_turn_off:
+      - text_sensor.template.publish:
+          id: dev1_valve_status
+          state: "Idle"
       - lambda: |-
           // Only record if valve ran for more than 2 minutes (120 seconds)
           long duration = id(homeassistant_time).now().timestamp - id(zone8_start_time);
           if (duration > 120) {
             id(zone8_last_watered) = id(homeassistant_time).now().timestamp;
+            id(zone8_last_trigger) = id(watering_trigger_source);
             ESP_LOGI("irrigation", "Zone 8 watering completed (%ld seconds) - timestamp saved", duration);
+            ESP_LOGI("irrigation", "   Last trigger: %s", id(zone8_last_trigger).c_str());
           }
     pin: $zone8_pin
     inverted: true
@@ -9658,8 +9832,10 @@ button:
     on_press:
       then:
         - lambda: |-
+            id(watering_trigger_source) = "Manual - All Zones";
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Start All Zones (NORMAL)");
+            ESP_LOGI("irrigation", "📍 TRIGGER: Manual - All Zones");
             
         - if:
             condition:
@@ -9729,6 +9905,7 @@ button:
     on_press:
       then:
         - lambda: |-
+            id(watering_trigger_source) = "Program A";
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program A");
         - if:
@@ -9756,8 +9933,9 @@ button:
     on_press:
       then:
         - lambda: |-
+            id(watering_trigger_source) = "Program B";
             ESP_LOGI("irrigation", "");
-            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program A");
+            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program B");
         - if:
             condition:
               switch.is_off: irrigation_system_enable
@@ -9783,8 +9961,9 @@ button:
     on_press:
       then:
         - lambda: |-
+            id(watering_trigger_source) = "Program C";
             ESP_LOGI("irrigation", "");
-            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program A");
+            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program C");
         - if:
             condition:
               switch.is_off: irrigation_system_enable
@@ -10034,6 +10213,11 @@ button:
     on_press:
       then:
         - lambda: |-
+            // Set trigger if not already set (for manual button press)
+            if (id(watering_trigger_source) == "Idle" || id(watering_trigger_source) == "Never") {
+              id(watering_trigger_source) = "Manual - All Zones (C&S)";
+              ESP_LOGI("irrigation", "📍 TRIGGER: Manual - All Zones (Cycle & Soak)");
+            }
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Start All Zones (CYCLE & SOAK)");
         - if:
@@ -10089,9 +10273,10 @@ button:
                                     }
                                 # Turn ON cycle and soak mode
                                 - switch.turn_on: cycle_soak_switch
-                                - logger.log:
-                                    format: "✅ Cycle & Soak Mode ON - Starting all enabled zones"
-                                    level: INFO
+                                - lambda: |-
+                                    id(watering_trigger_source) = "Cycle & Soak All Zones";
+                                    ESP_LOGI("irrigation", "✅ Cycle & Soak Mode ON - Starting all enabled zones");
+                                    ESP_LOGI("irrigation", "📍 TRIGGER: Cycle & Soak All Zones");
                                 - script.execute: run_all_zones_cycle_soak_script
 
   - platform: template
@@ -10305,6 +10490,9 @@ button:
     icon: "mdi:doctor"
     on_press:
       - lambda: |-
+          // Set trigger for tracking
+          id(watering_trigger_source) = "Diagnostics";
+          
           // Enter test mode to prevent watchdog interference
           id(test_mode_active) = true;
           
@@ -10312,6 +10500,7 @@ button:
           ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
           ESP_LOGI("irrigation", "🔧 SYSTEM DIAGNOSTICS STARTED");
           ESP_LOGI("irrigation", "🔧 ═══════════════════════════════════════════════");
+          ESP_LOGI("irrigation", "📍 TRIGGER: Diagnostics");
           ESP_LOGI("irrigation", "🔓 ALL RESTRICTIONS BYPASSED:");
           ESP_LOGI("irrigation", "   - Watchdog auto-control: DISABLED");
           ESP_LOGI("irrigation", "   - Weather checks: BYPASSED");
