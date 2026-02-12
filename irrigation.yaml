@@ -36,7 +36,7 @@ substitutions:
   ha_wind_speed_entity: weather.home
   ha_rain_probability_entity: sensor.home_rain_forecast_0d
   
-  software_revision: V3.20-COMPREHENSIVE-AUDIT
+  software_revision: V3.20
   date_revision: 2025 02 11
   sensor_update_frequency: 1s
   log_level: info # Enable levels logging https://esphome.io/components/logger.html
