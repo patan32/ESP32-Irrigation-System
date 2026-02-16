@@ -2,7 +2,7 @@ Add this to your HA sensors yaml file. I am using Open-Meteo for weather. Entity
 ```
 # Standard Sensors
 - sensor:
-# Trigger-based sensor to fetch Forecast
+# Trigger-based sensor to fetch Forecast Daily
 - trigger:
     - platform: homeassistant
       event: start
@@ -18,13 +18,12 @@ Add this to your HA sensors yaml file. I am using Open-Meteo for weather. Entity
         type: daily
       response_variable: daily_data
   sensor:
-    - name: "home_rain_forecast_0d" # This ensures the ID is sensor.home_rain_forecast_0d
+    - name: "home_rain_forecast_0d"
       unique_id: home_rain_forecast_0d
       unit_of_measurement: "mm"
       device_class: precipitation
       state_class: measurement
       icon: mdi:weather-rainy
-      # Preserving your exact logic here:
       state: >
         {% set forecast = daily_data['weather.home'].forecast %}
         {% if forecast and forecast is iterable and forecast|length > 0 %}
@@ -34,6 +33,38 @@ Add this to your HA sensors yaml file. I am using Open-Meteo for weather. Entity
         {% endif %}
       availability: >
         {{ states('weather.home') not in ['unavailable', 'unknown'] and daily_data['weather.home'] is defined }}
+
+# Trigger-based sensor to fetch Hourly Forecast
+- trigger:
+    - platform: homeassistant
+      event: start
+    - platform: state
+      entity_id: weather.home
+    - platform: time_pattern
+      hours: "/1"
+  action:
+    - service: weather.get_forecasts
+      target:
+        entity_id: weather.home
+      data:
+        type: hourly
+      response_variable: hourly_data
+  sensor:
+    - name: "home_rain_forecast_1h"
+      unique_id: home_rain_forecast_1h
+      unit_of_measurement: "mm"
+      device_class: precipitation
+      state_class: measurement
+      icon: mdi:weather-rainy
+      state: >
+        {% set forecast = hourly_data['weather.home']['forecast'] %}
+        {% if forecast is defined and forecast | length > 0 %}
+          {{ forecast[0]['precipitation'] | float(0) }}
+        {% else %}
+          0
+        {% endif %}
+      availability: >
+        {{ hourly_data is defined and 'weather.home' in hourly_data and 'forecast' in hourly_data['weather.home'] and hourly_data['weather.home']['forecast'] | length > 0 }}
 ```
 Change your weather entity name from HA for weather to work properly. Look for weather.forecast_home entity and change it to what you have in HA for weather. 
 
