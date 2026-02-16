@@ -35,9 +35,104 @@ substitutions:
   ha_humidity_entity: weather.forecast_home
   ha_wind_speed_entity: weather.home
   ha_rain_probability_entity: sensor.home_rain_forecast_0d
+  ha_rain_forecast_1h_entity: sensor.home_rain_forecast_1h
   
-  software_revision: V3.20
-  date_revision: 2025 02 11
+  # ═══════════════════════════════════════════════════════════
+  # TIME CONSTANTS (Seconds) - Used Throughout Code
+  # ═══════════════════════════════════════════════════════════
+  seconds_per_day: "86400"    # 24 hours × 60 min × 60 sec
+  seconds_per_hour: "3600"    # 60 minutes × 60 seconds
+  
+  # ═══════════════════════════════════════════════════════════
+  # SEASONAL WATERING MULTIPLIERS
+  # ═══════════════════════════════════════════════════════════
+  # Adjust these values to tune seasonal watering for your climate
+  # Southern Hemisphere seasons: Summer (Dec-Feb), Winter (Jun-Aug)
+  
+  # SUMMER SETTINGS (December - February)
+  summer_base_multiplier: "1.3"      # Base watering level for summer
+  summer_hot_temp_c: "25"            # Temperature threshold for hot days
+  summer_hot_multiplier: "1.6"       # Increased watering on hot days
+  summer_very_hot_temp_c: "30"       # Temperature threshold for very hot days  
+  summer_very_hot_multiplier: "1.8"  # Maximum watering on very hot days
+  
+  # WINTER SETTINGS (June - August)
+  winter_base_multiplier: "0.5"      # Base watering level for winter
+  winter_cold_temp_c: "10"           # Temperature threshold for cold days
+  winter_cold_multiplier: "0.3"      # Reduced watering on cold days
+  
+  # SPRING/AUTUMN SETTINGS (March-May, September-November)
+  spring_autumn_base_multiplier: "0.8"       # Base watering for transitional seasons
+  spring_autumn_warm_temp_c: "20"            # Temperature threshold for warm days
+  spring_autumn_warm_multiplier: "1.0"       # Normal watering on warm days
+  
+  # ═══════════════════════════════════════════════════════════
+  # RAIN FORECAST THRESHOLDS
+  # ═══════════════════════════════════════════════════════════
+  # When to automatically clear rain delays (weather has improved)
+  rain_clear_threshold_1h_mm: "0.5"   # Clear delay if < 0.5mm rain in next hour
+  rain_clear_threshold_day_mm: "1.0"  # Clear delay if < 1.0mm rain today
+  
+  # When to automatically SET rain delays (heavy rain forecast)  
+  rain_delay_threshold_high_mm: "5.0" # Set delay if >= 5mm rain forecast
+  
+  # ═══════════════════════════════════════════════════════════
+  # DEFAULT ZONE SETTINGS
+  # ═══════════════════════════════════════════════════════════
+  default_zone_flow_rate_lpm: "15.0"  # Default flow rate (Liters Per Minute)
+  default_zone_runtime_min: "15"      # Standard zone watering duration
+  default_zone_runtime_long_min: "30" # Extended zone watering duration
+  
+  # ═══════════════════════════════════════════════════════════
+  # CYCLE & SOAK DEFAULTS
+  # ═══════════════════════════════════════════════════════════
+  # Cycle: Run time, Soak: Wait time (prevents runoff on slopes/clay soil)
+  default_cycle_duration_min: "10"    # Minutes to run per cycle
+  default_soak_duration_min: "10"     # Minutes to soak between cycles
+  default_station_delay_sec: "5"      # Seconds delay between zone switches
+  
+  # ═══════════════════════════════════════════════════════════
+  # WATERING WINDOW DEFAULTS (24-hour format)
+  # ═══════════════════════════════════════════════════════════
+  # Window 1: Early Morning (BEST - minimal evaporation, wind, heat)
+  default_window1_start_hour: "5"     # 5:00 AM
+  default_window1_end_hour: "9"       # 9:00 AM
+  
+  # Window 2: Evening (GOOD - cooler than midday, allows overnight drying)
+  default_window2_start_hour: "18"    # 6:00 PM
+  default_window2_end_hour: "21"      # 9:00 PM
+  
+  # Window 3: Optional (disabled by default)
+  default_window3_start_hour: "14"    # 2:00 PM
+  default_window3_end_hour: "17"      # 5:00 PM
+  
+  # Time Restriction (blocks midday watering to prevent evaporation loss)
+  default_time_restriction_start_hour: "10"  # 10:00 AM
+  default_time_restriction_end_hour: "14"    # 2:00 PM (hottest part of day)
+  
+  # ═══════════════════════════════════════════════════════════
+  # SMART ET (Evapotranspiration) DEFAULTS
+  # ═══════════════════════════════════════════════════════════
+  default_et_threshold_mm: "25.0"     # Soil water deficit trigger (millimeters)
+  max_et_multiplier: "2.0"            # Maximum watering multiplier (200%)
+  min_et_multiplier: "1.0"            # Minimum watering multiplier (100%)
+  
+  # ═══════════════════════════════════════════════════════════
+  # TESTING & DIAGNOSTICS
+  # ═══════════════════════════════════════════════════════════
+  test_master_valve_sec: "10"         # Master valve test duration (seconds)
+  test_zone_sec: "3"                  # Individual zone test duration (seconds)
+  max_pause_duration_hours: "2"       # Maximum pause time before auto-resume warning
+  
+  # ═══════════════════════════════════════════════════════════
+  # PROGRAM START TIME DEFAULTS (24-hour format)
+  # ═══════════════════════════════════════════════════════════
+  default_program_a_start_hour: "5"   # Program A: 5:00 AM (early morning)
+  default_program_b_start_hour: "18"  # Program B: 6:00 PM (evening)
+  default_program_c_start_hour: "6"   # Program C: 6:00 AM (morning)
+  
+  software_revision: V3.31c-USER-FRIENDLY-COMPLETE
+  date_revision: 2026 02 16
   sensor_update_frequency: 1s
   log_level: info # Enable levels logging https://esphome.io/components/logger.html
   # none, error, warn, info, debug (default), verbose, very_verbose
@@ -82,6 +177,7 @@ esphome:
               id(queue_zones)[i] = 0;
               id(queue_durations)[i] = 0;
               id(queue_add_delays)[i] = false;
+              id(queue_trigger_sources)[i] = "";
             }
             ESP_LOGI("irrigation", "🔄 BOOT: 3-slot queue initialized (Hunter Pro-C style)");
             
@@ -100,37 +196,49 @@ esphome:
           multiplier: 1
 # Set smart multiplier on boot based on temperature and season
       - lambda: |-
+          // ═══════════════════════════════════════════════════════════
+          // HELPER: Seasonal Multiplier Calculation (DRY Principle)
+          // Calculates watering multiplier based on month and temperature
+          // Uses substitutions for easy tuning - see top of file
+          // ═══════════════════════════════════════════════════════════
+          auto calculate_seasonal_multiplier = [](int month, float temp) -> float {
+            float multiplier = 1.0;
+            
+            // Summer (Dec-Feb in Southern Hemisphere)
+            if (month >= 12 || month <= 2) {
+              multiplier = ${summer_base_multiplier};
+              if (temp > ${summer_hot_temp_c}) multiplier = ${summer_hot_multiplier};
+              if (temp > ${summer_very_hot_temp_c}) multiplier = ${summer_very_hot_multiplier};
+            } 
+            // Winter (Jun-Aug in Southern Hemisphere)
+            else if (month >= 6 && month <= 8) {
+              multiplier = ${winter_base_multiplier};
+              if (temp < ${winter_cold_temp_c}) multiplier = ${winter_cold_multiplier};
+            } 
+            // Spring/Autumn (Mar-May, Sep-Nov)
+            else {
+              multiplier = ${spring_autumn_base_multiplier};
+              if (temp > ${spring_autumn_warm_temp_c}) multiplier = ${spring_autumn_warm_multiplier};
+            }
+            
+            return multiplier;
+          };
+          
+          // Get current time and temperature
           auto time = id(homeassistant_time).now();
           if (!time.is_valid()) {
-            ESP_LOGW("irrigation", "Time not synchronized yet - will retry in 30 seconds");
+            ESP_LOGW("irrigation", "Time not synchronized yet - will retry in 30s");
             return;
           }
           
-          int month = time.month;
           float temp = id(outside_temperature).state;
           if (isnan(temp)) {
             ESP_LOGW("irrigation", "Temperature unavailable, using default 20°C");
             temp = 20.0;
           }
           
-          float multiplier = 1.0;
-          
-          // Base seasonal multiplier
-          if (month >= 12 || month <= 2) {
-            multiplier = 1.3;  // Summer base
-            // Hot days need more water
-            if (temp > 25) multiplier = 1.6;
-            if (temp > 30) multiplier = 1.8;
-          } else if (month >= 6 && month <= 8) {
-            multiplier = 0.5;  // Winter base
-            // Cold days need less
-            if (temp < 10) multiplier = 0.3;
-          } else {
-            // Spring/Autumn
-            multiplier = 0.8;
-            if (temp > 20) multiplier = 1.0;
-          }
-          
+          // Calculate and apply multiplier using helper function
+          float multiplier = calculate_seasonal_multiplier(time.month, temp);
           id($devicename1).set_multiplier(multiplier);
           ESP_LOGI("irrigation", "Boot multiplier set to %.1f (temp: %.1f°C)", multiplier, temp);
       
@@ -138,43 +246,60 @@ esphome:
       - delay: 30s
       - lambda: |-
           // Only retry if multiplier is still at default 1.0
-          if (id($devicename1).multiplier() == 1.0) {
-            auto time = id(homeassistant_time).now();
-            if (!time.is_valid()) {
-              ESP_LOGW("irrigation", "Time still not synchronized after 30s - will retry at midnight");
-              return;
-            }
-            
-            int month = time.month;
-            float temp = id(outside_temperature).state;
-            if (isnan(temp)) {
-              ESP_LOGW("irrigation", "Temperature unavailable, using default 20°C");
-              temp = 20.0;
-            }
-            
-            float multiplier = 1.0;
-            
-            // Base seasonal multiplier
-            if (month >= 12 || month <= 2) {
-              multiplier = 1.3;  // Summer base
-              // Hot days need more water
-              if (temp > 25) multiplier = 1.6;
-              if (temp > 30) multiplier = 1.8;
-            } else if (month >= 6 && month <= 8) {
-              multiplier = 0.5;  // Winter base
-              // Cold days need less
-              if (temp < 10) multiplier = 0.3;
-            } else {
-              // Spring/Autumn
-              multiplier = 0.8;
-              if (temp > 20) multiplier = 1.0;
-            }
-            
-            id($devicename1).set_multiplier(multiplier);
-            ESP_LOGI("irrigation", "RETRY: Boot multiplier set to %.1f (temp: %.1f°C)", multiplier, temp);
-          } else {
-            ESP_LOGI("irrigation", "Multiplier already set to %.1f - no retry needed", id($devicename1).multiplier());
+          if (id($devicename1).multiplier() != 1.0) {
+            ESP_LOGI("irrigation", "Multiplier already set to %.1f - no retry needed", 
+                     id($devicename1).multiplier());
+            return;
           }
+          
+          // Re-define helper (lambda scope limitation - can't persist between blocks)
+          auto calculate_seasonal_multiplier = [](int month, float temp) -> float {
+            float multiplier = 1.0;
+            if (month >= 12 || month <= 2) {
+              multiplier = ${summer_base_multiplier};
+              if (temp > ${summer_hot_temp_c}) multiplier = ${summer_hot_multiplier};
+              if (temp > ${summer_very_hot_temp_c}) multiplier = ${summer_very_hot_multiplier};
+            } else if (month >= 6 && month <= 8) {
+              multiplier = ${winter_base_multiplier};
+              if (temp < ${winter_cold_temp_c}) multiplier = ${winter_cold_multiplier};
+            } else {
+              multiplier = ${spring_autumn_base_multiplier};
+              if (temp > ${spring_autumn_warm_temp_c}) multiplier = ${spring_autumn_warm_multiplier};
+            }
+            return multiplier;
+          };
+          
+          auto time = id(homeassistant_time).now();
+          if (!time.is_valid()) {
+            ESP_LOGW("irrigation", "Time still not synchronized after 30s - will retry at midnight");
+            return;
+          }
+          
+          float temp = id(outside_temperature).state;
+          if (isnan(temp)) {
+            ESP_LOGW("irrigation", "Temperature unavailable, using default 20°C");
+            temp = 20.0;
+          }
+          
+          // Calculate and apply using same helper logic
+          float multiplier = calculate_seasonal_multiplier(time.month, temp);
+          id($devicename1).set_multiplier(multiplier);
+          ESP_LOGI("irrigation", "RETRY: Boot multiplier set to %.1f (temp: %.1f°C)", multiplier, temp);
+      
+      # Update forecast text sensors on boot (after HA connection established)
+      # Wait 15s after multiplier setup to ensure:
+      # - Home Assistant API is fully connected
+      # - Sensor data has been received from HA
+      # - First forecast values are available
+      # Total boot time: ~45s (30s multiplier delay + 15s sensor delay)
+      - delay: 15s
+      - lambda: |-
+          ESP_LOGI("forecast", "🔄 BOOT: Updating forecast text sensors (first update)...");
+      - component.update: lawn_rain_forecast_summary
+      - component.update: lawn_forecast_watering_recommendation
+      - lambda: |-
+          ESP_LOGI("forecast", "✅ BOOT: Forecast text sensors updated!");
+          ESP_LOGI("forecast", "   Text sensors will now update every 10 minutes automatically");
       
       # Initialize time restriction check
       - delay: 2s
@@ -267,7 +392,7 @@ esphome:
           // Check 6: Rain Delay Status
           if (id(rain_delay_end_time) > time.timestamp) {
             long remaining = id(rain_delay_end_time) - time.timestamp;
-            ESP_LOGI("irrigation", "⚠️ Rain Delay ACTIVE: %.1f days remaining", remaining / 86400.0);
+            ESP_LOGI("irrigation", "⚠️ Rain Delay ACTIVE: %.1f days remaining", remaining / (float)${seconds_per_day});
             warnings++;
           }
           
@@ -311,11 +436,11 @@ esp32:
 
 api:
   encryption:
-    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 ota:
   - platform: esphome
-    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    password: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -359,11 +484,11 @@ globals:
   - id: cycle_duration_minutes
     type: int
     restore_value: True
-    initial_value: '10'
+    initial_value: '${default_cycle_duration_min}'
   - id: soak_duration_minutes
     type: int
     restore_value: True
-    initial_value: '10'
+    initial_value: '${default_soak_duration_min}'
   - id: current_cycle
     type: int
     restore_value: False
@@ -383,7 +508,7 @@ globals:
   - id: station_delay_seconds
     type: int
     restore_value: True
-    initial_value: '5'  # Default 5 seconds between zones
+    initial_value: '${default_station_delay_sec}'  # Seconds between zone switches
 
   # ============================================================
   # WATERING TRIGGER TRACKING
@@ -482,7 +607,7 @@ globals:
   - id: et_water_threshold
     type: float
     restore_value: True
-    initial_value: '25.0'  # Water when deficit reaches 25mm
+    initial_value: '${default_et_threshold_mm}'  # Water when deficit reaches threshold (mm)
     
   - id: et_last_calculation_time
     type: long
@@ -519,35 +644,35 @@ globals:
   - id: zone1_flow_rate
     type: float
     restore_value: True
-    initial_value: '15.0'  # 15 L/min default
+    initial_value: '${default_zone_flow_rate_lpm}'  # L/min default
   - id: zone2_flow_rate
     type: float
     restore_value: True
-    initial_value: '15.0'
+    initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone3_flow_rate
     type: float
     restore_value: True
-    initial_value: '15.0'
+    initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone4_flow_rate
     type: float
     restore_value: True
-    initial_value: '15.0'
+    initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone5_flow_rate
     type: float
     restore_value: True
-    initial_value: '15.0'
+    initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone6_flow_rate
     type: float
     restore_value: True
-    initial_value: '15.0'
+    initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone7_flow_rate
     type: float
     restore_value: True
-    initial_value: '15.0'
+    initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone8_flow_rate
     type: float
     restore_value: True
-    initial_value: '15.0'
+    initial_value: '${default_zone_flow_rate_lpm}'
   
   # Water used per zone (liters) - accumulated total
   - id: zone1_water_used
@@ -932,7 +1057,15 @@ globals:
     initial_value: 'false'
     
   # ═══════════════════════════════════════════════
-  # WATERING WINDOW ENFORCEMENT
+  # WATERING WINDOW ENFORCEMENT (For Smart ET)
+  # ═══════════════════════════════════════════════
+  # DEFAULT WINDOWS for Whanganui, NZ:
+  #   Window 1: 5:00 AM - 9:00 AM (ENABLED) - Early morning (BEST for efficiency)
+  #   Window 2: 6:00 PM - 9:00 PM (ENABLED) - Evening (Good alternative)
+  #   Window 3: Disabled by default
+  # 
+  # These windows control WHEN Smart ET can water (weather-optimized irrigation)
+  # Zone schedules and programs are NOT affected by these windows
   # ═══════════════════════════════════════════════
   - id: window1_enabled
     type: bool
@@ -941,7 +1074,7 @@ globals:
   - id: window1_start_hour
     type: int
     restore_value: True
-    initial_value: '6'  # 6 AM (stored as 24-hour)
+    initial_value: '${default_window1_start_hour}'  # Early morning (24-hour)
   - id: window1_start_minute
     type: int
     restore_value: True
@@ -953,7 +1086,7 @@ globals:
   - id: window1_end_hour
     type: int
     restore_value: True
-    initial_value: '9'  # 9 AM (stored as 24-hour)
+    initial_value: '${default_window1_end_hour}'  # End hour (24-hour)
   - id: window1_end_minute
     type: int
     restore_value: True
@@ -969,7 +1102,7 @@ globals:
   - id: window2_start_hour
     type: int
     restore_value: True
-    initial_value: '18'  # 6 PM (stored as 24-hour)
+    initial_value: '${default_window2_start_hour}'  # Start hour (24-hour)
   - id: window2_start_minute
     type: int
     restore_value: True
@@ -981,7 +1114,7 @@ globals:
   - id: window2_end_hour
     type: int
     restore_value: True
-    initial_value: '21'  # 9 PM (stored as 24-hour)
+    initial_value: '${default_window2_end_hour}'  # End hour (24-hour)
   - id: window2_end_minute
     type: int
     restore_value: True
@@ -999,7 +1132,7 @@ globals:
   - id: window3_start_hour
     type: int
     restore_value: True
-    initial_value: '14'  # 2 PM (stored as 24-hour)
+    initial_value: '${default_window3_start_hour}'  # Start hour (24-hour)
   - id: window3_start_minute
     type: int
     restore_value: True
@@ -1011,7 +1144,7 @@ globals:
   - id: window3_end_hour
     type: int
     restore_value: True
-    initial_value: '17'  # 5 PM (stored as 24-hour)
+    initial_value: '${default_window3_end_hour}'  # End hour (24-hour)
   - id: window3_end_minute
     type: int
     restore_value: True
@@ -1020,7 +1153,8 @@ globals:
     type: int
     restore_value: True
     initial_value: '1'  # 0=AM, 1=PM
-    
+  
+  
   - id: manual_rain_delay_override
     type: bool
     restore_value: True
@@ -1173,10 +1307,14 @@ globals:
     initial_value: '0'
 
   # --- Configurable Time Restriction Window (12-hour + AM-PM) ---
+  # DEFAULT: Block 10:00 AM - 6:00 PM (Recommended for Whanganui, NZ)
+  # This blocks midday watering (high evaporation) and allows efficient watering:
+  #   - Early morning: 5:00 AM - 10:00 AM (BEST - low evaporation, optimal absorption)
+  #   - Evening: 6:00 PM - 10:00 PM (Good - lower evaporation than midday)
   - id: restrict_start_hour
     type: int
     restore_value: True
-    initial_value: '10'   # 10 AM
+    initial_value: '10'   # 10 AM (restriction starts - block midday)
   - id: restrict_start_minute
     type: int
     restore_value: True
@@ -1184,20 +1322,20 @@ globals:
   - id: restrict_start_am_pm
     type: int
     restore_value: True
-    initial_value: '1'    # 0=AM, 1=PM
+    initial_value: '0'    # 0=AM, 1=PM
 
   - id: restrict_end_hour
     type: int
     restore_value: True
-    initial_value: '3'    # 3.30 PM
+    initial_value: '6'    # 6 PM (restriction ends - allow evening watering)
   - id: restrict_end_minute
     type: int
     restore_value: True
-    initial_value: '30'
+    initial_value: '0'
   - id: restrict_end_am_pm
     type: int
     restore_value: True
-    initial_value: '1'    # PM
+    initial_value: '1'    # 0=AM, 1=PM
 
   # --- Run lock / queue (prevents overlapping starts) ---
   - id: irrigation_busy
@@ -1231,6 +1369,9 @@ globals:
     restore_value: False
   - id: queue_add_delays
     type: bool[3]
+    restore_value: False
+  - id: queue_trigger_sources
+    type: std::string[3]
     restore_value: False
   - id: queue_count
     type: int
@@ -1422,6 +1563,39 @@ globals:
     type: uint32_t
     restore_value: false
     initial_value: "0"
+  
+  # ═══════════════════════════════════════════════
+  # ADVANCED FORECAST SYSTEM - V3.31
+  # ═══════════════════════════════════════════════
+  - id: forecast_rain_threshold_significant
+    type: float
+    restore_value: True
+    initial_value: '3.0'  # mm - Skip watering if this much rain forecast in 6h
+  
+  - id: forecast_rain_threshold_high
+    type: float
+    restore_value: True
+    initial_value: '10.0'  # mm - Auto rain delay if this much forecast in 12h
+  
+  - id: forecast_check_hours
+    type: int
+    restore_value: True
+    initial_value: '6'  # Hours ahead to check for significant rain
+  
+  - id: forecast_rain_detected
+    type: bool
+    restore_value: False
+    initial_value: 'false'
+  
+  - id: forecast_last_check_time
+    type: long
+    restore_value: False
+    initial_value: '0'
+  
+  - id: forecast_enabled
+    type: bool
+    restore_value: True
+    initial_value: 'true'  # Enable/disable forecast integration
    
 # Sync time with Home Assistant
 time:
@@ -1444,7 +1618,7 @@ time:
                 
                 // Set rain delay if it's raining
                 if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
-                  id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (86400 * 2); // 2 day delay
+                  id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (${seconds_per_day} * 2); // 2 day delay
                   id(rain_delay_days) = 2;
                   id(rain_delay_days_input).publish_state(2);
                   ESP_LOGI("irrigation", "Auto rain delay activated - weather is %s", weather.c_str());
@@ -1546,6 +1720,10 @@ time:
                     id(watering_trigger_source) = "Smart ET (" + active_window + ")";
                     ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
                     
+                    // Turn ON Cycle & Soak for Smart ET
+                    id(cycle_soak_switch).turn_on();
+                    ESP_LOGI("irrigation", "🔄 Cycle & Soak Mode: ON (Smart ET)");
+                    
                     id($devicename1).set_multiplier(combined);
                     id(start_all_zones_cycle_soak).press();
                     id(et_soil_moisture_deficit) = 0;
@@ -1613,7 +1791,7 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         // Only log once per hour to reduce spam
                         long now = id(homeassistant_time).now().timestamp;
-                        if (now - id(last_weather_log_time) >= 3600) {
+                        if (now - id(last_weather_log_time) >= ${seconds_per_hour}) {
                           ESP_LOGW("irrigation", "⛈️ SCHEDULES BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                           id(last_weather_log_time) = now;
                         }
@@ -1632,7 +1810,7 @@ time:
                   if (id(is_time_restricted)) {
                     // Only log once per hour to reduce spam
                     long now = id(homeassistant_time).now().timestamp;
-                    if (now - id(last_time_restriction_log) >= 3600) {
+                    if (now - id(last_time_restriction_log) >= ${seconds_per_hour}) {
                       ESP_LOGW("irrigation", "⏰ SCHEDULES BLOCKED - Time restriction active (outside allowed hours)");
                       id(last_time_restriction_log) = now;
                     }
@@ -1669,7 +1847,7 @@ time:
                     return (day_of_month % 2 == 0);
                   } else if (schedule_type == 3) {  // Interval
                     if (id(program_a_last_run) == 0) return true;  // Never run before
-                    long days_since = (time.timestamp - id(program_a_last_run)) / 86400;
+                    long days_since = (time.timestamp - id(program_a_last_run)) / ${seconds_per_day};
                     return (days_since >= id(program_a_interval_days));
                   }
                   return false;
@@ -1715,6 +1893,7 @@ time:
                     id: request_program_start
                     program: 1
                     allow_queue: true  # Changed to true so programs can queue
+                    trigger_source: "Scheduled: Program A"
           # Check Program B
           - if:
               condition:
@@ -1737,7 +1916,7 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         // Only log once per hour to reduce spam
                         long now = id(homeassistant_time).now().timestamp;
-                        if (now - id(last_weather_log_time) >= 3600) {
+                        if (now - id(last_weather_log_time) >= ${seconds_per_hour}) {
                           ESP_LOGW("irrigation", "⛈️ SCHEDULES BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                           id(last_weather_log_time) = now;
                         }
@@ -1785,7 +1964,7 @@ time:
                     return (day_of_month % 2 == 0);
                   } else if (schedule_type == 3) {
                     if (id(program_b_last_run) == 0) return true;
-                    long days_since = (time.timestamp - id(program_b_last_run)) / 86400;
+                    long days_since = (time.timestamp - id(program_b_last_run)) / ${seconds_per_day};
                     return (days_since >= id(program_b_interval_days));
                   }
                   return false;
@@ -1831,6 +2010,7 @@ time:
                     id: request_program_start
                     program: 2
                     allow_queue: true  # Changed to true so programs can queue
+                    trigger_source: "Scheduled: Program B"
           # Check Program C
           - if:
               condition:
@@ -1853,7 +2033,7 @@ time:
                       if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
                         // Only log once per hour to reduce spam
                         long now = id(homeassistant_time).now().timestamp;
-                        if (now - id(last_weather_log_time) >= 3600) {
+                        if (now - id(last_weather_log_time) >= ${seconds_per_hour}) {
                           ESP_LOGW("irrigation", "⛈️ SCHEDULES BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                           id(last_weather_log_time) = now;
                         }
@@ -1901,7 +2081,7 @@ time:
                     return (day_of_month % 2 == 0);
                   } else if (schedule_type == 3) {
                     if (id(program_c_last_run) == 0) return true;
-                    long days_since = (time.timestamp - id(program_c_last_run)) / 86400;
+                    long days_since = (time.timestamp - id(program_c_last_run)) / ${seconds_per_day};
                     return (days_since >= id(program_c_interval_days));
                   }
                   return false;
@@ -1947,6 +2127,7 @@ time:
                     id: request_program_start
                     program: 3
                     allow_queue: true  # Changed to true so programs can queue
+                    trigger_source: "Scheduled: Program C"
 
       # Update smart multiplier at midnight based on temperature and season
       - seconds: 0
@@ -2070,6 +2251,7 @@ time:
                     duration: !lambda "return id(Lawn_irrigation_controller_1_duration).state * 60;"
                     add_delay: true
                     allow_queue: true
+                    trigger_source: "Scheduled: Zone 1"
 
           # Zone 2 Schedule
           - if:
@@ -2140,6 +2322,7 @@ time:
                     duration: !lambda "return id(Lawn_irrigation_controller_2_duration).state * 60;"
                     add_delay: true
                     allow_queue: true
+                    trigger_source: "Scheduled: Zone 2"
           # Zone 3 Schedule
           - if:
               condition:
@@ -2209,6 +2392,7 @@ time:
                     duration: !lambda "return id(Lawn_irrigation_controller_3_duration).state * 60;"
                     add_delay: true
                     allow_queue: true
+                    trigger_source: "Scheduled: Zone 3"
           # Zone 4 Schedule
           - if:
               condition:
@@ -2277,6 +2461,7 @@ time:
                     duration: !lambda "return id(Lawn_irrigation_controller_4_duration).state * 60;"
                     add_delay: true
                     allow_queue: true
+                    trigger_source: "Scheduled: Zone 4"
           # Zone 5 Schedule
           - if:
               condition:
@@ -2346,6 +2531,7 @@ time:
                     duration: !lambda "return id(Lawn_irrigation_controller_5_duration).state * 60;"
                     add_delay: true
                     allow_queue: true
+                    trigger_source: "Scheduled: Zone 5"
           # Zone 6 Schedule
           - if:
               condition:
@@ -2415,6 +2601,7 @@ time:
                     duration: !lambda "return id(Lawn_irrigation_controller_6_duration).state * 60;"
                     add_delay: true
                     allow_queue: true
+                    trigger_source: "Scheduled: Zone 6"
           # Zone 7 Schedule
           - if:
               condition:
@@ -2483,6 +2670,7 @@ time:
                     duration: !lambda "return id(Lawn_irrigation_controller_7_duration).state * 60;"
                     add_delay: true
                     allow_queue: true
+                    trigger_source: "Scheduled: Zone 7"
           # Zone 8 Schedule
           - if:
               condition:
@@ -2550,6 +2738,7 @@ time:
                     duration: !lambda "return id(Lawn_irrigation_controller_8_duration).state * 60;"
                     add_delay: true
                     allow_queue: true
+                    trigger_source: "Scheduled: Zone 8"
 
           # Weekly Schedule (Schedule 1-7: Monday-Sunday)
           # Like Hunter Pro-C: Runs ALL enabled zones at set time on selected days
@@ -2682,6 +2871,7 @@ time:
                         id(queue_zones)[pos] = 0;
                         id(queue_durations)[pos] = 0;
                         id(queue_add_delays)[pos] = false;
+                        id(queue_trigger_sources)[pos] = "Weekly Schedule";
                         id(queue_count)++;
                         
                         ESP_LOGI("irrigation", "📋 QUEUED Weekly Schedule → Slot %d/3 (%d zones will run when idle)",
@@ -2691,6 +2881,9 @@ time:
                       }
                     } else {
                       ESP_LOGI("irrigation", "▶️ STARTING Weekly Schedule immediately (system idle)");
+                      // Set trigger source for weekly schedule
+                      id(watering_trigger_source) = "Weekly Schedule";
+                      ESP_LOGI("irrigation", "📍 TRIGGER: Weekly Schedule");
                       // Start immediately
                       id(pending_normal_start) = true;
                       id(normal_start_attempts) = 0;
@@ -2994,7 +3187,7 @@ interval:
 
             long paused_duration = now - pause_start_time;
 
-            if (paused_duration > 86400) {
+            if (paused_duration > ${seconds_per_day}) {
               ESP_LOGE("irrigation",
                 "WATCHDOG: Paused for >24 hours (%ld sec) - auto-clearing abandoned pause",
                 paused_duration);
@@ -3021,11 +3214,11 @@ interval:
               pause_start_time = 0;
               id(drain_queue).execute();
             }
-            else if (paused_duration > 3600) {
-              if ((paused_duration % 3600) < 30) {
+            else if (paused_duration > ${seconds_per_hour}) {
+              if ((paused_duration % ${seconds_per_hour}) < 30) {
                 ESP_LOGW("irrigation",
                   "WATCHDOG: System paused for %ld hours",
-                  paused_duration / 3600);
+                  paused_duration / ${seconds_per_hour});
               }
             }
 
@@ -3123,6 +3316,12 @@ interval:
   - interval: 5s
     then:
       - script.execute: check_time_restriction
+
+  # ═══════════════════════════════════════════════
+  # ADVANCED FORECAST SYSTEM - V3.31
+  # ═══════════════════════════════════════════════
+  # Rain delay check runs automatically when forecast sensors update (on_value triggers)
+  # No polling interval needed - event-driven only!
 
 ###############################################
 # Text sensors with general information
@@ -3294,7 +3493,7 @@ text_sensor:
       // Calculate next update time (hourly updates)
       long current_time = time.timestamp;
       long time_since_calc = current_time - last_calc;
-      long next_calc_sec = 3600 - (time_since_calc % 3600); // 3600 = 1 hour
+      long next_calc_sec = ${seconds_per_hour} - (time_since_calc % ${seconds_per_hour}); // 3600 = 1 hour
       int mins_until = next_calc_sec / 60;
       
       char buf[80];
@@ -3650,10 +3849,10 @@ text_sensor:
     icon: "mdi:timer-sand"
     lambda: |-
       int seconds = round(id($devicename1).time_remaining_active_valve().value_or(0));
-      int days = seconds / (24 * 3600);
-      seconds = seconds % (24 * 3600);
-      int hours = seconds / 3600;
-      seconds = seconds % 3600;
+      int days = seconds / (24 * ${seconds_per_hour});
+      seconds = seconds % (24 * ${seconds_per_hour});
+      int hours = seconds / ${seconds_per_hour};
+      seconds = seconds % ${seconds_per_hour};
       int minutes = seconds /  60;
       seconds = seconds % 60;
       std::string result = "";
@@ -3726,7 +3925,7 @@ text_sensor:
               
               // Set rain delay if it starts raining
               if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
-                id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (86400 * 2); // 2 day delay
+                id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (${seconds_per_day} * 2); // 2 day delay
                 id(rain_delay_days) = 2;
                 id(rain_delay_days_input).publish_state(2);
                 ESP_LOGI("irrigation", "Auto rain delay activated immediately - weather changed to %s", weather.c_str());
@@ -3762,10 +3961,17 @@ text_sensor:
       bool blocked = enabled && ((start_min < end_min) ? (now_min >= start_min && now_min < end_min)
                                                        : (now_min >= start_min || now_min < end_min));
       char buf[96];
-      snprintf(buf, sizeof(buf), "%s (%d:%02d %s - %d:%02d %s)",
-               blocked ? "Restricted" : (enabled ? "Allowed" : "Disabled"),
-               id(restrict_start_hour), id(restrict_start_minute), (id(restrict_start_am_pm) == 0 ? "AM" : "PM"),
-               id(restrict_end_hour), id(restrict_end_minute), (id(restrict_end_am_pm) == 0 ? "AM" : "PM"));
+      if (!enabled) {
+        snprintf(buf, sizeof(buf), "Disabled");
+      } else if (blocked) {
+        snprintf(buf, sizeof(buf), "BLOCKED NOW (Restricted: %d:%02d %s - %d:%02d %s)",
+                 id(restrict_start_hour), id(restrict_start_minute), (id(restrict_start_am_pm) == 0 ? "AM" : "PM"),
+                 id(restrict_end_hour), id(restrict_end_minute), (id(restrict_end_am_pm) == 0 ? "AM" : "PM"));
+      } else {
+        snprintf(buf, sizeof(buf), "Allowed (Restricted: %d:%02d %s - %d:%02d %s)",
+                 id(restrict_start_hour), id(restrict_start_minute), (id(restrict_start_am_pm) == 0 ? "AM" : "PM"),
+                 id(restrict_end_hour), id(restrict_end_minute), (id(restrict_end_am_pm) == 0 ? "AM" : "PM"));
+      }
       return {buf};
 
   - platform: template
@@ -3971,15 +4177,15 @@ text_sensor:
         return {"Never"};
       }
       long seconds_ago = id(homeassistant_time).now().timestamp - id(zone1_last_watered);
-      long days = seconds_ago / 86400;
-      long hours = (seconds_ago % 86400) / 3600;
+      long days = seconds_ago / ${seconds_per_day};
+      long hours = (seconds_ago % ${seconds_per_day}) / ${seconds_per_hour};
       
       if (days > 0) {
         return {std::to_string(days) + " days ago"};
       } else if (hours > 0) {
         return {std::to_string(hours) + " hours ago"};
       } else {
-        long minutes = (seconds_ago % 3600) / 60;
+        long minutes = (seconds_ago % ${seconds_per_hour}) / 60;
         return {std::to_string(minutes) + " minutes ago"};
       }
 
@@ -3994,15 +4200,15 @@ text_sensor:
         return {"Never"};
       }
       long seconds_ago = id(homeassistant_time).now().timestamp - id(zone2_last_watered);
-      long days = seconds_ago / 86400;
-      long hours = (seconds_ago % 86400) / 3600;
+      long days = seconds_ago / ${seconds_per_day};
+      long hours = (seconds_ago % ${seconds_per_day}) / ${seconds_per_hour};
       
       if (days > 0) {
         return {std::to_string(days) + " days ago"};
       } else if (hours > 0) {
         return {std::to_string(hours) + " hours ago"};
       } else {
-        long minutes = (seconds_ago % 3600) / 60;
+        long minutes = (seconds_ago % ${seconds_per_hour}) / 60;
         return {std::to_string(minutes) + " minutes ago"};
       }
 
@@ -4017,15 +4223,15 @@ text_sensor:
         return {"Never"};
       }
       long seconds_ago = id(homeassistant_time).now().timestamp - id(zone3_last_watered);
-      long days = seconds_ago / 86400;
-      long hours = (seconds_ago % 86400) / 3600;
+      long days = seconds_ago / ${seconds_per_day};
+      long hours = (seconds_ago % ${seconds_per_day}) / ${seconds_per_hour};
       
       if (days > 0) {
         return {std::to_string(days) + " days ago"};
       } else if (hours > 0) {
         return {std::to_string(hours) + " hours ago"};
       } else {
-        long minutes = (seconds_ago % 3600) / 60;
+        long minutes = (seconds_ago % ${seconds_per_hour}) / 60;
         return {std::to_string(minutes) + " minutes ago"};
       }
 
@@ -4040,15 +4246,15 @@ text_sensor:
         return {"Never"};
       }
       long seconds_ago = id(homeassistant_time).now().timestamp - id(zone4_last_watered);
-      long days = seconds_ago / 86400;
-      long hours = (seconds_ago % 86400) / 3600;
+      long days = seconds_ago / ${seconds_per_day};
+      long hours = (seconds_ago % ${seconds_per_day}) / ${seconds_per_hour};
       
       if (days > 0) {
         return {std::to_string(days) + " days ago"};
       } else if (hours > 0) {
         return {std::to_string(hours) + " hours ago"};
       } else {
-        long minutes = (seconds_ago % 3600) / 60;
+        long minutes = (seconds_ago % ${seconds_per_hour}) / 60;
         return {std::to_string(minutes) + " minutes ago"};
       }
 
@@ -4063,15 +4269,15 @@ text_sensor:
         return {"Never"};
       }
       long seconds_ago = id(homeassistant_time).now().timestamp - id(zone5_last_watered);
-      long days = seconds_ago / 86400;
-      long hours = (seconds_ago % 86400) / 3600;
+      long days = seconds_ago / ${seconds_per_day};
+      long hours = (seconds_ago % ${seconds_per_day}) / ${seconds_per_hour};
       
       if (days > 0) {
         return {std::to_string(days) + " days ago"};
       } else if (hours > 0) {
         return {std::to_string(hours) + " hours ago"};
       } else {
-        long minutes = (seconds_ago % 3600) / 60;
+        long minutes = (seconds_ago % ${seconds_per_hour}) / 60;
         return {std::to_string(minutes) + " minutes ago"};
       }
 
@@ -4086,15 +4292,15 @@ text_sensor:
         return {"Never"};
       }
       long seconds_ago = id(homeassistant_time).now().timestamp - id(zone6_last_watered);
-      long days = seconds_ago / 86400;
-      long hours = (seconds_ago % 86400) / 3600;
+      long days = seconds_ago / ${seconds_per_day};
+      long hours = (seconds_ago % ${seconds_per_day}) / ${seconds_per_hour};
       
       if (days > 0) {
         return {std::to_string(days) + " days ago"};
       } else if (hours > 0) {
         return {std::to_string(hours) + " hours ago"};
       } else {
-        long minutes = (seconds_ago % 3600) / 60;
+        long minutes = (seconds_ago % ${seconds_per_hour}) / 60;
         return {std::to_string(minutes) + " minutes ago"};
       }
 
@@ -4109,15 +4315,15 @@ text_sensor:
         return {"Never"};
       }
       long seconds_ago = id(homeassistant_time).now().timestamp - id(zone7_last_watered);
-      long days = seconds_ago / 86400;
-      long hours = (seconds_ago % 86400) / 3600;
+      long days = seconds_ago / ${seconds_per_day};
+      long hours = (seconds_ago % ${seconds_per_day}) / ${seconds_per_hour};
       
       if (days > 0) {
         return {std::to_string(days) + " days ago"};
       } else if (hours > 0) {
         return {std::to_string(hours) + " hours ago"};
       } else {
-        long minutes = (seconds_ago % 3600) / 60;
+        long minutes = (seconds_ago % ${seconds_per_hour}) / 60;
         return {std::to_string(minutes) + " minutes ago"};
       }
 
@@ -4132,15 +4338,15 @@ text_sensor:
         return {"Never"};
       }
       long seconds_ago = id(homeassistant_time).now().timestamp - id(zone8_last_watered);
-      long days = seconds_ago / 86400;
-      long hours = (seconds_ago % 86400) / 3600;
+      long days = seconds_ago / ${seconds_per_day};
+      long hours = (seconds_ago % ${seconds_per_day}) / ${seconds_per_hour};
       
       if (days > 0) {
         return {std::to_string(days) + " days ago"};
       } else if (hours > 0) {
         return {std::to_string(hours) + " hours ago"};
       } else {
-        long minutes = (seconds_ago % 3600) / 60;
+        long minutes = (seconds_ago % ${seconds_per_hour}) / 60;
         return {std::to_string(minutes) + " minutes ago"};
       }
 
@@ -4226,6 +4432,117 @@ text_sensor:
       sprintf(buffer, "Season: %.2f | Soil (%s): %.2f | Total: %.2f",
               seasonal, soil_name.c_str(), soil, total);
       return {std::string(buffer)};
+
+  # ═══════════════════════════════════════════════
+  # ADVANCED FORECAST SYSTEM DISPLAYS - V3.31
+  # ═══════════════════════════════════════════════
+  
+  # Rain Forecast Summary
+  - platform: template
+    name: "$dev1_what Rain Forecast Summary"
+    id: lawn_rain_forecast_summary
+    icon: "mdi:weather-rainy"
+    update_interval: never  # Only updates when forecast sensors change (via on_value triggers)
+    lambda: |-
+      if (!id(forecast_enabled)) {
+        return {"Forecast disabled"};
+      }
+      
+      float f1h = id(rain_forecast_1h).state;
+      float f0d = id(rain_probability).state;  // Today's total forecast (0d)
+      
+      // Debug logging
+      ESP_LOGI("forecast", "Rain Summary - 1h: %.2f, Today: %.2f", f1h, f0d);
+      
+      char buf[200];
+      if (isnan(f1h) && isnan(f0d)) {
+        snprintf(buf, sizeof(buf), "Waiting for forecast data...");
+      } else if (isnan(f1h)) {
+        // Only have today's forecast
+        if (f0d >= 5.0) {
+          snprintf(buf, sizeof(buf), "Heavy rain today: %.1fmm", f0d);
+        } else if (f0d >= 2.0) {
+          snprintf(buf, sizeof(buf), "Rain today: %.1fmm", f0d);
+        } else {
+          snprintf(buf, sizeof(buf), "Light/no rain: %.1fmm today", f0d);
+        }
+      } else if (isnan(f0d)) {
+        // Only have 1h forecast
+        if (f1h >= 5.0) {
+          snprintf(buf, sizeof(buf), "Heavy rain soon: %.1fmm in 1h", f1h);
+        } else if (f1h >= 2.0) {
+          snprintf(buf, sizeof(buf), "Rain soon: %.1fmm in 1h", f1h);
+        } else {
+          snprintf(buf, sizeof(buf), "Light: %.1fmm in 1h", f1h);
+        }
+      } else {
+        // Have BOTH forecasts - show smartest summary
+        if (f1h >= 5.0) {
+          snprintf(buf, sizeof(buf), "Heavy rain NOW: %.1fmm/1h, %.1fmm/day", f1h, f0d);
+        } else if (f1h >= 2.0) {
+          snprintf(buf, sizeof(buf), "Rain soon: %.1fmm/1h, %.1fmm/day", f1h, f0d);
+        } else if (f0d >= 5.0) {
+          snprintf(buf, sizeof(buf), "Heavy later: %.1fmm/day (%.1fmm/1h now)", f0d, f1h);
+        } else if (f0d >= 2.0 || f1h >= 0.5) {
+          snprintf(buf, sizeof(buf), "Light rain: %.1fmm/1h, %.1fmm/day", f1h, f0d);
+        } else {
+          snprintf(buf, sizeof(buf), "Minimal rain: %.1fmm/1h, %.1fmm/day", f1h, f0d);
+        }
+      }
+      return {buf};
+  
+  # Forecast Watering Recommendation
+  - platform: template
+    name: "$dev1_what Forecast Watering Recommendation"
+    id: lawn_forecast_watering_recommendation
+    icon: "mdi:lightbulb-on"
+    update_interval: 10min
+    lambda: |-
+      if (!id(forecast_enabled)) {
+        return {"Forecast disabled"};
+      }
+      
+      float f1h = id(rain_forecast_1h).state;
+      float f0d = id(rain_probability).state;  // Today's total
+      float threshold_sig = id(forecast_rain_threshold_significant);
+      float threshold_high = id(forecast_rain_threshold_high);
+      
+      // Debug logging
+      ESP_LOGI("forecast", "Watering Rec - 1h: %.2f, 0d: %.2f, thresholds: sig=%.1f high=%.1f", 
+               f1h, f0d, threshold_sig, threshold_high);
+      
+      char buf[150];
+      
+      // Smart combined logic: 1h = urgency, 0d = daily planning
+      if (isnan(f1h) && isnan(f0d)) {
+        snprintf(buf, sizeof(buf), "PROCEED - Waiting for forecast");
+      } 
+      // URGENCY CHECK (1h forecast) - takes priority
+      else if (!isnan(f1h) && f1h >= threshold_high) {
+        snprintf(buf, sizeof(buf), "DELAY - Heavy rain NOW (%.1fmm/1h)", f1h);
+      } 
+      else if (!isnan(f1h) && f1h >= threshold_sig) {
+        snprintf(buf, sizeof(buf), "SKIP - Rain imminent (%.1fmm/1h)", f1h);
+      }
+      // DAILY PLANNING CHECK (0d forecast)
+      else if (!isnan(f0d) && f0d >= threshold_high) {
+        snprintf(buf, sizeof(buf), "REDUCE 50%% - Heavy rain today (%.1fmm)", f0d);
+      }
+      else if (!isnan(f0d) && f0d >= threshold_sig) {
+        snprintf(buf, sizeof(buf), "REDUCE 30%% - Rain today (%.1fmm)", f0d);
+      }
+      // COMBINED LOW RAIN
+      else if (!isnan(f1h) && !isnan(f0d) && (f1h + f0d) >= 2.0) {
+        snprintf(buf, sizeof(buf), "REDUCE 20%% - Light rain (%.1f+%.1fmm)", f1h, f0d);
+      }
+      // ALL CLEAR
+      else {
+        float total = 0;
+        if (!isnan(f1h)) total += f1h;
+        if (!isnan(f0d)) total += f0d;
+        snprintf(buf, sizeof(buf), "PROCEED - Minimal rain (%.1fmm)", total);
+      }
+      return {buf};
 
 sensor:
   # Uptime sensor
@@ -4314,6 +4631,10 @@ sensor:
             if (!isnan(x) && x >= 0) {
               ESP_LOGD("irrigation", "Precipitation forecast updated: %.1f mm", x);
             }
+        # Update forecast summary immediately
+        - component.update: lawn_rain_forecast_summary
+        # IMMEDIATE CHECK: Run rain delay logic when forecast updates
+        - script.execute: check_forecast_rain_delay
     filters:
       - lambda: |-
           // Reject unavailable, unknown, or invalid values
@@ -4322,6 +4643,30 @@ sensor:
             return {};
           }
           return x;  // Return actual mm value
+
+  # ============================================================
+  # ADVANCED FORECAST SYSTEM - V3.31
+  # ============================================================
+  # Import hourly rain forecast sensor from Home Assistant
+  # This sensor must be created in HA configuration.yaml first!
+  # See V3.31 documentation for HA sensor configuration
+  
+  - platform: homeassistant
+    id: rain_forecast_1h
+    entity_id: $ha_rain_forecast_1h_entity
+    internal: true
+    filters:
+      - lambda: |-
+          if (isnan(x) || x < 0) return 0.0;
+          return x;
+    on_value:
+      then:
+        - lambda: |-
+            ESP_LOGI("forecast", "🌧️ Rain forecast 1h updated: %.2fmm", x);
+        # Update forecast summary immediately
+        - component.update: lawn_rain_forecast_summary
+        # IMMEDIATE CHECK: Run rain delay logic when forecast updates
+        - script.execute: check_forecast_rain_delay
 
   # Predictive Watering Multiplier Display
   - platform: template
@@ -4461,7 +4806,7 @@ sensor:
         id(rain_delay_days) = 0;
         return 0.0f;
       }
-      return remaining_seconds / 86400.0f;
+      return remaining_seconds / (float)${seconds_per_day};
 
   # Current seasonal multiplier
   - platform: template
@@ -4473,6 +4818,83 @@ sensor:
     update_interval: 3600s
     lambda: |-
       return id($devicename1).multiplier();
+
+  # ═══════════════════════════════════════════════
+  # ADVANCED FORECAST SYSTEM SENSORS - V3.31
+  # ═══════════════════════════════════════════════
+  
+  # ET Effective Deficit (accounts for forecast rain)
+  - platform: template
+    name: "$dev1_what ET Effective Deficit"
+    id: et_effective_deficit
+    icon: "mdi:water-minus-outline"
+    unit_of_measurement: "mm"
+    accuracy_decimals: 1
+    update_interval: 30min
+    lambda: |-
+      if (!id(smart_et_enabled)) {
+        return {};
+      }
+      if (!id(forecast_enabled)) {
+        return id(et_soil_moisture_deficit);
+      }
+      float deficit = id(et_soil_moisture_deficit);
+      
+      // Use dual forecast
+      float rain_1h = id(rain_forecast_1h).state;
+      float rain_0d = id(rain_probability).state;
+      
+      if (isnan(rain_1h) || rain_1h < 0) rain_1h = 0.0;
+      if (isnan(rain_0d) || rain_0d < 0) rain_0d = 0.0;
+      
+      // Calculate expected rain (same logic as Smart ET)
+      float expected_rain;
+      if (rain_1h >= 2.0) {
+        expected_rain = rain_1h + (rain_0d * 0.3);
+      } else {
+        expected_rain = rain_1h + (rain_0d * 0.7);
+      }
+      
+      float effective = deficit - expected_rain;
+      return (effective > 0) ? effective : 0;
+  
+  # Forecast Rain Factor (shows what Predictive Watering is using)
+  - platform: template
+    name: "$dev1_what Forecast Rain Factor"
+    icon: "mdi:water-percent"
+    unit_of_measurement: "x"
+    accuracy_decimals: 2
+    update_interval: 10min
+    lambda: |-
+      if (!id(forecast_enabled) || !id(predictive_watering_enabled)) {
+        return 1.0;
+      }
+      
+      // Use dual forecast like Predictive Watering does
+      float rain_1h = id(rain_forecast_1h).state;
+      float rain_0d = id(rain_probability).state;
+      
+      if (isnan(rain_1h) || rain_1h < 0) rain_1h = 0.0;
+      if (isnan(rain_0d) || rain_0d < 0) rain_0d = 0.0;
+      
+      // Smart combined calculation
+      float combined;
+      if (rain_1h >= 5.0) {
+        combined = rain_1h + (rain_0d * 0.2);
+      } else if (rain_1h >= 2.0) {
+        combined = rain_1h + (rain_0d * 0.5);
+      } else {
+        combined = rain_1h + (rain_0d * 0.8);
+      }
+      
+      // Calculate factor based on combined forecast
+      if (combined > 10.0) return 0.2;
+      else if (combined > 5.0) return 0.3;
+      else if (combined > 2.0) return 0.5;
+      else if (combined > 1.0) return 0.7;
+      else if (combined > 0.5) return 0.85;
+      else if (combined > 0.1) return 0.95;
+      return 1.0;
 
   # ═══════════════════════════════════════════════
   # WATER USAGE TRACKING SENSORS (Hunter Pro-C Style)
@@ -4598,7 +5020,7 @@ sensor:
         return 0.0;
       }
       long now = id(homeassistant_time).now().timestamp;
-      float days = (now - id(water_usage_reset_time)) / 86400.0;
+      float days = (now - id(water_usage_reset_time)) / (float)${seconds_per_day};
       return days;
 
 ###############################################
@@ -4646,7 +5068,7 @@ number:
       - lambda: |-
           id(rain_delay_days) = x;
           if (x > 0) {
-            id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (x * 86400);
+            id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (x * ${seconds_per_day});
           } else {
             id(rain_delay_end_time) = 0;
           }
@@ -5422,7 +5844,7 @@ number:
     id: monthly_budget_input
     name: "$dev1_what Monthly Water Budget"
     min_value: 1000
-    max_value: 50000
+    max_value: 100000
     step: 100
     icon: "mdi:water-pump"
     mode: box
@@ -5753,7 +6175,170 @@ number:
           id(window3_end_minute) = (int)x;
           ESP_LOGI("irrigation", "🕐 Window 3 end minute set to :%02d", (int)x);
 
+  # ═══════════════════════════════════════════════
+  # ADVANCED FORECAST SYSTEM THRESHOLDS - V3.31
+  # ═══════════════════════════════════════════════
+  
+  # Forecast Skip Threshold (ET and watering decisions)
+  - platform: template
+    name: "$dev1_what Forecast Skip Threshold"
+    icon: "mdi:water-alert"
+    min_value: 1.0
+    max_value: 10.0
+    step: 0.5
+    unit_of_measurement: "mm"
+    mode: box
+    lambda: "return id(forecast_rain_threshold_significant);"
+    set_action:
+      - lambda: |-
+          id(forecast_rain_threshold_significant) = x;
+          ESP_LOGI("forecast", "");
+          ESP_LOGI("forecast", "🌧️ Forecast skip threshold set to %.1fmm", x);
+          ESP_LOGI("forecast", "   Smart ET will skip watering if %.1fmm+ forecast in 1h", x);
+          ESP_LOGI("forecast", "");
+  
+  # Forecast Auto-Delay Threshold (automatic rain delay)
+  - platform: template
+    name: "$dev1_what Forecast Auto-Delay Threshold"
+    icon: "mdi:water-off"
+    min_value: 5.0
+    max_value: 20.0
+    step: 1.0
+    unit_of_measurement: "mm"
+    mode: box
+    lambda: "return id(forecast_rain_threshold_high);"
+    set_action:
+      - lambda: |-
+          id(forecast_rain_threshold_high) = x;
+          ESP_LOGI("forecast", "");
+          ESP_LOGI("forecast", "🌧️ Auto rain delay threshold set to %.1fmm", x);
+          ESP_LOGI("forecast", "   System will auto-set rain delay if %.1fmm+ forecast in 1h", x);
+          ESP_LOGI("forecast", "");
+
 script:
+  # ════════════════════════════════════════════════
+  # ADVANCED FORECAST SYSTEM - V3.31
+  # ════════════════════════════════════════════════
+  - id: check_forecast_rain_delay
+    mode: single
+    then:
+      - lambda: |-
+          if (!id(forecast_enabled)) {
+            ESP_LOGD("forecast", "Forecast system disabled");
+            return;
+          }
+          
+          ESP_LOGI("forecast", "");
+          ESP_LOGI("forecast", "🌧️ ════════════════════════════════════");
+          ESP_LOGI("forecast", "🌧️ SMART FORECAST RAIN DELAY CHECK");
+          ESP_LOGI("forecast", "🌧️ ════════════════════════════════════");
+          
+          // Get dual forecast data
+          float forecast_1h = id(rain_forecast_1h).state;
+          float forecast_0d = id(rain_probability).state;
+          float threshold_high = id(forecast_rain_threshold_high);
+          
+          if (isnan(forecast_1h) || forecast_1h < 0) {
+            forecast_1h = 0.0;
+          }
+          if (isnan(forecast_0d) || forecast_0d < 0) {
+            forecast_0d = 0.0;
+          }
+          
+          ESP_LOGI("forecast", "📊 Dual Forecast:");
+          ESP_LOGI("forecast", "   1h (imminent): %.1fmm", forecast_1h);
+          ESP_LOGI("forecast", "   0d (today): %.1fmm", forecast_0d);
+          ESP_LOGI("forecast", "🎯 Auto-delay threshold: %.1fmm", threshold_high);
+          
+          // Update detection flag - either imminent or significant daily
+          if (forecast_1h >= 1.0 || forecast_0d >= 3.0) {
+            id(forecast_rain_detected) = true;
+          } else {
+            id(forecast_rain_detected) = false;
+          }
+          
+          // Smart rain delay logic: Consider BOTH forecasts
+          bool should_delay = false;
+          int delay_days = 1;
+          char delay_reason[128];  // Stack buffer - no heap allocation!
+          delay_reason[0] = '\0';  // Initialize empty
+          
+          // PRIORITY 1: Heavy rain imminent (1h)
+          if (forecast_1h >= threshold_high) {
+            should_delay = true;
+            delay_days = (forecast_1h > 15.0) ? 2 : 1;
+            snprintf(delay_reason, sizeof(delay_reason),
+                    "Heavy rain imminent (%dmm/1h)", (int)forecast_1h);
+          }
+          // PRIORITY 2: Very heavy rain expected today (0d)
+          else if (forecast_0d >= (threshold_high * 1.5)) {
+            should_delay = true;
+            delay_days = (forecast_0d > 20.0) ? 2 : 1;
+            snprintf(delay_reason, sizeof(delay_reason),
+                    "Very heavy rain today (%dmm)", (int)forecast_0d);
+          }
+          // PRIORITY 3: Combined moderate amounts
+          else if ((forecast_1h + forecast_0d) >= (threshold_high * 1.2)) {
+            should_delay = true;
+            delay_days = 1;
+            snprintf(delay_reason, sizeof(delay_reason),
+                    "Combined forecast high (%dmm/1h + %dmm/day)",
+                    (int)forecast_1h, (int)forecast_0d);
+          }
+          
+          if (should_delay) {
+            ESP_LOGW("forecast", "⚠️ HIGH RAIN FORECAST DETECTED!");
+            ESP_LOGW("forecast", "   Reason: %s", delay_reason);
+            ESP_LOGW("forecast", "   Setting %d-day rain delay automatically", delay_days);
+            
+            // Only set rain delay if manual override is OFF
+            if (!id(manual_rain_delay_override)) {
+              id(rain_delay_days) = delay_days;
+              long now_ts = id(homeassistant_time).now().timestamp;  // Cache timestamp
+              id(rain_delay_end_time) = now_ts + (delay_days * ${seconds_per_day});
+              
+              ESP_LOGI("forecast", "✅ Auto Rain Delay SET: %d days", delay_days);
+              ESP_LOGI("forecast", "   %s", delay_reason);
+            } else {
+              ESP_LOGI("forecast", "ℹ️ Rain delay override is ON - not setting auto delay");
+            }
+          } else {
+            ESP_LOGI("forecast", "✅ No significant rain forecast");
+            ESP_LOGI("forecast", "   Imminent: %.1fmm, Today: %.1fmm", forecast_1h, forecast_0d);
+            
+            // SMART CLEARING: Clear rain delay if conditions have improved
+            long now_ts = id(homeassistant_time).now().timestamp;  // Cache timestamp once
+            if (id(rain_delay_end_time) > now_ts) {
+              // There's an active rain delay - check if we should clear it
+              // Thresholds configured in substitutions at top of file
+              bool minimal_rain = (forecast_1h < ${rain_clear_threshold_1h_mm} && 
+                                  forecast_0d < ${rain_clear_threshold_day_mm});
+              
+              if (minimal_rain && !id(manual_rain_delay_override)) {
+                float days_remaining = (id(rain_delay_end_time) - now_ts) / (float)${seconds_per_day};
+                ESP_LOGW("forecast", "🌤️ WEATHER IMPROVED - Clearing auto rain delay");
+                ESP_LOGW("forecast", "   Previous delay: %.1f days remaining", days_remaining);
+                
+                id(rain_delay_end_time) = 0;
+                id(rain_delay_days) = 0;
+                id(rain_delay_days_input).publish_state(0);
+                
+                ESP_LOGI("forecast", "✅ Rain delay CLEARED - watering can resume");
+              } else if (id(manual_rain_delay_override)) {
+                ESP_LOGI("forecast", "ℹ️ Rain delay active but manual override ON - keeping delay");
+              } else {
+                ESP_LOGI("forecast", "ℹ️ Rain delay active but still some rain forecast - keeping delay");
+                ESP_LOGI("forecast", "   Will auto-clear when forecast drops below ${rain_clear_threshold_1h_mm}mm/1h AND ${rain_clear_threshold_day_mm}mm/day");
+              }
+            } else {
+              ESP_LOGI("forecast", "   Watering can proceed normally");
+            }
+          }
+          
+          id(forecast_last_check_time) = id(homeassistant_time).now().timestamp;
+          ESP_LOGI("forecast", "🌧️ ════════════════════════════════════");
+          ESP_LOGI("forecast", "");
+
   # ============================================================
   # PREDICTIVE WATERING™ SCRIPT
   # ============================================================
@@ -5858,30 +6443,73 @@ script:
           ESP_LOGI("irrigation", "🌬️ Wind Factor: %.2f", wind_factor);
           
           // ═══════════════════════════════════════════════
-          // RAIN FORECAST FACTOR (using actual precipitation mm)
+          // RAIN FORECAST FACTOR - SMART DUAL FORECAST
           // ═══════════════════════════════════════════════
-          // This is MORE ACCURATE than probability because we know actual amounts!
+          // Combines 1h (imminent) + 0d (today) for smart grass health decisions
+          
+          float rain_1h = 0.0;
+          float rain_0d = 0.0;
+          
+          if (id(forecast_enabled)) {
+            // Get 1h forecast (imminent rain)
+            float forecast_1h = id(rain_forecast_1h).state;
+            if (!isnan(forecast_1h) && forecast_1h >= 0) {
+              rain_1h = forecast_1h;
+            }
+            
+            // Get 0d forecast (today's total)
+            float forecast_0d = id(rain_probability).state;
+            if (!isnan(forecast_0d) && forecast_0d >= 0) {
+              rain_0d = forecast_0d;
+            }
+            
+            ESP_LOGI("irrigation", "🌧️ Dual Forecast: 1h=%.1fmm (imminent), 0d=%.1fmm (today)", rain_1h, rain_0d);
+            
+            // Smart combined total: prioritize imminent rain, add portion of daily
+            // If heavy rain in 1h, that's most important
+            // But also account for rain throughout the day
+            if (rain_1h >= 5.0) {
+              // Heavy rain imminent - use mostly 1h forecast
+              rain_mm = rain_1h + (rain_0d * 0.2);  // 1h + 20% of day
+            } else if (rain_1h >= 2.0) {
+              // Moderate imminent - balance both
+              rain_mm = rain_1h + (rain_0d * 0.5);  // 1h + 50% of day
+            } else {
+              // Light/no imminent rain - use more of daily forecast
+              rain_mm = rain_1h + (rain_0d * 0.8);  // 1h + 80% of day
+            }
+            
+            ESP_LOGI("irrigation", "🌧️ Combined rain factor: %.1fmm (weighted)", rain_mm);
+            
+          } else {
+            // Forecast system disabled, use basic 0d only
+            rain_mm = id(rain_probability).state;
+            if (isnan(rain_mm) || rain_mm < 0) rain_mm = 0.0;
+            ESP_LOGI("irrigation", "🌧️ Using basic forecast: %.1fmm (forecast system disabled)", rain_mm);
+          }
+          
+          // Calculate rain factor based on expected precipitation
           // 0mm = 1.0 (no rain, normal watering)
-          // 0.1-0.5mm = 0.9 (trace/light drizzle expected)
-          // 0.5-1mm = 0.7 (light rain expected)
-          // 1-2mm = 0.5 (light-moderate rain)
-          // 2-5mm = 0.3 (moderate rain)
-          // 5-10mm = 0.15 (heavy rain)
-          // >10mm = 0.1 (very heavy rain)
+          // 0.1-0.5mm = 0.95 (trace/light drizzle expected)
+          // 0.5-1mm = 0.85 (light rain expected)
+          // 1-2mm = 0.7 (light-moderate rain)
+          // 2-5mm = 0.5 (moderate rain)
+          // 5-10mm = 0.3 (heavy rain)
+          // >10mm = 0.2 (very heavy rain)
           
           float rain_factor = 1.0;
           if (rain_mm > 10.0) {
-            rain_factor = 0.1;  // Very heavy rain forecast - minimal watering
+            rain_factor = 0.2;  // Very heavy rain forecast - minimal watering
           } else if (rain_mm > 5.0) {
-            rain_factor = 0.15;  // Heavy rain forecast
+            rain_factor = 0.3;  // Heavy rain forecast
           } else if (rain_mm > 2.0) {
-            rain_factor = 0.3;  // Moderate rain forecast
+            rain_factor = 0.5;  // Moderate rain forecast
           } else if (rain_mm > 1.0) {
-            rain_factor = 0.5;  // Light-moderate rain
+            rain_factor = 0.7;  // Light-moderate rain
           } else if (rain_mm > 0.5) {
-            rain_factor = 0.7;  // Light rain forecast
+            rain_factor = 0.85;  // Light rain forecast
           } else if (rain_mm > 0.1) {
-            rain_factor = 0.9;  // Trace amounts/drizzle
+            rain_factor = 0.95;  // Trace amounts/drizzle
           } else {
             rain_factor = 1.0;  // No rain forecast
           }
@@ -6091,31 +6719,66 @@ script:
           ESP_LOGI("irrigation", "   Daily ET: %.1f mm/day", daily_et);
           
           // ═══════════════════════════════════════════════
-          // CHECK FOR RAINFALL
+          // CHECK FOR RAINFALL - SMART DUAL FORECAST
           // ═══════════════════════════════════════════════
           float rainfall = 0.0;
           
-          // PRIORITY 1: Use actual precipitation forecast if available (most accurate!)
-          float rain_forecast_mm = id(rain_probability).state;
-          if (!isnan(rain_forecast_mm) && rain_forecast_mm >= 0) {
-            rainfall = rain_forecast_mm;
-            ESP_LOGI("irrigation", "🌧️ Using precipitation forecast: %.1f mm", rainfall);
-          } else {
-            // FALLBACK: Estimate from weather condition if forecast unavailable
-            std::string weather = id(weather_forecast_home).state;
+          if (id(forecast_enabled)) {
+            // Use dual forecast for smart rainfall calculation
+            float rain_1h = id(rain_forecast_1h).state;
+            float rain_0d = id(rain_probability).state;
             
-            if (weather == "pouring") {
-              rainfall = 15.0;  // Heavy rain: 15mm
-            } else if (weather == "rainy") {
-              rainfall = 8.0;   // Rain: 8mm
-            } else if (weather == "snowy-rainy") {
-              rainfall = 5.0;   // Light rain: 5mm
+            if (isnan(rain_1h) || rain_1h < 0) rain_1h = 0.0;
+            if (isnan(rain_0d) || rain_0d < 0) rain_0d = 0.0;
+            
+            ESP_LOGI("irrigation", "🌧️ Dual Forecast Available:");
+            ESP_LOGI("irrigation", "   1h forecast (imminent): %.1f mm", rain_1h);
+            ESP_LOGI("irrigation", "   0d forecast (today total): %.1f mm", rain_0d);
+            
+            // For moisture balance, use today's total but adjust if heavy rain imminent
+            if (rain_1h >= 5.0) {
+              // Heavy rain imminent - it will happen, use 1h + some of 0d
+              rainfall = rain_1h + (rain_0d * 0.3);
+              ESP_LOGI("irrigation", "   Heavy rain imminent - using %.1f + 30%% of %.1f", rain_1h, rain_0d);
+            } else if (rain_1h >= 2.0) {
+              // Moderate imminent - balance both
+              rainfall = rain_1h + (rain_0d * 0.5);
+              ESP_LOGI("irrigation", "   Moderate rain imminent - using %.1f + 50%% of %.1f", rain_1h, rain_0d);
+            } else if (rain_0d >= 2.0) {
+              // Significant daily forecast but not imminent - use mostly daily
+              rainfall = rain_1h + (rain_0d * 0.8);
+              ESP_LOGI("irrigation", "   Rain forecast today - using %.1f + 80%% of %.1f", rain_1h, rain_0d);
+            } else {
+              // Light amounts - use direct sum
+              rainfall = rain_1h + rain_0d;
+              ESP_LOGI("irrigation", "   Light forecast - using direct sum");
             }
             
-            if (rainfall > 0) {
-              ESP_LOGI("irrigation", "🌧️ Estimated rainfall from weather condition (%s): %.1f mm", weather.c_str(), rainfall);
+            ESP_LOGI("irrigation", "🌧️ Smart combined rainfall: %.1f mm", rainfall);
+            
+          } else {
+            // Forecast disabled - try basic sensor
+            float rain_forecast_mm = id(rain_probability).state;
+            if (!isnan(rain_forecast_mm) && rain_forecast_mm >= 0) {
+              rainfall = rain_forecast_mm;
+              ESP_LOGI("irrigation", "🌧️ Using basic forecast: %.1f mm", rainfall);
             } else {
-              ESP_LOGI("irrigation", "🌧️ No rainfall expected (forecast unavailable, weather: %s)", weather.c_str());
+              // FALLBACK: Estimate from weather condition
+              std::string weather = id(weather_forecast_home).state;
+              
+              if (weather == "pouring") {
+                rainfall = 15.0;  // Heavy rain: 15mm
+              } else if (weather == "rainy") {
+                rainfall = 8.0;   // Rain: 8mm
+              } else if (weather == "snowy-rainy") {
+                rainfall = 5.0;   // Light rain: 5mm
+              }
+              
+              if (rainfall > 0) {
+                ESP_LOGI("irrigation", "🌧️ Estimated from weather (%s): %.1f mm", weather.c_str(), rainfall);
+              } else {
+                ESP_LOGI("irrigation", "🌧️ No rainfall expected (weather: %s)", weather.c_str());
+              }
             }
           }
           
@@ -6151,6 +6814,85 @@ script:
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "🚨 DEFICIT THRESHOLD REACHED!");
             ESP_LOGI("irrigation", "   Irrigation is NEEDED");
+            
+            // ═══════════════════════════════════════════════
+            // V3.31: SMART DUAL FORECAST CHECK BEFORE WATERING
+            // ═══════════════════════════════════════════════
+            if (id(forecast_enabled)) {
+              float forecast_1h = id(rain_forecast_1h).state;
+              float forecast_0d = id(rain_probability).state;
+              float threshold_sig = id(forecast_rain_threshold_significant);
+              
+              if (isnan(forecast_1h) || forecast_1h < 0) {
+                forecast_1h = 0.0;
+              }
+              if (isnan(forecast_0d) || forecast_0d < 0) {
+                forecast_0d = 0.0;
+              }
+              
+              ESP_LOGI("irrigation", "");
+              ESP_LOGI("irrigation", "🌧️ ════════════════════════════════════");
+              ESP_LOGI("irrigation", "🌧️ SMART FORECAST CHECK (ET)");
+              ESP_LOGI("irrigation", "🌧️ ════════════════════════════════════");
+              ESP_LOGI("irrigation", "   1h forecast (imminent): %.1fmm", forecast_1h);
+              ESP_LOGI("irrigation", "   0d forecast (today): %.1fmm", forecast_0d);
+              ESP_LOGI("irrigation", "   Skip threshold: %.1fmm", threshold_sig);
+              
+              // URGENCY CHECK: Skip if significant rain imminent (1h)
+              if (forecast_1h >= threshold_sig) {
+                ESP_LOGW("irrigation", "🌧️ ET WATERING SKIPPED - IMMINENT RAIN");
+                ESP_LOGW("irrigation", "   Reason: Heavy rain in next hour (%.1fmm)", forecast_1h);
+                ESP_LOGW("irrigation", "   Rain will reduce soil moisture deficit");
+                ESP_LOGW("irrigation", "   Will re-evaluate after rain passes");
+                ESP_LOGI("irrigation", "🌧️ ════════════════════════════════════");
+                ESP_LOGI("irrigation", "");
+                id(et_pending_irrigation) = false;
+                return;
+              }
+              
+              // DAILY CHECK: Calculate combined expected rain
+              // Prioritize imminent rain, but also account for rain throughout day
+              float expected_rain;
+              if (forecast_1h >= 2.0) {
+                // Significant imminent rain - use mostly 1h
+                expected_rain = forecast_1h + (forecast_0d * 0.3);
+                ESP_LOGI("irrigation", "   Using mostly 1h forecast (%.1f + 30%% of 0d)", forecast_1h);
+              } else {
+                // Light/no imminent rain - use more of daily forecast
+                expected_rain = forecast_1h + (forecast_0d * 0.7);
+                ESP_LOGI("irrigation", "   Using combined forecast (%.1f + 70%% of 0d)", forecast_1h);
+              }
+              
+              float effective_deficit = new_deficit - expected_rain;
+              
+              ESP_LOGI("irrigation", "💧 EFFECTIVE DEFICIT:");
+              ESP_LOGI("irrigation", "   Current deficit: %.1fmm", new_deficit);
+              ESP_LOGI("irrigation", "   Expected rain (weighted): %.1fmm", expected_rain);
+              ESP_LOGI("irrigation", "   Effective deficit: %.1fmm", effective_deficit);
+              
+              // If effective deficit is below threshold, skip watering
+              if (effective_deficit < id(et_water_threshold)) {
+                ESP_LOGW("irrigation", "⏭️ ET WATERING SKIPPED - RAIN COVERS DEFICIT");
+                ESP_LOGW("irrigation", "   Reason: Expected rain will cover deficit");
+                ESP_LOGW("irrigation", "   Effective deficit (%.1fmm) < threshold (%.1fmm)", 
+                         effective_deficit, id(et_water_threshold));
+                ESP_LOGI("irrigation", "   Today's forecast (%.1f) + Imminent (%.1f) = enough", forecast_0d, forecast_1h);
+                ESP_LOGI("irrigation", "🌧️ ════════════════════════════════════");
+                ESP_LOGI("irrigation", "");
+                id(et_pending_irrigation) = false;
+                return;
+              }
+              
+              // Proceed with watering, but reduce amount for expected rain
+              ESP_LOGI("irrigation", "✅ Watering needed even with forecast");
+              ESP_LOGI("irrigation", "   Effective deficit above threshold");
+              ESP_LOGI("irrigation", "   Will water %.1fmm (reduced by expected %.1fmm)", effective_deficit, expected_rain);
+              ESP_LOGI("irrigation", "🌧️ ════════════════════════════════════");
+              ESP_LOGI("irrigation", "");
+              
+              // Use effective deficit for duration calculation
+              new_deficit = effective_deficit;
+            }
             
             // ═══════════════════════════════════════════════
             // CALCULATE SMART ET DURATION MULTIPLIER
@@ -6269,6 +7011,10 @@ script:
                 ESP_LOGI("irrigation", "   ✅ Starting irrigation cycle NOW (%s is open)", active_window.c_str());
                 ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
                 id(et_pending_irrigation) = false;
+                
+                // Turn ON Cycle & Soak for Smart ET
+                id(cycle_soak_switch).turn_on();
+                ESP_LOGI("irrigation", "🔄 Cycle & Soak Mode: ON (Smart ET)");
                 
                 // Start all enabled zones (will use the combined multiplier)
                 id(start_all_zones_cycle_soak).press();
@@ -6452,6 +7198,7 @@ script:
           int zone = id(queue_zones)[0];
           int duration = id(queue_durations)[0];
           bool add_delay = id(queue_add_delays)[0];
+          std::string trigger_source = id(queue_trigger_sources)[0];
           
           // Build queue contents for logging
           std::string queue_contents = "";
@@ -6464,7 +7211,9 @@ script:
               queue_contents += "Z";
               queue_contents += std::to_string(id(queue_zones)[i] + 1);
             } else if (id(queue_types)[i] == 3) {
-              queue_contents += "Weekly";
+              queue_contents += "Normal";
+            } else if (id(queue_types)[i] == 4) {
+              queue_contents += "C&S";
             }
           }
           
@@ -6478,6 +7227,7 @@ script:
             id(queue_zones)[i] = id(queue_zones)[i + 1];
             id(queue_durations)[i] = id(queue_durations)[i + 1];
             id(queue_add_delays)[i] = id(queue_add_delays)[i + 1];
+            id(queue_trigger_sources)[i] = id(queue_trigger_sources)[i + 1];
           }
           
           // Clear last slot
@@ -6486,6 +7236,7 @@ script:
           id(queue_zones)[2] = 0;
           id(queue_durations)[2] = 0;
           id(queue_add_delays)[2] = false;
+          id(queue_trigger_sources)[2] = "";
           
           id(queue_count)--;
           
@@ -6494,6 +7245,9 @@ script:
             // PROGRAM
             ESP_LOGI("irrigation", "▶️ STARTING queued Program %c | Queue now: %d/3 items",
                      'A' + program - 1, id(queue_count));
+            // Set trigger source from queue
+            id(watering_trigger_source) = trigger_source;
+            ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
             id(irrigation_busy) = true;
             id(in_program_run) = true;
             id(run_program).execute(program);
@@ -6502,17 +7256,36 @@ script:
             // ZONE
             ESP_LOGI("irrigation", "▶️ STARTING queued Zone %d (%ds) | Queue now: %d/3 items",
                      zone + 1, duration, id(queue_count));
+            // Set trigger source from queue
+            id(watering_trigger_source) = trigger_source;
+            ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
             id(irrigation_busy) = true;
             id(in_program_run) = false;
             id(run_zone_with_cycles).execute(zone, duration, add_delay, false);
             
           } else if (type == 3) {
-            // FULL CYCLE (Weekly Schedule)
-            ESP_LOGI("irrigation", "▶️ STARTING queued Weekly Schedule (Full Cycle) | Queue now: %d/3 items",
+            // FULL CYCLE (Weekly Schedule / Normal Mode)
+            ESP_LOGI("irrigation", "▶️ STARTING queued Normal Mode | Queue now: %d/3 items",
                      id(queue_count));
+            // Set trigger source from queue
+            id(watering_trigger_source) = trigger_source;
+            ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
             id(pending_normal_start) = true;
             id(normal_start_attempts) = 0;
             id(normal_last_attempt_ms) = 0;
+            
+          } else if (type == 4) {
+            // CYCLE & SOAK MODE
+            ESP_LOGI("irrigation", "▶️ STARTING queued Cycle & Soak | Queue now: %d/3 items",
+                     id(queue_count));
+            // Set trigger source from queue
+            id(watering_trigger_source) = trigger_source;
+            ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
+            // Turn ON cycle and soak mode
+            id(cycle_soak_switch).turn_on();
+            ESP_LOGI("irrigation", "🔄 Cycle & Soak Mode: ON");
+            // Start the script
+            id(run_all_zones_cycle_soak_script).execute();
           }
 
   # Run all zones in normal mode – production safe
@@ -6547,6 +7320,7 @@ script:
     parameters:
       program: int
       allow_queue: bool
+      trigger_source: std::string  # NEW: "Scheduled: Program X" or "Manual: Program X"
     then:
       - lambda: |-
           // Check if paused
@@ -6567,6 +7341,8 @@ script:
                 id(queue_zones)[pos] = 0;
                 id(queue_durations)[pos] = 0;
                 id(queue_add_delays)[pos] = false;
+                // Store trigger source from parameter
+                id(queue_trigger_sources)[pos] = trigger_source;
                 id(queue_count)++;
                 
                 // Build queue status for logging
@@ -6575,7 +7351,8 @@ script:
                   if (i > 0) q_status += ", ";
                   if (id(queue_types)[i] == 1) q_status += "Prg" + std::string(1, 'A' + id(queue_programs)[i] - 1);
                   else if (id(queue_types)[i] == 2) q_status += "Z" + std::to_string(id(queue_zones)[i] + 1);
-                  else if (id(queue_types)[i] == 3) q_status += "Weekly";
+                  else if (id(queue_types)[i] == 3) q_status += "Normal";
+                  else if (id(queue_types)[i] == 4) q_status += "C&S";
                 }
                 
                 ESP_LOGI("irrigation", "📋 QUEUED Program %c → Slot %d/3 | Queue: [%s]",
@@ -6590,12 +7367,10 @@ script:
           }
           
           // System is idle - start immediately
-          const char* prog_names[] = {"", "Program A", "Program B", "Program C"};
-          std::string trigger_name = prog_names[program];
-          id(watering_trigger_source) = trigger_name;
+          id(watering_trigger_source) = trigger_source;
           
-          ESP_LOGI("irrigation", "▶️ STARTING %s immediately (system idle)", trigger_name.c_str());
-          ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_name.c_str());
+          ESP_LOGI("irrigation", "▶️ STARTING %s immediately (system idle)", trigger_source.c_str());
+          ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
           id(irrigation_busy) = true;
           id(in_program_run) = true;
           id(run_program).execute(program);
@@ -6608,6 +7383,7 @@ script:
       duration: int
       add_delay: bool
       allow_queue: bool
+      trigger_source: std::string  # NEW: "Scheduled: Zone X", "Manual: Zone X", etc.
     then:
       - lambda: |-
           // ═══════════════════════════════════════════════
@@ -6657,8 +7433,9 @@ script:
             return;
           }
           
-          // 4. WATERING WINDOW ENFORCEMENT (for scheduled runs)
-          if (allow_queue) {  // Scheduled/program runs only
+          // 4. WATERING WINDOW ENFORCEMENT (ONLY for Smart ET)
+          // Zone schedules, programs, and manual runs have their own times!
+          if (trigger_source.find("Smart ET") != std::string::npos) {
             auto time = id(homeassistant_time).now();
             if (time.is_valid()) {
               int current_hour = time.hour;
@@ -6699,8 +7476,8 @@ script:
               }
               
               if (!in_window) {
-                ESP_LOGW("irrigation", "🕐 Zone %d BLOCKED - Outside watering windows (current: %d:%02d)", 
-                         zone + 1, current_hour, current_minute);
+                ESP_LOGW("irrigation", "🕐 Smart ET BLOCKED - Outside watering windows (current: %d:%02d)", 
+                         current_hour, current_minute);
                 ESP_LOGW("irrigation", "   Window 1: %s (%d:%02d-%d:%02d)", 
                          id(window1_enabled) ? "ENABLED" : "disabled",
                          id(window1_start_hour), id(window1_start_minute),
@@ -6785,6 +7562,7 @@ script:
                 id(queue_zones)[pos] = zone;
                 id(queue_durations)[pos] = duration;
                 id(queue_add_delays)[pos] = add_delay;
+                id(queue_trigger_sources)[pos] = trigger_source;
                 id(queue_count)++;
                 ESP_LOGI("irrigation", "📋 Queued Zone %d in slot %d/3 (%d items queued)",
                          zone + 1, pos + 1, id(queue_count));
@@ -6800,6 +7578,10 @@ script:
                     ESP_LOGE("irrigation", "🚫   Slot %d: Program %c", i + 1, 'A' + id(queue_programs)[i] - 1);
                   } else if (id(queue_types)[i] == 2) {
                     ESP_LOGE("irrigation", "🚫   Slot %d: Zone %d", i + 1, id(queue_zones)[i] + 1);
+                  } else if (id(queue_types)[i] == 3) {
+                    ESP_LOGE("irrigation", "🚫   Slot %d: Normal Mode", i + 1);
+                  } else if (id(queue_types)[i] == 4) {
+                    ESP_LOGE("irrigation", "🚫   Slot %d: Cycle & Soak", i + 1);
                   }
                 }
                 ESP_LOGE("irrigation", "🚫 ═══════════════════════════════════════════════");
@@ -6813,11 +7595,9 @@ script:
           ESP_LOGI("irrigation", "▶️ Starting Zone %d immediately (system idle)", zone + 1);
           ESP_LOGI("irrigation", "   ✅ All safety checks passed");
           
-          // Set trigger source
-          std::string zone_names[] = {"Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5", "Zone 6", "Zone 7", "Zone 8"};
-          std::string trigger = "Manual: " + zone_names[zone];
-          id(watering_trigger_source) = trigger;
-          ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger.c_str());
+          // Set trigger source from parameter
+          id(watering_trigger_source) = trigger_source;
+          ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
           
           id(irrigation_busy) = true;
           id(in_program_run) = false;
@@ -7399,6 +8179,10 @@ script:
           id(irrigation_busy) = false;
           id(in_program_run) = false;
       
+      # Turn OFF Cycle & Soak after completion
+      - switch.turn_off: cycle_soak_switch
+      - logger.log: "🔄 Cycle & Soak Mode: OFF (watering complete)"
+      
       # Reset valve status to Idle
       - text_sensor.template.publish:
           id: dev1_valve_status
@@ -7755,7 +8539,7 @@ select:
     options:
       - "AM"
       - "PM"
-    initial_option: "PM"
+    initial_option: "AM"  # Default: 10:00 AM (Whanganui recommended - restriction starts mid-morning)
     restore_value: true
     set_action:
       - lambda: |-
@@ -7769,7 +8553,7 @@ select:
     options:
       - "AM"
       - "PM"
-    initial_option: "PM"
+    initial_option: "PM"  # Default: 6:00 PM (Whanganui recommended - restriction ends in evening)
     restore_value: true
     set_action:
       - lambda: |-
@@ -8617,7 +9401,7 @@ switch:
     id: cycle_soak_switch
     icon: "mdi:water-sync"
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
+    restore_mode: RESTORE_DEFAULT_OFF
     lambda: "return id(cycle_soak_enabled);"
     turn_on_action:
       - lambda: "id(cycle_soak_enabled) = true;"
@@ -8739,7 +9523,7 @@ switch:
           }
           
           if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
-            id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (86400 * 2);
+            id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (${seconds_per_day} * 2);
             id(rain_delay_days) = 2;
             id(rain_delay_days_input).publish_state(2);
             ESP_LOGI("irrigation", "Auto rain delay IMMEDIATELY activated - weather is %s", weather.c_str());
@@ -9528,6 +10312,40 @@ switch:
           ESP_LOGI("irrigation", "✅ Water budget enforcement RE-ENABLED");
           ESP_LOGI("irrigation", "");
 
+  # ═══════════════════════════════════════════════
+  # ADVANCED FORECAST SYSTEM CONTROLS - V3.31
+  # ═══════════════════════════════════════════════
+  
+  # Enable/Disable Forecast Integration
+  - platform: template
+    name: "$dev1_what Enable Forecast Integration"
+    icon: "mdi:weather-rainy"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: |-
+          id(forecast_enabled) = true;
+          ESP_LOGI("forecast", "");
+          ESP_LOGI("forecast", "✅ ═══════════════════════════════════════════════");
+          ESP_LOGI("forecast", "✅ FORECAST INTEGRATION ENABLED");
+          ESP_LOGI("forecast", "✅ ═══════════════════════════════════════════════");
+          ESP_LOGI("forecast", "✅ Smart ET will check 1h forecast before watering");
+          ESP_LOGI("forecast", "✅ Predictive Watering will use 1h forecast");
+          ESP_LOGI("forecast", "✅ Auto rain delay for heavy rain within 1h");
+          ESP_LOGI("forecast", "✅ ═══════════════════════════════════════════════");
+          ESP_LOGI("forecast", "");
+    turn_off_action:
+      - lambda: |-
+          id(forecast_enabled) = false;
+          ESP_LOGW("forecast", "");
+          ESP_LOGW("forecast", "❌ ═══════════════════════════════════════════════");
+          ESP_LOGW("forecast", "❌ FORECAST INTEGRATION DISABLED");
+          ESP_LOGW("forecast", "❌ ═══════════════════════════════════════════════");
+          ESP_LOGW("forecast", "❌ System will use basic rain sensor only");
+          ESP_LOGW("forecast", "❌ No forecast-based decisions");
+          ESP_LOGW("forecast", "❌ ═══════════════════════════════════════════════");
+          ESP_LOGW("forecast", "");
+
 sprinkler:
   - id: $devicename1
     main_switch:
@@ -9832,10 +10650,8 @@ button:
     on_press:
       then:
         - lambda: |-
-            id(watering_trigger_source) = "Manual - All Zones";
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Start All Zones (NORMAL)");
-            ESP_LOGI("irrigation", "📍 TRIGGER: Manual - All Zones");
             
         - if:
             condition:
@@ -9893,10 +10709,36 @@ button:
                                     } else {
                                       ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
                                     }
-                                    id(pending_normal_start) = true;
-                                    id(normal_start_attempts) = 0;
-                                    id(normal_last_attempt_ms) = 0;
-                                    ESP_LOGI("irrigation", "✅ Queued NORMAL start (will begin when system ready)");
+                                    
+                                    // Check if system is busy
+                                    bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
+                                    
+                                    if (busy) {
+                                      // System is busy - queue the request
+                                      if (id(queue_count) < 3) {
+                                        int pos = id(queue_count);
+                                        id(queue_types)[pos] = 3;  // 3 = Normal mode
+                                        id(queue_programs)[pos] = 0;
+                                        id(queue_zones)[pos] = 0;
+                                        id(queue_durations)[pos] = 0;
+                                        id(queue_add_delays)[pos] = false;
+                                        id(queue_trigger_sources)[pos] = "Manual: All Zones (Normal)";
+                                        id(queue_count)++;
+                                        
+                                        ESP_LOGI("irrigation", "📋 QUEUED Normal Mode → Slot %d/3 | Queue now: %d items",
+                                                 pos + 1, id(queue_count));
+                                      } else {
+                                        ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Normal Mode will NOT run!");
+                                      }
+                                    } else {
+                                      // System is idle - start immediately
+                                      id(watering_trigger_source) = "Manual: All Zones (Normal)";
+                                      ESP_LOGI("irrigation", "📍 TRIGGER: Manual: All Zones (Normal)");
+                                      id(pending_normal_start) = true;
+                                      id(normal_start_attempts) = 0;
+                                      id(normal_last_attempt_ms) = 0;
+                                      ESP_LOGI("irrigation", "▶️ STARTING Normal Mode immediately (system idle)");
+                                    }
 
 # Manual program run buttons
   - platform: template
@@ -9905,7 +10747,6 @@ button:
     on_press:
       then:
         - lambda: |-
-            id(watering_trigger_source) = "Program A";
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program A");
         - if:
@@ -9926,6 +10767,7 @@ button:
                         id: request_program_start
                         program: 1
                         allow_queue: true
+                        trigger_source: "Manual: Program A"
                         
   - platform: template
     name: "Run Program B Now"
@@ -9933,7 +10775,6 @@ button:
     on_press:
       then:
         - lambda: |-
-            id(watering_trigger_source) = "Program B";
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program B");
         - if:
@@ -9954,6 +10795,7 @@ button:
                         id: request_program_start
                         program: 2
                         allow_queue: true
+                        trigger_source: "Manual: Program B"
 
   - platform: template
     name: "Run Program C Now"
@@ -9961,7 +10803,6 @@ button:
     on_press:
       then:
         - lambda: |-
-            id(watering_trigger_source) = "Program C";
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Run Program C");
         - if:
@@ -9982,6 +10823,7 @@ button:
                         id: request_program_start
                         program: 3
                         allow_queue: true
+                        trigger_source: "Manual: Program C"
 
 # Pause button - Actually stops the valve
   - platform: template
@@ -10184,6 +11026,10 @@ button:
             id(time_remaining_when_paused) = 0;
             id(in_program_run) = false;
 
+        # Turn OFF Cycle & Soak when stopping
+        - switch.turn_off: cycle_soak_switch
+        - logger.log: "🔄 Cycle & Soak Mode: OFF (stopped)"
+
         - text_sensor.template.publish:
             id: dev1_valve_status
             state: "Stopped"
@@ -10213,11 +11059,6 @@ button:
     on_press:
       then:
         - lambda: |-
-            // Set trigger if not already set (for manual button press)
-            if (id(watering_trigger_source) == "Idle" || id(watering_trigger_source) == "Never") {
-              id(watering_trigger_source) = "Manual - All Zones (C&S)";
-              ESP_LOGI("irrigation", "📍 TRIGGER: Manual - All Zones (Cycle & Soak)");
-            }
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Start All Zones (CYCLE & SOAK)");
         - if:
@@ -10271,13 +11112,47 @@ button:
                                     } else {
                                       ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
                                     }
-                                # Turn ON cycle and soak mode
-                                - switch.turn_on: cycle_soak_switch
-                                - lambda: |-
-                                    id(watering_trigger_source) = "Cycle & Soak All Zones";
-                                    ESP_LOGI("irrigation", "✅ Cycle & Soak Mode ON - Starting all enabled zones");
-                                    ESP_LOGI("irrigation", "📍 TRIGGER: Cycle & Soak All Zones");
-                                - script.execute: run_all_zones_cycle_soak_script
+                                    
+                                    // Check if system is busy
+                                    bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
+                                    
+                                    if (busy) {
+                                      // System is busy - queue the request
+                                      if (id(queue_count) < 3) {
+                                        int pos = id(queue_count);
+                                        id(queue_types)[pos] = 4;  // 4 = Cycle & Soak mode
+                                        id(queue_programs)[pos] = 0;
+                                        id(queue_zones)[pos] = 0;
+                                        id(queue_durations)[pos] = 0;
+                                        id(queue_add_delays)[pos] = false;
+                                        // Store trigger (preserve if Smart ET)
+                                        if (id(watering_trigger_source).find("Smart ET") != std::string::npos) {
+                                          id(queue_trigger_sources)[pos] = id(watering_trigger_source);
+                                        } else {
+                                          id(queue_trigger_sources)[pos] = "Manual: Cycle & Soak All Zones";
+                                        }
+                                        id(queue_count)++;
+                                        
+                                        ESP_LOGI("irrigation", "📋 QUEUED Cycle & Soak → Slot %d/3 | Queue now: %d items",
+                                                 pos + 1, id(queue_count));
+                                      } else {
+                                        ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Cycle & Soak will NOT run!");
+                                      }
+                                    } else {
+                                      // System is idle - start immediately
+                                      // Set trigger only if not called by Smart ET
+                                      if (id(watering_trigger_source).find("Smart ET") != std::string::npos) {
+                                        ESP_LOGI("irrigation", "📍 TRIGGER PRESERVED: %s (called by Smart ET)", id(watering_trigger_source).c_str());
+                                      } else {
+                                        id(watering_trigger_source) = "Manual: Cycle & Soak All Zones";
+                                        ESP_LOGI("irrigation", "📍 TRIGGER: Manual: Cycle & Soak All Zones");
+                                      }
+                                      ESP_LOGI("irrigation", "▶️ STARTING Cycle & Soak immediately (system idle)");
+                                      // Turn ON cycle and soak mode
+                                      id(cycle_soak_switch).turn_on();
+                                      id(run_all_zones_cycle_soak_script).execute();
+                                    }
+                                # Note: Switch and script start moved into the lambda above
 
   - platform: template
     name: "$dev1_zone1 Quick Run"
@@ -10290,6 +11165,7 @@ button:
             duration: !lambda "return id(quick_run_duration).state * 60;"
             add_delay: true
             allow_queue: true
+            trigger_source: "Manual: Zone 1"
 
   - platform: template
     name: "$dev1_zone2 Quick Run"
@@ -10302,6 +11178,7 @@ button:
             duration: !lambda "return id(quick_run_duration).state * 60;"
             add_delay: true
             allow_queue: true
+            trigger_source: "Manual: Zone 2"
   - platform: template
     name: "$dev1_zone3 Quick Run"
     icon: "mdi:play-speed"
@@ -10313,6 +11190,7 @@ button:
             duration: !lambda "return id(quick_run_duration).state * 60;"
             add_delay: true
             allow_queue: true
+            trigger_source: "Manual: Zone 3"
   - platform: template
     name: "$dev1_zone4 Quick Run"
     icon: "mdi:play-speed"
@@ -10324,6 +11202,7 @@ button:
             duration: !lambda "return id(quick_run_duration).state * 60;"
             add_delay: true
             allow_queue: true
+            trigger_source: "Manual: Zone 4"
   - platform: template
     name: "$dev1_zone5 Quick Run"
     icon: "mdi:play-speed"
@@ -10335,6 +11214,7 @@ button:
             duration: !lambda "return id(quick_run_duration).state * 60;"
             add_delay: true
             allow_queue: true
+            trigger_source: "Manual: Zone 5"
   - platform: template
     name: "$dev1_zone6 Quick Run"
     icon: "mdi:play-speed"
@@ -10346,6 +11226,7 @@ button:
             duration: !lambda "return id(quick_run_duration).state * 60;"
             add_delay: true
             allow_queue: true
+            trigger_source: "Manual: Zone 6"
   - platform: template
     name: "$dev1_zone7 Quick Run"
     icon: "mdi:play-speed"
@@ -10357,6 +11238,7 @@ button:
             duration: !lambda "return id(quick_run_duration).state * 60;"
             add_delay: true
             allow_queue: true
+            trigger_source: "Manual: Zone 7"
   - platform: template
     name: "$dev1_zone8 Quick Run"
     icon: "mdi:play-speed"
@@ -10368,6 +11250,7 @@ button:
             duration: !lambda "return id(quick_run_duration).state * 60;"
             add_delay: true
             allow_queue: true
+            trigger_source: "Manual: Zone 8"
 
   # ═══════════════════════════════════════════════
   # WATER USAGE RESET BUTTONS (Hunter Pro-C Style)
@@ -10383,6 +11266,7 @@ button:
           ESP_LOGI("irrigation", "💧 RESETTING ALL WATER USAGE COUNTERS");
           ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
           ESP_LOGI("irrigation", "Previous Total: %.1f L", id(total_water_used));
+          ESP_LOGI("irrigation", "Previous Monthly: %.1f L", id(current_month_usage));
           
           // Reset all zone counters
           id(zone1_water_used) = 0;
@@ -10397,10 +11281,23 @@ button:
           // Reset total
           id(total_water_used) = 0;
           
+          // Reset monthly usage counter
+          id(current_month_usage) = 0;
+          
           // Set reset timestamp
           id(water_usage_reset_time) = id(homeassistant_time).now().timestamp;
           
           ESP_LOGI("irrigation", "✅ All water usage counters reset to 0 L");
+          ESP_LOGI("irrigation", "✅ Monthly usage counter reset to 0 L");
+          ESP_LOGI("irrigation", "📊 Water Budget: 0.0L / %.1fL (0.0%%)", id(monthly_water_budget));
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "💾 Saving to flash memory... (please wait 3 seconds)");
+      
+      # Give time for flash write to complete
+      - delay: 3s
+      
+      - lambda: |-
+          ESP_LOGI("irrigation", "✅ Reset complete - safe to reboot now");
           ESP_LOGI("irrigation", "");
 
   - platform: template
