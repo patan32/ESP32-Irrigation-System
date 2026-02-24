@@ -1,0 +1,293 @@
+# ═══════════════════════════════════════════════════════════
+# SENSORS FILE - ISO format for Home Assistant
+# ═══════════════════════════════════════════════════════════
+
+# Standard Sensors
+- sensor:
+    - name: "Temperature Outside"
+      unique_id: weather_home_temp
+      unit_of_measurement: "°C"
+      icon: mdi:thermometer
+      state: "{{ state_attr('weather.home', 'temperature') | float(0) | round(1) }}"
+    
+    - name: "Humidity Outside"
+      unique_id: weather_home_humidity
+      unit_of_measurement: "%"
+      icon: mdi:water-percent
+      state: "{{ state_attr('weather.forecast_home', 'humidity') | float(0) | round(0) }}"
+    
+    - name: "Wind Speed Outside"
+      unique_id: weather_home_wind_speed
+      unit_of_measurement: "km/h"
+      icon: mdi:weather-windy
+      state: "{{ state_attr('weather.home', 'wind_speed') | float(0) | round(0) }}
+
+# ═══════════════════════════════════════════════════════════
+# NZ PUBLIC HOLIDAY TIMESTAMP SENSORS (ISO Format)
+# ═══════════════════════════════════════════════════════════
+- sensor:
+    # Good Friday (Easter -2 days) - variable date
+    - name: "NZ Good Friday Timestamp"
+      unique_id: nz_good_friday_timestamp
+      device_class: timestamp
+      state: >
+        {% set year = now().year %}
+        {% set a = year % 19 %}
+        {% set b = year // 100 %}
+        {% set c = year % 100 %}
+        {% set d = b // 4 %}
+        {% set e = b % 4 %}
+        {% set f = (b + 8) // 25 %}
+        {% set g = (b - f + 1) // 3 %}
+        {% set h = (19 * a + b - d - g + 15) % 30 %}
+        {% set i = c // 4 %}
+        {% set k = c % 4 %}
+        {% set l = (32 + 2 * e + 2 * i - h - k) % 7 %}
+        {% set m = (a + 11 * h + 22 * l) // 451 %}
+        {% set easter_month = (h + l - 7 * m + 114) // 31 %}
+        {% set easter_day = ((h + l - 7 * m + 114) % 31) + 1 %}
+        {% set easter_sunday = strptime(year|string + '-' + easter_month|string + '-' + easter_day|string, '%Y-%m-%d') %}
+        {{ ((as_timestamp(easter_sunday) - 172800) | timestamp_custom('%Y-%m-%dT00:00:00+00:00', true)) }}
+    
+    # Easter Monday (Easter +1 day) - variable date
+    - name: "NZ Easter Monday Timestamp"
+      unique_id: nz_easter_monday_timestamp
+      device_class: timestamp
+      state: >
+        {% set year = now().year %}
+        {% set a = year % 19 %}
+        {% set b = year // 100 %}
+        {% set c = year % 100 %}
+        {% set d = b // 4 %}
+        {% set e = b % 4 %}
+        {% set f = (b + 8) // 25 %}
+        {% set g = (b - f + 1) // 3 %}
+        {% set h = (19 * a + b - d - g + 15) % 30 %}
+        {% set i = c // 4 %}
+        {% set k = c % 4 %}
+        {% set l = (32 + 2 * e + 2 * i - h - k) % 7 %}
+        {% set m = (a + 11 * h + 22 * l) // 451 %}
+        {% set easter_month = (h + l - 7 * m + 114) // 31 %}
+        {% set easter_day = ((h + l - 7 * m + 114) % 31) + 1 %}
+        {% set easter_sunday = strptime(year|string + '-' + easter_month|string + '-' + easter_day|string, '%Y-%m-%d') %}
+        {{ ((as_timestamp(easter_sunday) + 86400) | timestamp_custom('%Y-%m-%dT00:00:00+00:00', true)) }}
+    
+    # Kings Birthday (First Monday in June)
+    - name: "NZ Kings Birthday Timestamp"
+      unique_id: nz_kings_birthday_timestamp
+      device_class: timestamp
+      state: >
+        {% set year = now().year %}
+        {% set june_1 = strptime(year|string + '-06-01', '%Y-%m-%d') %}
+        {% set june_1_weekday = june_1.weekday() %}
+        {% if june_1_weekday == 0 %}
+          {% set first_monday = 1 %}
+        {% else %}
+          {% set first_monday = 8 - june_1_weekday %}
+        {% endif %}
+        {{ (as_timestamp(strptime(year|string + '-06-' + first_monday|string, '%Y-%m-%d')) | timestamp_custom('%Y-%m-%dT00:00:00+00:00', true)) }}
+    
+    # Labour Day (Fourth Monday in October)
+    - name: "NZ Labour Day Timestamp"
+      unique_id: nz_labour_day_timestamp
+      device_class: timestamp
+      state: >
+        {% set year = now().year %}
+        {% set oct_1 = strptime(year|string + '-10-01', '%Y-%m-%d') %}
+        {% set oct_1_weekday = oct_1.weekday() %}
+        {% if oct_1_weekday == 0 %}
+          {% set first_monday = 1 %}
+        {% else %}
+          {% set first_monday = 8 - oct_1_weekday %}
+        {% endif %}
+        {% set fourth_monday = first_monday + 21 %}
+        {{ (as_timestamp(strptime(year|string + '-10-' + fourth_monday|string, '%Y-%m-%d')) | timestamp_custom('%Y-%m-%dT00:00:00+00:00', true)) }}
+    
+    # Matariki - varies each year, hardcoded dates 2024-2052
+    - name: "NZ Matariki Timestamp"
+      unique_id: nz_matariki_timestamp
+      device_class: timestamp
+      state: >
+        {% set year = now().year %}
+        {% set matariki_dates = {
+          2024: '06-28', 2025: '06-20', 2026: '07-10', 2027: '06-25', 2028: '07-14',
+          2029: '07-06', 2030: '06-21', 2031: '07-11', 2032: '07-02', 2033: '06-24',
+          2034: '07-07', 2035: '06-29', 2036: '07-18', 2037: '07-03', 2038: '06-25',
+          2039: '07-15', 2040: '07-06', 2041: '06-21', 2042: '07-11', 2043: '07-03',
+          2044: '06-24', 2045: '07-07', 2046: '06-29', 2047: '07-19', 2048: '07-03',
+          2049: '06-25', 2050: '07-15', 2051: '06-30', 2052: '06-21'
+        } %}
+        {% if year in matariki_dates %}
+          {{ (as_timestamp(strptime(year|string + '-' + matariki_dates[year], '%Y-%m-%d')) | timestamp_custom('%Y-%m-%dT00:00:00+00:00', true)) }}
+        {% else %}
+          unavailable
+        {% endif %}
+      attributes:
+        friendly_name: "Matariki Date"
+        year_coverage: "2024-2052"
+        note: "Update dates past 2052 when official dates announced"
+
+# ═══════════════════════════════════════════════════════════
+# SIMPLE DATE SENSORS FOR ESPHOME
+# ESPHome can't handle ISO timestamps, so we provide simple dates
+# ═══════════════════════════════════════════════════════════
+- sensor:
+    - name: "NZ Good Friday Date"
+      unique_id: nz_good_friday_date
+      icon: mdi:calendar
+      state: >
+        {% set year = now().year %}
+        {% set a = year % 19 %}
+        {% set b = year // 100 %}
+        {% set c = year % 100 %}
+        {% set d = b // 4 %}
+        {% set e = b % 4 %}
+        {% set f = (b + 8) // 25 %}
+        {% set g = (b - f + 1) // 3 %}
+        {% set h = (19 * a + b - d - g + 15) % 30 %}
+        {% set i = c // 4 %}
+        {% set k = c % 4 %}
+        {% set l = (32 + 2 * e + 2 * i - h - k) % 7 %}
+        {% set m = (a + 11 * h + 22 * l) // 451 %}
+        {% set easter_month = (h + l - 7 * m + 114) // 31 %}
+        {% set easter_day = ((h + l - 7 * m + 114) % 31) + 1 %}
+        {% set easter_sunday = strptime(year|string + '-' + easter_month|string + '-' + easter_day|string, '%Y-%m-%d') %}
+        {{ ((as_timestamp(easter_sunday) - 172800) | timestamp_custom('%Y-%m-%d', true)) }}
+    
+    - name: "NZ Easter Monday Date"
+      unique_id: nz_easter_monday_date
+      icon: mdi:calendar
+      state: >
+        {% set year = now().year %}
+        {% set a = year % 19 %}
+        {% set b = year // 100 %}
+        {% set c = year % 100 %}
+        {% set d = b // 4 %}
+        {% set e = b % 4 %}
+        {% set f = (b + 8) // 25 %}
+        {% set g = (b - f + 1) // 3 %}
+        {% set h = (19 * a + b - d - g + 15) % 30 %}
+        {% set i = c // 4 %}
+        {% set k = c % 4 %}
+        {% set l = (32 + 2 * e + 2 * i - h - k) % 7 %}
+        {% set m = (a + 11 * h + 22 * l) // 451 %}
+        {% set easter_month = (h + l - 7 * m + 114) // 31 %}
+        {% set easter_day = ((h + l - 7 * m + 114) % 31) + 1 %}
+        {% set easter_sunday = strptime(year|string + '-' + easter_month|string + '-' + easter_day|string, '%Y-%m-%d') %}
+        {{ ((as_timestamp(easter_sunday) + 86400) | timestamp_custom('%Y-%m-%d', true)) }}
+    
+    - name: "NZ Kings Birthday Date"
+      unique_id: nz_kings_birthday_date
+      icon: mdi:calendar
+      state: >
+        {% set year = now().year %}
+        {% set june_1 = strptime(year|string + '-06-01', '%Y-%m-%d') %}
+        {% set june_1_weekday = june_1.weekday() %}
+        {% if june_1_weekday == 0 %}
+          {% set first_monday = 1 %}
+        {% else %}
+          {% set first_monday = 8 - june_1_weekday %}
+        {% endif %}
+        {{ (as_timestamp(strptime(year|string + '-06-' + first_monday|string, '%Y-%m-%d')) | timestamp_custom('%Y-%m-%d', true)) }}
+    
+    - name: "NZ Labour Day Date"
+      unique_id: nz_labour_day_date
+      icon: mdi:calendar
+      state: >
+        {% set year = now().year %}
+        {% set oct_1 = strptime(year|string + '-10-01', '%Y-%m-%d') %}
+        {% set oct_1_weekday = oct_1.weekday() %}
+        {% if oct_1_weekday == 0 %}
+          {% set first_monday = 1 %}
+        {% else %}
+          {% set first_monday = 8 - oct_1_weekday %}
+        {% endif %}
+        {% set fourth_monday = first_monday + 21 %}
+        {{ (as_timestamp(strptime(year|string + '-10-' + fourth_monday|string, '%Y-%m-%d')) | timestamp_custom('%Y-%m-%d', true)) }}
+    
+    - name: "NZ Matariki Date"
+      unique_id: nz_matariki_date
+      icon: mdi:calendar
+      state: >
+        {% set year = now().year %}
+        {% set matariki_dates = {
+          2024: '06-28', 2025: '06-20', 2026: '07-10', 2027: '06-25', 2028: '07-14',
+          2029: '07-06', 2030: '06-21', 2031: '07-11', 2032: '07-02', 2033: '06-24',
+          2034: '07-07', 2035: '06-29', 2036: '07-18', 2037: '07-03', 2038: '06-25',
+          2039: '07-15', 2040: '07-06', 2041: '06-21', 2042: '07-11', 2043: '07-03',
+          2044: '06-24', 2045: '07-07', 2046: '06-29', 2047: '07-19', 2048: '07-03',
+          2049: '06-25', 2050: '07-15', 2051: '06-30', 2052: '06-21'
+        } %}
+        {% if year in matariki_dates %}
+          {{ year|string + '-' + matariki_dates[year] }}
+        {% else %}
+          unavailable
+        {% endif %}
+
+# ═══════════════════════════════════════════════════════════
+# TRIGGER-BASED SENSORS (Weather Forecasts)
+# ═══════════════════════════════════════════════════════════
+
+# Daily Rain Forecast
+- trigger:
+    - platform: homeassistant
+      event: start
+    - platform: state
+      entity_id: weather.home
+    - platform: time_pattern
+      hours: "/1"
+  action:
+    - service: weather.get_forecasts
+      target:
+        entity_id: weather.home
+      data:
+        type: daily
+      response_variable: daily_data
+  sensor:
+    - name: "home_rain_forecast_0d"
+      unique_id: home_rain_forecast_0d
+      unit_of_measurement: "mm"
+      device_class: precipitation
+      state_class: measurement
+      icon: mdi:weather-rainy
+      state: >
+        {% set forecast = daily_data['weather.home'].forecast %}
+        {% if forecast and forecast is iterable and forecast|length > 0 %}
+          {{ forecast[0].precipitation | default(0) | float }}
+        {% else %}
+          0
+        {% endif %}
+      availability: >
+        {{ states('weather.home') not in ['unavailable', 'unknown'] and daily_data['weather.home'] is defined }}
+
+# Hourly Rain Forecast
+- trigger:
+    - platform: homeassistant
+      event: start
+    - platform: state
+      entity_id: weather.home
+    - platform: time_pattern
+      hours: "/1"
+  action:
+    - service: weather.get_forecasts
+      target:
+        entity_id: weather.home
+      data:
+        type: hourly
+      response_variable: hourly_data
+  sensor:
+    - name: "home_rain_forecast_1h"
+      unique_id: home_rain_forecast_1h
+      unit_of_measurement: "mm"
+      device_class: precipitation
+      state_class: measurement
+      icon: mdi:weather-rainy
+      state: >
+        {% set forecast = hourly_data['weather.home']['forecast'] %}
+        {% if forecast is defined and forecast | length > 0 %}
+          {{ forecast[0]['precipitation'] | float(0) }}
+        {% else %}
+          0
+        {% endif %}
+      availability: >
+        {{ hourly_data is defined and 'weather.home' in hourly_data and 'forecast' in hourly_data['weather.home'] and hourly_data['weather.home']['forecast'] | length > 0 }}
