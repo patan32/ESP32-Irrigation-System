@@ -17,9 +17,9 @@ substitutions:
   # Unit of measure for zone run durations shown in HA (Min or sec)
   uom:                   "Min"
   # Software version (bumped when NVS-affecting globals change)
-  software_revision:     "V3.39-PERSISTENCE-FIX"
+  software_revision:     "V3.40-ALL-SETTINGS-PERSIST"
   # Integer version for NVS validation — increment when adding/removing restore_value globals
-  software_version_int:  "339"
+  software_version_int:  "340"
   # ═══════════════════════════════════════════════════════════
 
   dev1_what: Lawn
@@ -843,7 +843,7 @@ globals:
     initial_value: 'false'  # Optional feature, off by default
   - id: test_mode_active
     type: bool
-    restore_value: False
+    restore_value: False  # Transient state — always starts false on boot
     initial_value: 'false'  # True during diagnostics/tests to prevent watchdog interference
   - id: cycle_soak_enabled
     type: bool
@@ -859,19 +859,19 @@ globals:
     initial_value: '${default_soak_duration_min}'
   - id: current_cycle
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — reset when irrigation starts
     initial_value: '0'
   - id: total_cycles
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — reset when irrigation starts
     initial_value: '0'
   - id: active_zone_number
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — set during active watering
     initial_value: '-1'
   - id: zone_total_duration
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — computed each run
     initial_value: '0'
   - id: station_delay_seconds
     type: int
@@ -884,7 +884,7 @@ globals:
   # Tracks what triggered the current/last watering session
   - id: watering_trigger_source
     type: std::string
-    restore_value: False
+    restore_value: False  # Transient state — set at run start
     initial_value: '"Idle"'
   
   # Per-zone last trigger tracking
@@ -926,42 +926,42 @@ globals:
   # ============================================================
   - id: predictive_watering_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'  # Predictive Watering™ ON by default
     
   - id: pw_last_calculation_time
     type: long
-    restore_value: False
+    restore_value: False  # Recalculated on next weather sync
     initial_value: '0'  # Timestamp of last calculation
     
   - id: pw_current_multiplier
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.0'  # Current calculated multiplier
     
   - id: pw_temperature_factor
     type: float
-    restore_value: False
+    restore_value: False  # Recalculated from live weather data
     initial_value: '1.0'
     
   - id: pw_rain_factor
     type: float
-    restore_value: False
+    restore_value: False  # Recalculated from live weather data
     initial_value: '1.0'
     
   - id: pw_humidity_factor
     type: float
-    restore_value: False
+    restore_value: False  # Recalculated from live weather data
     initial_value: '1.0'
     
   - id: pw_wind_factor
     type: float
-    restore_value: False
+    restore_value: False  # Recalculated from live weather data
     initial_value: '1.0'
 
   - id: pw_seasonal_factor   # Bridge variable between split PW lambda blocks
     type: float
-    restore_value: False
+    restore_value: False  # Bridge variable — recalculated each cycle
     initial_value: '1.0'
 
   # ============================================================
@@ -984,32 +984,32 @@ globals:
     
   - id: et_last_calculation_time
     type: long
-    restore_value: False
+    restore_value: False  # Recalculated on next weather sync
     initial_value: '0'
     
   - id: et_daily_et
     type: float
-    restore_value: False
+    restore_value: False  # Recalculated from live weather data
     initial_value: '0.0'  # Today's ET in mm
     
   - id: et_last_water_time
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
     
   - id: et_pending_irrigation
     type: bool
-    restore_value: False
+    restore_value: False  # Recalculated each ET cycle
     initial_value: 'false'
   
   - id: et_duration_multiplier
     type: float
-    restore_value: False
+    restore_value: False  # Recalculated each ET cycle
     initial_value: '1.0'  # Smart ET's additional multiplier based on deficit
 
   - id: et_rainfall_today    # Bridge variable between split ET lambda blocks
     type: float
-    restore_value: False
+    restore_value: False  # Bridge variable — recalculated from weather
     initial_value: '0.0'
   
   # NOTE: Smart ET automatically checks at Window 1 start time (no separate schedule time needed)
@@ -1108,19 +1108,19 @@ globals:
   # Cumulative litres measured by flow sensor this irrigation session
   - id: flow_sensor_session_litres
     type: float
-    restore_value: False
+    restore_value: False  # Live sensor data — always starts at 0
     initial_value: '0.0'
 
   # Current flow rate in L/min (updated each sensor tick)
   - id: flow_sensor_current_lpm
     type: float
-    restore_value: False
+    restore_value: False  # Live sensor data — always starts at 0
     initial_value: '0.0'
 
   # Leak detection flag: flow when no zone is active
   - id: flow_sensor_leak_detected
     type: bool
-    restore_value: False
+    restore_value: False  # Derived from live sensor readings
     initial_value: 'false'
 
   # Set true in zone on_turn_on, false in zone on_turn_off AFTER snapshot.
@@ -1128,7 +1128,7 @@ globals:
   # because it stays true through the entire zone run including the shutdown moment.
   - id: zone_flow_active
     type: bool
-    restore_value: False
+    restore_value: False  # Runtime state — set during active watering
     initial_value: 'false'
 
   # Running pulse total — incremented in on_value by (x/60) each 1s tick.
@@ -1136,192 +1136,192 @@ globals:
   # Using our own counter avoids circular dependency with the total sub-sensor.
   - id: flow_zone_start_pulses
     type: float
-    restore_value: False
+    restore_value: False  # Runtime state — set at zone start
     initial_value: '0.0'
 
   # Accumulated pulse total (float, incremented each on_value tick)
   - id: flow_pulse_total
     type: float
-    restore_value: False
+    restore_value: False  # Runtime counter — reset each session
     initial_value: '0.0'
 
   # Stores what happened to water data on last boot — readable via HA sensor
   - id: last_boot_nvs_action
     type: std::string
-    restore_value: False
+    restore_value: False  # Diagnostic — set during boot NVS check
     initial_value: '"Not yet run"'
 
 
   # Zone-specific schedule times
   - id: zone1_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '6'
   - id: zone1_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: zone1_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # 0=AM, 1=PM
   
   - id: zone2_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '6'
   - id: zone2_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '15'
   - id: zone2_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   
   - id: zone3_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '6'
   - id: zone3_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '30'
   - id: zone3_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   
   - id: zone4_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '6'
   - id: zone4_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '45'
   - id: zone4_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   
   - id: zone5_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '7'
   - id: zone5_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: zone5_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   
   - id: zone6_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '7'
   - id: zone6_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '15'
   - id: zone6_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   
   - id: zone7_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '7'
   - id: zone7_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '30'
   - id: zone7_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   
   - id: zone8_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '7'
   - id: zone8_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '45'
   - id: zone8_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   # Zone schedule enable flags
   - id: zone1_schedule_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: zone2_schedule_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: zone3_schedule_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: zone4_schedule_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: zone5_schedule_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: zone6_schedule_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: zone7_schedule_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: zone8_schedule_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
     
   # Master Valve per-zone enable (Hunter Pro-C style)
   - id: zone1_master_valve_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'  # Default ON for all zones
   - id: zone2_master_valve_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: zone3_master_valve_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: zone4_master_valve_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: zone5_master_valve_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: zone6_master_valve_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: zone7_master_valve_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: zone8_master_valve_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
     
   # ═══════════════════════════════════════════════
@@ -1329,7 +1329,7 @@ globals:
   # ═══════════════════════════════════════════════
   - id: soil_type
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # 0=Sand, 1=Loam, 2=Clay (Default: Sand for Whanganui)
   
   # ═══════════════════════════════════════════════
@@ -1337,51 +1337,51 @@ globals:
   # ═══════════════════════════════════════════════
   - id: seasonal_jan
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.4'  # Peak summer
   - id: seasonal_feb
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.4'  # Peak summer
   - id: seasonal_mar
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.2'  # Early autumn
   - id: seasonal_apr
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.0'  # Autumn
   - id: seasonal_may
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0.9'  # Late autumn
   - id: seasonal_jun
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0.7'  # Winter
   - id: seasonal_jul
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0.6'  # Winter
   - id: seasonal_aug
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0.7'  # Late winter
   - id: seasonal_sep
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0.9'  # Early spring
   - id: seasonal_oct
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.1'  # Spring
   - id: seasonal_nov
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.3'  # Late spring
   - id: seasonal_dec
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.4'  # Early summer
     
   # ═══════════════════════════════════════════════
@@ -1393,7 +1393,7 @@ globals:
     initial_value: '${default_freeze_threshold_c}'  # Celsius - disable watering below this
   - id: freeze_protection_active
     type: bool
-    restore_value: False
+    restore_value: False  # Derived from live temperature sensor
     initial_value: 'false'
     
   # ═══════════════════════════════════════════════
@@ -1413,15 +1413,15 @@ globals:
     initial_value: '0'
   - id: budget_warning_sent
     type: bool
-    restore_value: False
+    restore_value: False  # Runtime flag — reset with daily counters
     initial_value: 'false'
   - id: budget_exceeded
     type: bool
-    restore_value: False
+    restore_value: False  # Runtime flag — reset with daily counters
     initial_value: 'false'
   - id: budget_override_active
     type: bool
-    restore_value: False
+    restore_value: False  # Runtime flag — reset with daily counters
     initial_value: 'false'
   
   # ═══════════════════════════════════════════════
@@ -1434,7 +1434,7 @@ globals:
     initial_value: '0'  # Version number: 334 = V3.34
   - id: nvs_corruption_detected
     type: bool
-    restore_value: False
+    restore_value: False  # Boot diagnostic — always starts false
     initial_value: 'false'
     
   # ═══════════════════════════════════════════════
@@ -1486,7 +1486,7 @@ globals:
   # ═══════════════════════════════════════════════
   - id: last_watering_timestamp
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
     
   # ═══════════════════════════════════════════════
@@ -1494,11 +1494,11 @@ globals:
   # ═══════════════════════════════════════════════
   - id: fallback_multiplier
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.0'  # Last known good multiplier
   - id: network_offline_mode
     type: bool
-    restore_value: False
+    restore_value: False  # Derived from live network state
     initial_value: 'false'
     
   # ═══════════════════════════════════════════════
@@ -1602,191 +1602,191 @@ globals:
   
   - id: manual_rain_delay_override
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: manual_weather_override
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: last_weather_log_time
     type: long
-    restore_value: False
+    restore_value: False  # Log throttle timer — ok to reset on reboot
     initial_value: '0'
   - id: last_time_restriction_log
     type: long
-    restore_value: False
+    restore_value: False  # Log throttle timer — ok to reset on reboot
     initial_value: '0'
   - id: last_blackout_log_time
     type: long
-    restore_value: False
+    restore_value: False  # Log throttle timer — ok to reset on reboot
     initial_value: '0'
   - id: vacation_mode_active
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   # Saved zone schedule states: zone1..8 states are backed up here when vacation mode
   # activates and restored when vacation mode deactivates.
   - id: vacation_saved_zone1_sched
     type: bool
-    restore_value: False
+    restore_value: False  # Temporary backup — ok to lose on reboot
     initial_value: 'false'
   - id: vacation_saved_zone2_sched
     type: bool
-    restore_value: False
+    restore_value: False  # Temporary backup — ok to lose on reboot
     initial_value: 'false'
   - id: vacation_saved_zone3_sched
     type: bool
-    restore_value: False
+    restore_value: False  # Temporary backup — ok to lose on reboot
     initial_value: 'false'
   - id: vacation_saved_zone4_sched
     type: bool
-    restore_value: False
+    restore_value: False  # Temporary backup — ok to lose on reboot
     initial_value: 'false'
   - id: vacation_saved_zone5_sched
     type: bool
-    restore_value: False
+    restore_value: False  # Temporary backup — ok to lose on reboot
     initial_value: 'false'
   - id: vacation_saved_zone6_sched
     type: bool
-    restore_value: False
+    restore_value: False  # Temporary backup — ok to lose on reboot
     initial_value: 'false'
   - id: vacation_saved_zone7_sched
     type: bool
-    restore_value: False
+    restore_value: False  # Temporary backup — ok to lose on reboot
     initial_value: 'false'
   - id: vacation_saved_zone8_sched
     type: bool
-    restore_value: False
+    restore_value: False  # Temporary backup — ok to lose on reboot
     initial_value: 'false'
   - id: normal_multiplier
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1.0'
 # Last watered timestamps for each zone
   - id: zone1_last_watered
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: zone2_last_watered
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: zone3_last_watered
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: zone4_last_watered
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: zone5_last_watered
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: zone6_last_watered
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: zone7_last_watered
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: zone8_last_watered
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
 # Zone start times (for duration tracking)
   - id: zone1_start_time
     type: long
-    restore_value: False
+    restore_value: False  # Computed each run from hour/minute/am_pm globals
     initial_value: '0'
   - id: zone2_start_time
     type: long
-    restore_value: False
+    restore_value: False  # Computed each run from hour/minute/am_pm globals
     initial_value: '0'
   - id: zone3_start_time
     type: long
-    restore_value: False
+    restore_value: False  # Computed each run from hour/minute/am_pm globals
     initial_value: '0'
   - id: zone4_start_time
     type: long
-    restore_value: False
+    restore_value: False  # Computed each run from hour/minute/am_pm globals
     initial_value: '0'
   - id: zone5_start_time
     type: long
-    restore_value: False
+    restore_value: False  # Computed each run from hour/minute/am_pm globals
     initial_value: '0'
   - id: zone6_start_time
     type: long
-    restore_value: False
+    restore_value: False  # Computed each run from hour/minute/am_pm globals
     initial_value: '0'
   - id: zone7_start_time
     type: long
-    restore_value: False
+    restore_value: False  # Computed each run from hour/minute/am_pm globals
     initial_value: '0'
   - id: zone8_start_time
     type: long
-    restore_value: False
+    restore_value: False  # Computed each run from hour/minute/am_pm globals
     initial_value: '0'
   - id: cycle_soak_total_duration
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — set when cycle & soak starts
     initial_value: '0'
   - id: cycle_soak_elapsed_time
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — updated during cycle & soak
     initial_value: '0'
   - id: is_paused
     type: bool
-    restore_value: False
+    restore_value: False  # Runtime state — watering resumes after reboot
     initial_value: 'false'
   - id: paused_zone
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: '-1'
   - id: paused_cycle
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: '0'
   - id: time_remaining_when_paused
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: '0'
 
   # --- Preserve cycle/soak state across Pause/Resume ---
   - id: paused_total_cycles
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: '0'
   - id: paused_cycle_soak_total_duration
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: '0'
   - id: paused_cycle_soak_elapsed_time
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: '0'
 
   # --- Track soak phase for true pause/resume ---
   - id: cycle_soak_is_soaking
     type: bool
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: 'false'
   - id: cycle_soak_soak_end_time
     type: long
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: '0'
   - id: paused_was_soaking
     type: bool
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: 'false'
   - id: paused_soak_remaining_seconds
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: '0'
   - id: soak_countdown_seconds
     type: int
-    restore_value: False
+    restore_value: False  # Runtime counter — cleared on reboot
     initial_value: '0'
 
   # --- Configurable Time Restriction Window (12-hour + AM-PM) ---
@@ -1796,111 +1796,111 @@ globals:
   #   - Evening: 6:00 PM - 10:00 PM (Good - lower evaporation than midday)
   - id: restrict_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_time_restriction_start_hour}'
   - id: restrict_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: restrict_start_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'    # 0=AM, 1=PM
 
   - id: restrict_end_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_time_restriction_end_hour}'
   - id: restrict_end_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: restrict_end_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'    # 0=AM, 1=PM
 
   # --- Run lock / queue (prevents overlapping starts) ---
   - id: irrigation_busy
     type: bool
-    restore_value: False
+    restore_value: False  # Runtime state — always starts false on boot
     initial_value: 'false'
 
   # True while run_program is executing
   - id: watchdog_last_activity
     type: long
-    restore_value: False
+    restore_value: False  # Watchdog timer — reset on boot
     initial_value: '0'
   - id: in_program_run
     type: bool
-    restore_value: False
+    restore_value: False  # Runtime state — always starts false on boot
     initial_value: 'false'
 
   # one-slot queue: 0=none, 1=program, 2=zone, 3=normal mode
   # Queue system - supports up to 3 items (Hunter-style)
   - id: queue_types
     type: int[3]
-    restore_value: False
+    restore_value: False  # Runtime queue — cleared on reboot
   - id: queue_programs
     type: int[3]
-    restore_value: False
+    restore_value: False  # Runtime queue — cleared on reboot
   - id: queue_zones
     type: int[3]
-    restore_value: False
+    restore_value: False  # Runtime queue — cleared on reboot
   - id: queue_durations
     type: int[3]
-    restore_value: False
+    restore_value: False  # Runtime queue — cleared on reboot
   - id: queue_add_delays
     type: bool[3]
-    restore_value: False
+    restore_value: False  # Runtime queue — cleared on reboot
   - id: queue_trigger_sources
     type: std::string[3]
-    restore_value: False
+    restore_value: False  # Runtime queue — cleared on reboot
   - id: queue_count
     type: int
-    restore_value: False
+    restore_value: False  # Runtime queue — cleared on reboot
     initial_value: '0'
   
   # Normal-mode start queue (single pending start slot)
   - id: queued_type
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — cleared on reboot
     initial_value: '0'  # 0=none, 3=normal mode pending
 
 # Program management
   - id: active_program
     type: int
-    restore_value: False
+    restore_value: False  # Runtime state — set at program start
     initial_value: '0'  # 0=A, 1=B, 2=C
     
   # Program 1 settings
   - id: program_a_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: program_a_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_program_a_start_hour}'
   - id: program_a_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_a_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # 0=AM, 1=PM
   - id: program_a_schedule_type
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # 0=specific days, 1=odd days, 2=even days, 3=interval
   - id: program_a_interval_days
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '3'
   - id: program_a_last_run
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   
   # ═══════════════════════════════════════════════════════════
@@ -1909,217 +1909,217 @@ globals:
   # Program 1 additional start times
   - id: program_a_start_time_2_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_a_start_hour_2
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '12'
   - id: program_a_start_minute_2
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_a_am_pm_2
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # PM
     
   - id: program_a_start_time_3_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_a_start_hour_3
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '6'
   - id: program_a_start_minute_3
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_a_am_pm_3
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # PM
     
   - id: program_a_start_time_4_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_a_start_hour_4
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '9'
   - id: program_a_start_minute_4
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_a_am_pm_4
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # PM
     
   # Program 2 settings
   - id: program_b_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_b_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_program_b_start_hour}'
   - id: program_b_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_b_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_b_schedule_type
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_b_interval_days
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '3'
   - id: program_b_last_run
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   
   # Program 2 additional start times
   - id: program_b_start_time_2_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_b_start_hour_2
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '12'
   - id: program_b_start_minute_2
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_b_am_pm_2
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # PM
     
   - id: program_b_start_time_3_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_b_start_hour_3
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '6'
   - id: program_b_start_minute_3
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_b_am_pm_3
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # PM
     
   - id: program_b_start_time_4_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_b_start_hour_4
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '9'
   - id: program_b_start_minute_4
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_b_am_pm_4
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # PM
     
   # Program 3 settings
   - id: program_c_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_c_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_program_c_start_hour}'
   - id: program_c_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_c_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_c_schedule_type
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_c_interval_days
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '3'
   - id: program_c_last_run
     type: long
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   
   # Program 3 additional start times
   - id: program_c_start_time_2_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_c_start_hour_2
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '12'
   - id: program_c_start_minute_2
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_c_am_pm_2
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # PM
     
   - id: program_c_start_time_3_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_c_start_hour_3
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '6'
   - id: program_c_start_minute_3
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_c_am_pm_3
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # PM
     
   - id: program_c_start_time_4_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
   - id: program_c_start_hour_4
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '9'
   - id: program_c_start_minute_4
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
   - id: program_c_am_pm_4
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # PM
   
   # ═══════════════════════════════════════════════════════════
@@ -2131,103 +2131,103 @@ globals:
   # Program 1 zone duration overrides (minutes)
   - id: zone1_program_a_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone1_program_a_duration'
   - id: zone2_program_a_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone2_program_a_duration'
   - id: zone3_program_a_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone3_program_a_duration'
   - id: zone4_program_a_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone4_program_a_duration'
   - id: zone5_program_a_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone5_program_a_duration'
   - id: zone6_program_a_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone6_program_a_duration'
   - id: zone7_program_a_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone7_program_a_duration'
   - id: zone8_program_a_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone8_program_a_duration'
   
   # Program 2 zone duration overrides (minutes)
   - id: zone1_program_b_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone1_program_b_duration'
   - id: zone2_program_b_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone2_program_b_duration'
   - id: zone3_program_b_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone3_program_b_duration'
   - id: zone4_program_b_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone4_program_b_duration'
   - id: zone5_program_b_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone5_program_b_duration'
   - id: zone6_program_b_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone6_program_b_duration'
   - id: zone7_program_b_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone7_program_b_duration'
   - id: zone8_program_b_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone8_program_b_duration'
     
   # Program 3 zone duration overrides (minutes)
   - id: zone1_program_c_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone1_program_c_duration'
   - id: zone2_program_c_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone2_program_c_duration'
   - id: zone3_program_c_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone3_program_c_duration'
   - id: zone4_program_c_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone4_program_c_duration'
   - id: zone5_program_c_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone5_program_c_duration'
   - id: zone6_program_c_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone6_program_c_duration'
   - id: zone7_program_c_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone7_program_c_duration'
   - id: zone8_program_c_duration
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '$default_zone8_program_c_duration'
   
   # ═══════════════════════════════════════════════════════════
@@ -2285,117 +2285,117 @@ globals:
   # Descriptions are cosmetic only - the timestamps (longs above) carry the real data.
   - id: blackout_desc_1
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
   - id: blackout_desc_2
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
   - id: blackout_desc_3
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
   - id: blackout_desc_4
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
   - id: blackout_desc_5
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
   - id: blackout_desc_6
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
   - id: blackout_desc_7
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
   - id: blackout_desc_8
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
   - id: blackout_desc_9
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
   - id: blackout_desc_10
     type: std::string
-    restore_value: False
+    restore_value: False  # std::string — NVS restore unsupported
     initial_value: '""'
     
   # NZ Holiday timestamps (parsed from ISO datetime strings)
   - id: good_friday_timestamp
     type: long
-    restore_value: False
+    restore_value: False  # Recalculated from current year on boot
     initial_value: '0'
   - id: easter_monday_timestamp
     type: long
-    restore_value: False
+    restore_value: False  # Recalculated from current year on boot
     initial_value: '0'
   - id: kings_birthday_timestamp
     type: long
-    restore_value: False
+    restore_value: False  # Recalculated from current year on boot
     initial_value: '0'
   - id: matariki_timestamp
     type: long
-    restore_value: False
+    restore_value: False  # Recalculated from current year on boot
     initial_value: '0'
   - id: labour_day_timestamp
     type: long
-    restore_value: False
+    restore_value: False  # Recalculated from current year on boot
     initial_value: '0'
     
   # Zone assignment to programs (0=none, 1=A, 2=B, 3=C)
   - id: zone1_program
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'
   - id: zone2_program
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'
   - id: zone3_program
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'
   - id: zone4_program
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'
   - id: zone5_program
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'
   - id: zone6_program
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'
   - id: zone7_program
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'
   - id: zone8_program
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'
   - id: is_time_restricted
     type: bool
-    restore_value: False
+    restore_value: False  # Derived from live time — recalculated each check
     initial_value: 'false'
   - id: last_time_restriction_state
     type: int
-    restore_value: False
+    restore_value: False  # Derived from live time — recalculated each check
     initial_value: '0'
   - id: auto_advance_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
 
   # Adjust this if your shutdown window is longer/shorter
   - id: stop_restart_delay_seconds
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: "${default_stop_restart_delay_sec}"
   - id: pending_normal_start
     type: bool
@@ -2434,17 +2434,17 @@ globals:
   
   - id: forecast_rain_detected
     type: bool
-    restore_value: False
+    restore_value: False  # Derived from live weather sensor
     initial_value: 'false'
   
   - id: forecast_last_check_time
     type: long
-    restore_value: False
+    restore_value: False  # Recalculated on next weather sync
     initial_value: '0'
   
   - id: forecast_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'  # Enable/disable forecast integration
 
 # Sync time with Home Assistant
@@ -6804,7 +6804,7 @@ number:
     mode: slider
     unit_of_measurement: "min"
     optimistic: true
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
 
   # ═══════════════════════════════════════════════
   # ZONE FLOW RATES (For Water Usage Tracking)
@@ -6926,7 +6926,7 @@ number:
     mode: box
     unit_of_measurement: "h"
     optimistic: true
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
 
 # Schedule start minute
   - platform: template
@@ -6940,7 +6940,7 @@ number:
     mode: box
     unit_of_measurement: "min"
     optimistic: true
-    restore_value: False  # Derived/recoverable on reboot
+    restore_value: True  # USER SETTING - must persist across reboots
 
 # Cycle duration
   - platform: template
@@ -11317,7 +11317,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
 
   # Time Restriction AM-PM
   - platform: template
@@ -11329,7 +11329,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"  # Default: 10:00 AM (Whanganui recommended - restriction starts mid-morning)
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(restrict_start_am_pm) = (x == "AM") ? 0 : 1;
@@ -11343,7 +11343,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "PM"  # Default: 6:00 PM (Whanganui recommended - restriction ends in evening)
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(restrict_end_am_pm) = (x == "AM") ? 0 : 1;
@@ -11358,7 +11358,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(window1_start_am_pm) = (x == "AM") ? 0 : 1;
@@ -11374,7 +11374,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(window1_end_am_pm) = (x == "AM") ? 0 : 1;
@@ -11390,7 +11390,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "PM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(window2_start_am_pm) = (x == "AM") ? 0 : 1;
@@ -11406,7 +11406,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "PM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(window2_end_am_pm) = (x == "AM") ? 0 : 1;
@@ -11422,7 +11422,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "PM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(window3_start_am_pm) = (x == "AM") ? 0 : 1;
@@ -11438,7 +11438,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "PM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(window3_end_am_pm) = (x == "AM") ? 0 : 1;
@@ -11456,7 +11456,7 @@ select:
       - "Even Days"
       - "Interval (Every N Days)"
     initial_option: "Specific Days"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "Specific Days") id(program_a_schedule_type) = 0;
@@ -11474,7 +11474,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(program_a_am_pm) = (x == "AM") ? 0 : 1;
@@ -11491,7 +11491,7 @@ select:
       - "Even Days"
       - "Interval (Every N Days)"
     initial_option: "Specific Days"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "Specific Days") id(program_b_schedule_type) = 0;
@@ -11509,7 +11509,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(program_b_am_pm) = (x == "AM") ? 0 : 1;
@@ -11526,7 +11526,7 @@ select:
       - "Even Days"
       - "Interval (Every N Days)"
     initial_option: "Specific Days"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "Specific Days") id(program_c_schedule_type) = 0;
@@ -11544,7 +11544,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(program_c_am_pm) = (x == "AM") ? 0 : 1;
@@ -11665,7 +11665,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(zone1_am_pm) = (x == "AM") ? 0 : 1;
@@ -11679,7 +11679,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(zone2_am_pm) = (x == "AM") ? 0 : 1;
@@ -11693,7 +11693,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(zone3_am_pm) = (x == "AM") ? 0 : 1;
@@ -11707,7 +11707,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(zone4_am_pm) = (x == "AM") ? 0 : 1;
@@ -11721,7 +11721,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(zone5_am_pm) = (x == "AM") ? 0 : 1;
@@ -11735,7 +11735,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(zone6_am_pm) = (x == "AM") ? 0 : 1;
@@ -11749,7 +11749,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(zone7_am_pm) = (x == "AM") ? 0 : 1;
@@ -11763,7 +11763,7 @@ select:
       - "AM"
       - "PM"
     initial_option: "AM"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           id(zone8_am_pm) = (x == "AM") ? 0 : 1;
@@ -11780,7 +11780,7 @@ select:
       - "${program_b_name}"
       - "${program_c_name}"
     initial_option: "${program_a_name}"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "None") id(zone1_program) = 0;
@@ -11799,7 +11799,7 @@ select:
       - "${program_b_name}"
       - "${program_c_name}"
     initial_option: "${program_a_name}"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "None") id(zone2_program) = 0;
@@ -11818,7 +11818,7 @@ select:
       - "${program_b_name}"
       - "${program_c_name}"
     initial_option: "${program_a_name}"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "None") id(zone3_program) = 0;
@@ -11837,7 +11837,7 @@ select:
       - "${program_b_name}"
       - "${program_c_name}"
     initial_option: "${program_a_name}"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "None") id(zone4_program) = 0;
@@ -11856,7 +11856,7 @@ select:
       - "${program_b_name}"
       - "${program_c_name}"
     initial_option: "${program_a_name}"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "None") id(zone5_program) = 0;
@@ -11875,7 +11875,7 @@ select:
       - "${program_b_name}"
       - "${program_c_name}"
     initial_option: "${program_a_name}"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "None") id(zone6_program) = 0;
@@ -11894,7 +11894,7 @@ select:
       - "${program_b_name}"
       - "${program_c_name}"
     initial_option: "${program_a_name}"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "None") id(zone7_program) = 0;
@@ -11913,7 +11913,7 @@ select:
       - "${program_b_name}"
       - "${program_c_name}"
     initial_option: "${program_a_name}"
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "None") id(zone8_program) = 0;
@@ -11934,7 +11934,7 @@ select:
       - "Loam"
       - "Clay"
     initial_option: "Sand"  # Whanganui default
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
     set_action:
       - lambda: |-
           if (x == "Sand") {
@@ -11973,7 +11973,7 @@ text:
     max_length: 20
     initial_value: "$dev1_zone1"
     mode: text
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
 
   - platform: template
     name: "$dev1_zone2 Name"
@@ -11984,7 +11984,7 @@ text:
     max_length: 20
     initial_value: "$dev1_zone2"
     mode: text
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
 
 
   - platform: template
@@ -11996,7 +11996,7 @@ text:
     max_length: 20
     initial_value: "$dev1_zone3"
     mode: text
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
 
   - platform: template
     name: "$dev1_zone4 Name"
@@ -12007,7 +12007,7 @@ text:
     max_length: 20
     initial_value: "$dev1_zone4"
     mode: text
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
 
   - platform: template
     name: "$dev1_zone5 Name"
@@ -12018,7 +12018,7 @@ text:
     max_length: 20
     initial_value: "$dev1_zone5"
     mode: text
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
 
   - platform: template
     name: "$dev1_zone6 Name"
@@ -12029,7 +12029,7 @@ text:
     max_length: 20
     initial_value: "$dev1_zone6"
     mode: text
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
 
   - platform: template
     name: "$dev1_zone7 Name"
@@ -12040,7 +12040,7 @@ text:
     max_length: 20
     initial_value: "$dev1_zone7"
     mode: text
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
 
   - platform: template
     name: "$dev1_zone8 Name"
@@ -12051,7 +12051,7 @@ text:
     max_length: 20
     initial_value: "$dev1_zone8"
     mode: text
-    restore_value: False
+    restore_value: True  # USER SETTING - must persist across reboots
 
   # ═══════════════════════════════════════════════════════════
   # BLACKOUT DATES - V3.34 IMPROVED (Persistent + User-Friendly)
