@@ -17,9 +17,9 @@ substitutions:
   # Unit of measure for zone run durations shown in HA (Min or sec)
   uom:                   "Min"
   # Software version (bumped when NVS-affecting globals change)
-  software_revision:     "V3.38"
+  software_revision:     "V3.39-PERSISTENCE-FIX"
   # Integer version for NVS validation — increment when adding/removing restore_value globals
-  software_version_int:  "338"
+  software_version_int:  "339"
   # ═══════════════════════════════════════════════════════════
 
   dev1_what: Lawn
@@ -839,7 +839,7 @@ globals:
     initial_value: '0'
   - id: master_valve_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'  # Optional feature, off by default
   - id: test_mode_active
     type: bool
@@ -847,15 +847,15 @@ globals:
     initial_value: 'false'  # True during diagnostics/tests to prevent watchdog interference
   - id: cycle_soak_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: cycle_duration_minutes
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_cycle_duration_min}'
   - id: soak_duration_minutes
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_soak_duration_min}'
   - id: current_cycle
     type: int
@@ -875,7 +875,7 @@ globals:
     initial_value: '0'
   - id: station_delay_seconds
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_station_delay_sec}'  # Seconds between zone switches
 
   # ============================================================
@@ -969,7 +969,7 @@ globals:
   # ============================================================
   - id: smart_et_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'  # Smart ET OFF by default
     
   - id: et_soil_moisture_deficit
@@ -979,7 +979,7 @@ globals:
     
   - id: et_water_threshold
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_et_threshold_mm}'  # Water when deficit reaches threshold (mm)
     
   - id: et_last_calculation_time
@@ -1021,35 +1021,35 @@ globals:
   # Zone flow rates (liters per minute) - configurable per zone
   - id: zone1_flow_rate
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_zone_flow_rate_lpm}'  # L/min default
   - id: zone2_flow_rate
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone3_flow_rate
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone4_flow_rate
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone5_flow_rate
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone6_flow_rate
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone7_flow_rate
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_zone_flow_rate_lpm}'
   - id: zone8_flow_rate
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_zone_flow_rate_lpm}'
   
   # ═══════════════════════════════════════════════════════════
@@ -1389,7 +1389,7 @@ globals:
   # ═══════════════════════════════════════════════
   - id: freeze_threshold
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_freeze_threshold_c}'  # Celsius - disable watering below this
   - id: freeze_protection_active
     type: bool
@@ -1401,7 +1401,7 @@ globals:
   # ═══════════════════════════════════════════════
   - id: monthly_water_budget
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_monthly_budget_l}'  # Liters per month
   - id: current_month_usage
     type: float
@@ -1442,7 +1442,7 @@ globals:
   # ═══════════════════════════════════════════════
   - id: max_zone_runtime_daily
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_max_zone_runtime_min}'  # Minutes per day per zone
   - id: zone1_runtime_today
     type: int
@@ -1514,89 +1514,89 @@ globals:
   # ═══════════════════════════════════════════════
   - id: window1_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: window1_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_window1_start_hour}'  # Early morning (24-hour)
   - id: window1_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # :00
   - id: window1_start_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # 0=AM, 1=PM
   - id: window1_end_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_window1_end_hour}'  # End hour (24-hour)
   - id: window1_end_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # :00
   - id: window1_end_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # 0=AM, 1=PM
   - id: window2_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'
   - id: window2_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_window2_start_hour}'  # Start hour (24-hour)
   - id: window2_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # :00
   - id: window2_start_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # 0=AM, 1=PM
   - id: window2_end_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_window2_end_hour}'  # End hour (24-hour)
   - id: window2_end_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # :00
   - id: window2_end_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # 0=AM, 1=PM
     
   # WATERING WINDOW 3 (Optional - for additional ET run or special watering)
   - id: window3_enabled
     type: bool
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'  # Disabled by default
   - id: window3_start_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_window3_start_hour}'  # Start hour (24-hour)
   - id: window3_start_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # :00
   - id: window3_start_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # 0=AM, 1=PM
   - id: window3_end_hour
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_window3_end_hour}'  # End hour (24-hour)
   - id: window3_end_minute
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'  # :00
   - id: window3_end_am_pm
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '1'  # 0=AM, 1=PM
   
   
@@ -2419,17 +2419,17 @@ globals:
   # ═══════════════════════════════════════════════
   - id: forecast_rain_threshold_significant
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_forecast_significant_mm}'  # mm - Skip watering if this much rain forecast
   
   - id: forecast_rain_threshold_high
     type: float
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_forecast_high_mm}'  # mm - Auto rain delay if this much forecast
   
   - id: forecast_check_hours
     type: int
-    restore_value: False  # Restored by HA entity
+    restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '6'  # Hours ahead to check for significant rain
   
   - id: forecast_rain_detected
@@ -15257,7 +15257,7 @@ sprinkler:
           min_value: 1
           max_value: 60
           step: 1
-          restore_value: False
+          restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_1
         
       - valve_switch: $dev1_zone2
@@ -15273,7 +15273,7 @@ sprinkler:
           min_value: 1
           max_value: 60
           step: 1
-          restore_value: False
+          restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_2
         
       - valve_switch: $dev1_zone3
@@ -15289,7 +15289,7 @@ sprinkler:
           min_value: 1
           max_value: 60
           step: 1
-          restore_value: False
+          restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_3
         
       - valve_switch: $dev1_zone4
@@ -15305,7 +15305,7 @@ sprinkler:
           min_value: 1
           max_value: 60
           step: 1
-          restore_value: False
+          restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_4
         
       - valve_switch: $dev1_zone5
@@ -15321,7 +15321,7 @@ sprinkler:
           min_value: 1
           max_value: 60
           step: 1
-          restore_value: False
+          restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_5
         
       - valve_switch: $dev1_zone6
@@ -15337,7 +15337,7 @@ sprinkler:
           min_value: 1
           max_value: 60
           step: 1
-          restore_value: False
+          restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_6
         
       - valve_switch: $dev1_zone7
@@ -15353,7 +15353,7 @@ sprinkler:
           min_value: 1
           max_value: 60
           step: 1
-          restore_value: False
+          restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_7
         
       - valve_switch: $dev1_zone8
@@ -15369,7 +15369,7 @@ sprinkler:
           min_value: 1
           max_value: 60
           step: 1
-          restore_value: False
+          restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_8
 
 
