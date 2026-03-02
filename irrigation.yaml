@@ -19,7 +19,7 @@ substitutions:
   # Software version (bumped when NVS-affecting globals change)
   software_revision:     "V3.40-ALL-SETTINGS-PERSIST"
   # Integer version for NVS validation — increment when adding/removing restore_value globals
-  software_version_int:  "340"
+  software_version_int:  "341"
   # ═══════════════════════════════════════════════════════════
 
   dev1_what: Lawn
@@ -63,7 +63,7 @@ substitutions:
   # Sensor:  YF-B5  (Copper G3/4 DN20, Hall effect, 1-30 L/min)
   # Wiring:  VCC=5V  GND=GND  Signal=flow_sensor_pin
   # Counter: use_pcnt=true (hardware PCNT — counts in silicon,
-  #          immune to CPU load). internal_filter=13us is the
+  #          immune to CPU load). internal_filter=10us is the
   #          maximum PCNT allows; blocks EMI spikes which are
   #          <1us. Real YF-B5 pulses are >5ms at any flow rate.
   #
@@ -304,6 +304,15 @@ esphome:
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "Idle"
+      # Publish persisted last-trigger immediately on reboot so HA shows it
+      # (sensor is update_interval: never — without this it stays blank until
+      #  the 1-min time_component refresh or the next zone completes)
+      - component.update: last_watering_trigger_sensor
+      # Push vacation mode status on boot (update_interval: never — needs explicit push)
+      - component.update: vacation_mode_status
+      - component.update: multiplier_breakdown
+      # Push current_watering_trigger on boot (update_interval: never)
+      - lambda: 'id(current_watering_trigger).publish_state(id(watering_trigger_source));'
       # reset multiplier at reboot
       - lambda: |-
           // === 3-ITEM QUEUE SYSTEM INITIALIZATION ===
@@ -483,6 +492,8 @@ esphome:
               id(zone8_water_litres)    = 0.0f;
               id(budget_warning_sent) = false;
               id(budget_exceeded)     = false;
+              id(last_watering_trigger_text) = "Never";  // Reset persisted trigger on corruption wipe
+              id(last_watering_timestamp)    = 0;        // Reset timestamp so sensor shows "Never"
               // Reuse time from earlier in this lambda
               if (now.is_valid()) id(last_reset_month) = now.month;
               // Force immediate NVS flush — without this the corrected zeros
@@ -1518,6 +1529,15 @@ globals:
     type: int64_t
     restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '0'
+
+  # Last watering trigger — stored in NVS so it survives reboots.
+  # restore_value: True is safe here because:
+  #   a) the NVS corruption checker wipes all globals when it detects garbage
+  #   b) the sensor lambda guards against any corrupted/empty value at read time
+  - id: last_watering_trigger_text
+    type: std::string
+    restore_value: True
+    initial_value: '"Never"'
     
   # ═══════════════════════════════════════════════
   # NETWORK LOSS HANDLING
@@ -2709,6 +2729,9 @@ time:
                 ESP_LOGI("irrigation", "No active valve detected - resetting status to Idle");
                 id(dev1_valve_status).publish_state("Idle");
               }
+              
+              // Trigger sensor now uses update_interval: 30s for automatic "X ago" refresh.
+              // No manual update() needed here — the 30s timer handles it.
       
 # Check every minute if it's time to start programs
       - seconds: 0
@@ -3199,6 +3222,13 @@ time:
               // Skip if Predictive Watering is managing the multiplier
               if (id(predictive_watering_enabled)) {
                 ESP_LOGD("irrigation", "Midnight multiplier skipped - Predictive Watering is active");
+                return;
+              }
+              // Bug #41 FIX: Don't apply multiplier mid-run — same class as Bug #32 (Smart ET)
+              // and Bug #40 (Predictive Watering). A run started before midnight would get its
+              // remaining zones' durations silently changed. Skip — the next midnight will apply it.
+              if (id(irrigation_busy)) {
+                ESP_LOGI("irrigation", "Midnight multiplier deferred — system busy (will apply at next midnight)");
                 return;
               }
               
@@ -4067,33 +4097,45 @@ interval:
                 if (!id(irrigation_system_enable).state) {
                   ESP_LOGW("irrigation", "🚫 NORMAL start BLOCKED — system disabled");
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
-                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle"; return;
+                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
+                  id(drain_queue).execute();  // BUG #38 FIX: drain queue immediately, don't wait for watchdog
+                  return;
                 }
                 if (id(freeze_protection_active)) {
                   ESP_LOGW("irrigation", "❄️ NORMAL start BLOCKED — freeze protection active (%.1f°C)", id(outside_temperature).state);
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
-                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle"; return;
+                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
+                  id(drain_queue).execute();  // BUG #38 FIX
+                  return;
                 }
                 if (id(budget_exceeded) && !id(budget_override_active)) {
                   ESP_LOGW("irrigation", "🚫 NORMAL start BLOCKED — monthly budget exceeded (%.0fL / %.0fL)", id(current_month_usage), id(monthly_water_budget));
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
-                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle"; return;
+                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
+                  id(drain_queue).execute();  // BUG #38 FIX
+                  return;
                 }
                 if (_ns_time.is_valid() && id(rain_delay_end_time) > _ns_time.timestamp) {
                   int64_t _rd = (id(rain_delay_end_time) - _ns_time.timestamp) / ${seconds_per_day};
                   ESP_LOGW("irrigation", "🌧️ NORMAL start BLOCKED — rain delay active (%lld day(s) remaining)", _rd);
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
-                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle"; return;
+                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
+                  id(drain_queue).execute();  // BUG #38 FIX
+                  return;
                 }
                 if (id(is_blackout_date).state) {
                   ESP_LOGW("irrigation", "🚫 NORMAL start BLOCKED — blackout date active");
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
-                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle"; return;
+                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
+                  id(drain_queue).execute();  // BUG #38 FIX
+                  return;
                 }
                 if (id(is_time_restricted)) {
                   ESP_LOGW("irrigation", "⏰ NORMAL start BLOCKED — outside allowed watering window");
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
-                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle"; return;
+                  id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
+                  id(drain_queue).execute();  // BUG #38 FIX
+                  return;
                 }
                 if (!id(manual_weather_override)) {
                   std::string _w = id(weather_forecast_home).state;
@@ -4101,7 +4143,9 @@ interval:
                     if (_w == "rainy" || _w == "pouring" || _w == "snowy" || _w == "snowy-rainy") {
                       ESP_LOGW("irrigation", "⛈️ NORMAL start BLOCKED — bad weather: %s", _w.c_str());
                       id(pending_normal_start) = false; id(normal_start_attempts) = 0;
-                      id(irrigation_busy) = false; id(watering_trigger_source) = "Idle"; return;
+                      id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
+                      id(drain_queue).execute();  // BUG #38 FIX
+                      return;
                     }
                   }
                 }
@@ -4239,6 +4283,40 @@ interval:
               rem = (float)id($devicename1).time_remaining_active_valve().value_or(0);
             }
             id(valve_remaining_seconds).publish_state(rem);
+          }
+
+          // ── INSTANT STATUS PUSHES (on change only — no polling overhead) ───────────────
+          
+          // 1. Current Watering Trigger (update_interval: never — pushed here on change)
+          {
+            std::string _new_trigger = id(watering_trigger_source);
+            if (id(current_watering_trigger).state != _new_trigger) {
+              id(current_watering_trigger).publish_state(_new_trigger);
+            }
+          }
+
+          // 2. Master Valve Status (update_interval: never — pushed here on relay state change)
+          {
+            static bool _mv_last_on = false;
+            static int  _mv_last_zone = -1;
+            bool _mv_now = id(master_valve_relay).state;
+            int  _mv_zone = id($devicename1).active_valve().has_value()
+                              ? (int)id($devicename1).active_valve().value() : -1;
+            if (_mv_now != _mv_last_on || _mv_zone != _mv_last_zone) {
+              _mv_last_on   = _mv_now;
+              _mv_last_zone = _mv_zone;
+              id(master_valve_status).update();  // Re-runs the lambda and publishes
+            }
+          }
+
+          // 3. Last Watering Trigger active state (update_interval: 30s handles idle refresh)
+          // Publish "(active)" state within 1 second of a run starting.
+          // On completion, zone on_turn_off already pushes the final completed state.
+          if (id(irrigation_busy) && id(watering_trigger_source) != "Idle") {
+            std::string _active = id(watering_trigger_source) + " (active)";
+            if (id(last_watering_trigger_sensor).state != _active) {
+              id(last_watering_trigger_sensor).publish_state(_active);
+            }
           }
   
 # Watchdog - Check for stuck states every 30 seconds
@@ -5030,7 +5108,9 @@ text_sensor:
     id: current_watering_trigger
     name: "$dev1_what Current Watering Trigger"
     icon: "mdi:debug-step-over"
-    update_interval: 2s
+    # update_interval: never — pushed from the 1s interval via publish_state
+    # whenever watering_trigger_source changes, and from every run start/stop/block path.
+    update_interval: never
     lambda: |-
       return id(watering_trigger_source);
   
@@ -5327,7 +5407,10 @@ text_sensor:
     id: master_valve_status
     name: "Master Valve Status"
     icon: "mdi:valve"
-    update_interval: 2s
+    # update_interval: never — pushed from the 1s interval when relay state changes.
+    # A static prev-state variable tracks changes so we only publish on transitions,
+    # keeping MQTT/HA traffic minimal.
+    update_interval: never
     lambda: |-
       if (!id(master_valve_enabled)) {
         return {"System Disabled"};
@@ -5409,7 +5492,7 @@ text_sensor:
     id: program_a_status
     name: "${program_a_name} Status"
     icon: "mdi:information"
-    update_interval: 60s
+    update_interval: 30s  # Halved from 60s — reflects enable/disable changes faster
     lambda: |-
       if (!id(program_a_enabled)) return {"Disabled"};
       
@@ -5429,7 +5512,7 @@ text_sensor:
     id: program_b_status
     name: "${program_b_name} Status"
     icon: "mdi:information"
-    update_interval: 60s
+    update_interval: 30s  # Halved from 60s — reflects enable/disable changes faster
     lambda: |-
       if (!id(program_b_enabled)) return {"Disabled"};
       
@@ -5449,7 +5532,7 @@ text_sensor:
     id: program_c_status
     name: "${program_c_name} Status"
     icon: "mdi:information"
-    update_interval: 60s
+    update_interval: 30s  # Halved from 60s — reflects enable/disable changes faster
     lambda: |-
       if (!id(program_c_enabled)) return {"Disabled"};
       
@@ -5470,7 +5553,11 @@ text_sensor:
     id: vacation_mode_status
     name: "Vacation Mode Status"
     icon: "mdi:information"
-    update_interval: 60s
+    # update_interval: never — pushed immediately via publish_state from:
+    #   • vacation_mode_switch turn_on_action  (→ shows "Active - Watering at XX%")
+    #   • vacation_mode_switch turn_off_action (→ shows "Inactive")
+    #   • on_boot                              (→ shows current state after reboot)
+    update_interval: never
     lambda: |-
       if (id(vacation_mode_active)) {
         float current_mult = id($devicename1).multiplier();
@@ -6003,6 +6090,44 @@ text_sensor:
         return {std::to_string(minutes) + " minutes ago"};
       }
 
+  # ══════════════════════════════════════════════════
+  # LAST WATERING TRIGGER SENSOR
+  # Shows what triggered the most recent watering run.
+  # Updated whenever a zone completes (zone on_turn_off).
+  # Also auto-refreshes every 30s to keep the "X ago" time accurate.
+  # ══════════════════════════════════════════════════
+  - platform: template
+    id: last_watering_trigger_sensor
+    name: "$upper_devicename1 Last Watering Trigger"
+    icon: "mdi:water-check"
+    # update_interval: 30s — auto-refreshes the "X ago" elapsed time every 30s.
+    # Also pushed immediately via publish_state from each zone on_turn_off,
+    # and via the 1s interval when a run is active.
+    update_interval: 30s
+    lambda: |-
+      // Guard: sanitise any corrupted/empty NVS restore
+      std::string _t = id(last_watering_trigger_text);
+      if (_t.empty() || _t.length() > 80) _t = "Never";
+      // If a run is active, show current trigger with "(active)"
+      if (id(irrigation_busy) && id(watering_trigger_source) != "Idle") {
+        return {id(watering_trigger_source) + " (active)"};
+      }
+      // Idle: show last completed trigger with relative time
+      if (id(last_watering_timestamp) == 0 || _t == "Never") {
+        return {"Never"};
+      }
+      auto _lw_time = id(homeassistant_time).now();
+      if (!_lw_time.is_valid()) return {_t};
+      int64_t seconds_ago = _lw_time.timestamp - id(last_watering_timestamp);
+      int64_t days  = seconds_ago / ${seconds_per_day};
+      int64_t hours = (seconds_ago % ${seconds_per_day}) / ${seconds_per_hour};
+      int64_t mins  = (seconds_ago % ${seconds_per_hour}) / 60;
+      std::string when;
+      if (days > 0)       when = std::to_string(days)  + "d ago";
+      else if (hours > 0) when = std::to_string(hours) + "h ago";
+      else                when = std::to_string(mins)  + "m ago";
+      return {_t + " (" + when + ")"};
+
   # Queue Status Display (Hunter Pro-C style)
   - platform: template
     id: queue_status_display
@@ -6013,17 +6138,22 @@ text_sensor:
       if (id(queue_count) == 0) {
         return {"Empty (0/3)"};
       }
-      
+      // BUG #42 FIX: Added type 3 (Normal Mode) and type 4 (Cycle & Soak) which were
+      // silently ignored — queues containing these showed "X/3: " with no description.
       std::string result = std::to_string(id(queue_count)) + "/3: ";
       for (int i = 0; i < id(queue_count) && i < 3; i++) {
         if (i > 0) result += ", ";
         int type = id(queue_types)[i];
         if (type == 1) {
-          // Program
           result += "Prg " + std::string(1, 'A' + id(queue_programs)[i] - 1);
         } else if (type == 2) {
-          // Zone
           result += "Zone " + std::to_string(id(queue_zones)[i] + 1);
+        } else if (type == 3) {
+          result += "Normal";
+        } else if (type == 4) {
+          result += "C&S";
+        } else {
+          result += "?";
         }
       }
       return {result};
@@ -6035,7 +6165,9 @@ text_sensor:
     id: multiplier_breakdown
     name: "$dev1_what Multiplier Breakdown"
     icon: "mdi:calculator"
-    update_interval: 60s
+    # update_interval: never — pushed from calculate_predictive_watering after each run
+    # and from on_boot. Multiplier changes ~hourly so 60s polling was mostly wasted cycles.
+    update_interval: never
     lambda: |-
       if (!id(predictive_watering_enabled)) {
         return {"Predictive Watering Disabled"};
@@ -6223,7 +6355,7 @@ sensor:
     unit_of_measurement: "pulses/min"
     accuracy_decimals: 0
     use_pcnt: true        # Hardware PCNT — counts in silicon, immune to CPU load
-    internal_filter: 13us # Max for PCNT mode. EMI spikes are <1us, real pulses >5ms — safe margin
+    internal_filter: 10us # Safe PCNT limit (max=12.7875us=1023 APB ticks). 10us=800 ticks — well within spec; EMI spikes <1us, real pulses >5ms
     update_interval: ${flow_sensor_update_interval}
     on_value:
       - lambda: |-
@@ -8891,6 +9023,14 @@ script:
             ESP_LOGI("irrigation", "💧 Predictive Watering™ is DISABLED - skipping calculation");
             return;
           }
+
+          // Bug #40 FIX: Don't apply a new multiplier mid-run — it would change the duration
+          // of zones not yet started in a multi-zone program or C&S sequence.
+          // PW runs hourly, so the next tick will apply the calculation when the system is idle.
+          if (id(irrigation_busy)) {
+            ESP_LOGI("irrigation", "💧 Predictive Watering™: System busy — deferring calculation until idle");
+            return;
+          }
           
           ESP_LOGI("irrigation", "");
           ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
@@ -9167,6 +9307,8 @@ script:
           
           ESP_LOGI("irrigation", "💧 Predictive Watering™ multiplier applied to system");
           ESP_LOGI("irrigation", "💧 ═══════════════════════════════════════════════");
+          // Push multiplier_breakdown immediately (update_interval: never)
+          id(multiplier_breakdown).update();
 
   # ============================================================
   # RESTORE PREDICTIVE WATERING MULTIPLIER (after Smart ET)
@@ -9987,6 +10129,11 @@ script:
             // Set trigger source from queue
             id(watering_trigger_source) = trigger_source;
             ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
+            // Bug #36 FIX: Set irrigation_busy=true before execute() for consistency with
+            // types 1/2/3. Without it there is a scheduler gap between drain_queue returning
+            // and run_all_zones_cycle_soak_script setting it. Bug #29 handles the blocked
+            // path and clears it if pre-flight fails.
+            id(irrigation_busy) = true;
             // Turn ON cycle and soak mode
             id(cycle_soak_switch).turn_on();
             ESP_LOGI("irrigation", "🔄 Cycle & Soak Mode: ON");
@@ -10371,7 +10518,14 @@ script:
             ESP_LOGI("irrigation", "✓ Time restriction check PASSED for Zone %d", zone + 1);
           }
 
-          if (id(irrigation_busy) || id($devicename1).active_valve().has_value()) {
+          // BUG #44 FIX: Only treat active_valve() as busy if it's a DIFFERENT zone.
+          // When a user presses a zone switch directly in HA, the sprinkler component
+          // sets active_valve() to that zone BEFORE turn_on_action calls request_zone_start,
+          // causing a false "busy" block. irrigation_busy is the authoritative lock;
+          // active_valve() alone only blocks if another zone is genuinely open.
+          bool _active_other = id($devicename1).active_valve().has_value() &&
+              id($devicename1).active_valve().value() != (uint8_t)zone;
+          if (id(irrigation_busy) || _active_other) {
             if (allow_queue) {
               // 3-item queue
               if (id(queue_count) < 3) {
@@ -10874,6 +11028,7 @@ script:
                 id(cycle_soak_is_soaking) = false; id(cycle_soak_soak_end_time) = 0;
                 id(watering_trigger_source) = "Idle";
                 id(dev1_valve_status).publish_state("Idle");
+                id(drain_queue).execute();  // BUG #39 FIX: drain queue now, don't wait for watchdog
                 return false;
               }
               return id(current_cycle) < total;
@@ -11257,7 +11412,15 @@ script:
             id(in_program_run) = true;
             ESP_LOGI("irrigation", "🎯 PROGRAM %d STARTING | Checking zone assignments...", program);
           }
-      
+
+      # Bug #37 FIX: If pre-flight blocked, drain queue now instead of waiting up to 30s
+      # for the watchdog to notice. _prog_block() already cleared irrigation_busy.
+      - if:
+          condition:
+            lambda: 'return id(zone_run_blocked);'
+          then:
+            - script.execute: drain_queue
+
       # Log zone count for this program and store active program
       - lambda: |-
           if (id(zone_run_blocked)) return;  // Safety blocked in pre-flight
@@ -13853,6 +14016,12 @@ switch:
           id(zone7_schedule_enabled) = false;
           id(zone8_schedule_enabled) = false;
           ESP_LOGI("irrigation", "Vacation mode activated - watering reduced to 50%%, individual zone schedules disabled");
+          // Push sensor update immediately — sensor uses update_interval: never
+          {
+            float _vm = id($devicename1).multiplier();
+            std::string _vms = "Active - Watering at " + std::to_string((int)(_vm * 100)) + "%";
+            id(vacation_mode_status).publish_state(_vms);
+          }
     turn_off_action:
       - lambda: |-
           id(vacation_mode_active) = false;
@@ -13868,6 +14037,8 @@ switch:
           id(zone7_schedule_enabled) = id(vacation_saved_zone7_sched);
           id(zone8_schedule_enabled) = id(vacation_saved_zone8_sched);
           ESP_LOGI("irrigation", "Vacation mode deactivated - multiplier and zone schedules restored");
+          // Push sensor update immediately — sensor uses update_interval: never
+          id(vacation_mode_status).publish_state("Inactive");
 
 # System Enable/Disable - Master control
   - platform: template
@@ -13877,9 +14048,17 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON  # Defaults to ON (enabled)
     turn_off_action:
-      # Stop everything when disabled
+      # BUG #43 FIX: Stop ALL scripts — previously only run_zone_with_cycles was stopped.
+      # run_program, run_all_zones_cycle_soak_script, etc. kept running after disable.
+      # irrigation_busy was also never cleared, leaving the system locked until the 30s watchdog.
       - sprinkler.shutdown: $devicename1
       - script.stop: run_zone_with_cycles
+      - script.stop: run_program
+      - script.stop: run_all_zones_cycle_soak_script
+      - script.stop: run_all_zones_normal_script
+      - script.stop: continue_cycle_soak_after_resume
+      - script.stop: wait_until_idle_then_drain
+      - switch.turn_on: dev1_auto_advance
       - lambda: |-
           id(active_zone_number) = -1;
           id(current_cycle) = 0;
@@ -13887,7 +14066,15 @@ switch:
           id(cycle_soak_total_duration) = 0;
           id(cycle_soak_elapsed_time) = 0;
           id(is_paused) = false;
-          ESP_LOGI("irrigation", "Irrigation system DISABLED");
+          id(pending_normal_start) = false;
+          id(normal_start_attempts) = 0;
+          id(irrigation_busy) = false;
+          id(in_program_run) = false;
+          id(cycle_soak_is_soaking) = false;
+          id(cycle_soak_soak_end_time) = 0;
+          id(resume_csa_blocked) = false;
+          id(watering_trigger_source) = "Idle";
+          ESP_LOGI("irrigation", "Irrigation system DISABLED — all scripts stopped, state cleared");
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "System Disabled"
@@ -14153,13 +14340,15 @@ switch:
             id(${devicename1}_1).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // We must NOT fire the relay directly here (no duration tracking, no auto-stop).
-          // Instead: cancel THIS raw turn_on so the raw output.turn_on action below won't fire,
-          // then call request_zone_start which routes through run_zone_with_cycles →
-          // sprinkler.start_single_valve → turn_on_action (scripted path) → relay fires with duration.
+          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
+          // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
+          // direct-switch path to work even though the sprinkler component already set active_valve()
+          // when it saw the zone switch turn on — before this lambda ran.
+          // After request_zone_start sets irrigation_busy=true, the if: block below fires
+          // output.turn_on — this is harmless (the relay is already being managed by
+          // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone1} (direct → routed to request_zone_start)");
-          // Turn off switch so the if-condition below sees irrigation_busy=false and skips output.turn_on.
-          // The relay will be fired by request_zone_start → sprinkler component → scripted path.
+          // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           id(request_zone_start).execute(0, (int)(id(Lawn_irrigation_controller_1_duration).state * 60), false, false, std::string("Manual: ${dev1_zone1}"));
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
@@ -14229,6 +14418,9 @@ switch:
           id(zone1_last_watered) = now_ts.timestamp;
           id(zone1_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
+          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+          // Immediately push updated trigger to HA (sensor uses update_interval: never)
+          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
 
           // ── Update runtime today (always, even short runs) ──
           id(zone1_runtime_today) += (int)duration;
@@ -14292,13 +14484,15 @@ switch:
             id(${devicename1}_2).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // We must NOT fire the relay directly here (no duration tracking, no auto-stop).
-          // Instead: cancel THIS raw turn_on so the raw output.turn_on action below won't fire,
-          // then call request_zone_start which routes through run_zone_with_cycles →
-          // sprinkler.start_single_valve → turn_on_action (scripted path) → relay fires with duration.
+          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
+          // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
+          // direct-switch path to work even though the sprinkler component already set active_valve()
+          // when it saw the zone switch turn on — before this lambda ran.
+          // After request_zone_start sets irrigation_busy=true, the if: block below fires
+          // output.turn_on — this is harmless (the relay is already being managed by
+          // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone2} (direct → routed to request_zone_start)");
-          // Turn off switch so the if-condition below sees irrigation_busy=false and skips output.turn_on.
-          // The relay will be fired by request_zone_start → sprinkler component → scripted path.
+          // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           id(request_zone_start).execute(1, (int)(id(Lawn_irrigation_controller_2_duration).state * 60), false, false, std::string("Manual: ${dev1_zone2}"));
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
@@ -14364,6 +14558,9 @@ switch:
           id(zone2_last_watered) = now_ts.timestamp;
           id(zone2_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
+          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+          // Immediately push updated trigger to HA (sensor uses update_interval: never)
+          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
           id(zone2_runtime_today) += (int)duration;
           if (duration > 5) {
             float water_used;
@@ -14422,13 +14619,15 @@ switch:
             id(${devicename1}_3).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // We must NOT fire the relay directly here (no duration tracking, no auto-stop).
-          // Instead: cancel THIS raw turn_on so the raw output.turn_on action below won't fire,
-          // then call request_zone_start which routes through run_zone_with_cycles →
-          // sprinkler.start_single_valve → turn_on_action (scripted path) → relay fires with duration.
+          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
+          // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
+          // direct-switch path to work even though the sprinkler component already set active_valve()
+          // when it saw the zone switch turn on — before this lambda ran.
+          // After request_zone_start sets irrigation_busy=true, the if: block below fires
+          // output.turn_on — this is harmless (the relay is already being managed by
+          // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone3} (direct → routed to request_zone_start)");
-          // Turn off switch so the if-condition below sees irrigation_busy=false and skips output.turn_on.
-          // The relay will be fired by request_zone_start → sprinkler component → scripted path.
+          // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           id(request_zone_start).execute(2, (int)(id(Lawn_irrigation_controller_3_duration).state * 60), false, false, std::string("Manual: ${dev1_zone3}"));
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
@@ -14494,6 +14693,9 @@ switch:
           id(zone3_last_watered) = now_ts.timestamp;
           id(zone3_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
+          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+          // Immediately push updated trigger to HA (sensor uses update_interval: never)
+          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
           id(zone3_runtime_today) += (int)duration;
           if (duration > 5) {
             float water_used;
@@ -14552,13 +14754,15 @@ switch:
             id(${devicename1}_4).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // We must NOT fire the relay directly here (no duration tracking, no auto-stop).
-          // Instead: cancel THIS raw turn_on so the raw output.turn_on action below won't fire,
-          // then call request_zone_start which routes through run_zone_with_cycles →
-          // sprinkler.start_single_valve → turn_on_action (scripted path) → relay fires with duration.
+          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
+          // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
+          // direct-switch path to work even though the sprinkler component already set active_valve()
+          // when it saw the zone switch turn on — before this lambda ran.
+          // After request_zone_start sets irrigation_busy=true, the if: block below fires
+          // output.turn_on — this is harmless (the relay is already being managed by
+          // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone4} (direct → routed to request_zone_start)");
-          // Turn off switch so the if-condition below sees irrigation_busy=false and skips output.turn_on.
-          // The relay will be fired by request_zone_start → sprinkler component → scripted path.
+          // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           id(request_zone_start).execute(3, (int)(id(Lawn_irrigation_controller_4_duration).state * 60), false, false, std::string("Manual: ${dev1_zone4}"));
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
@@ -14624,6 +14828,9 @@ switch:
           id(zone4_last_watered) = now_ts.timestamp;
           id(zone4_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
+          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+          // Immediately push updated trigger to HA (sensor uses update_interval: never)
+          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
           id(zone4_runtime_today) += (int)duration;
           if (duration > 5) {
             float water_used;
@@ -14682,13 +14889,15 @@ switch:
             id(${devicename1}_5).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // We must NOT fire the relay directly here (no duration tracking, no auto-stop).
-          // Instead: cancel THIS raw turn_on so the raw output.turn_on action below won't fire,
-          // then call request_zone_start which routes through run_zone_with_cycles →
-          // sprinkler.start_single_valve → turn_on_action (scripted path) → relay fires with duration.
+          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
+          // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
+          // direct-switch path to work even though the sprinkler component already set active_valve()
+          // when it saw the zone switch turn on — before this lambda ran.
+          // After request_zone_start sets irrigation_busy=true, the if: block below fires
+          // output.turn_on — this is harmless (the relay is already being managed by
+          // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone5} (direct → routed to request_zone_start)");
-          // Turn off switch so the if-condition below sees irrigation_busy=false and skips output.turn_on.
-          // The relay will be fired by request_zone_start → sprinkler component → scripted path.
+          // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           id(request_zone_start).execute(4, (int)(id(Lawn_irrigation_controller_5_duration).state * 60), false, false, std::string("Manual: ${dev1_zone5}"));
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
@@ -14754,6 +14963,9 @@ switch:
           id(zone5_last_watered) = now_ts.timestamp;
           id(zone5_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
+          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+          // Immediately push updated trigger to HA (sensor uses update_interval: never)
+          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
           id(zone5_runtime_today) += (int)duration;
           if (duration > 5) {
             float water_used;
@@ -14812,13 +15024,15 @@ switch:
             id(${devicename1}_6).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // We must NOT fire the relay directly here (no duration tracking, no auto-stop).
-          // Instead: cancel THIS raw turn_on so the raw output.turn_on action below won't fire,
-          // then call request_zone_start which routes through run_zone_with_cycles →
-          // sprinkler.start_single_valve → turn_on_action (scripted path) → relay fires with duration.
+          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
+          // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
+          // direct-switch path to work even though the sprinkler component already set active_valve()
+          // when it saw the zone switch turn on — before this lambda ran.
+          // After request_zone_start sets irrigation_busy=true, the if: block below fires
+          // output.turn_on — this is harmless (the relay is already being managed by
+          // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone6} (direct → routed to request_zone_start)");
-          // Turn off switch so the if-condition below sees irrigation_busy=false and skips output.turn_on.
-          // The relay will be fired by request_zone_start → sprinkler component → scripted path.
+          // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           id(request_zone_start).execute(5, (int)(id(Lawn_irrigation_controller_6_duration).state * 60), false, false, std::string("Manual: ${dev1_zone6}"));
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
@@ -14884,6 +15098,9 @@ switch:
           id(zone6_last_watered) = now_ts.timestamp;
           id(zone6_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
+          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+          // Immediately push updated trigger to HA (sensor uses update_interval: never)
+          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
           id(zone6_runtime_today) += (int)duration;
           if (duration > 5) {
             float water_used;
@@ -14942,13 +15159,15 @@ switch:
             id(${devicename1}_7).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // We must NOT fire the relay directly here (no duration tracking, no auto-stop).
-          // Instead: cancel THIS raw turn_on so the raw output.turn_on action below won't fire,
-          // then call request_zone_start which routes through run_zone_with_cycles →
-          // sprinkler.start_single_valve → turn_on_action (scripted path) → relay fires with duration.
+          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
+          // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
+          // direct-switch path to work even though the sprinkler component already set active_valve()
+          // when it saw the zone switch turn on — before this lambda ran.
+          // After request_zone_start sets irrigation_busy=true, the if: block below fires
+          // output.turn_on — this is harmless (the relay is already being managed by
+          // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone7} (direct → routed to request_zone_start)");
-          // Turn off switch so the if-condition below sees irrigation_busy=false and skips output.turn_on.
-          // The relay will be fired by request_zone_start → sprinkler component → scripted path.
+          // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           id(request_zone_start).execute(6, (int)(id(Lawn_irrigation_controller_7_duration).state * 60), false, false, std::string("Manual: ${dev1_zone7}"));
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
@@ -15014,6 +15233,9 @@ switch:
           id(zone7_last_watered) = now_ts.timestamp;
           id(zone7_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
+          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+          // Immediately push updated trigger to HA (sensor uses update_interval: never)
+          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
           id(zone7_runtime_today) += (int)duration;
           if (duration > 5) {
             float water_used;
@@ -15072,13 +15294,15 @@ switch:
             id(${devicename1}_8).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // We must NOT fire the relay directly here (no duration tracking, no auto-stop).
-          // Instead: cancel THIS raw turn_on so the raw output.turn_on action below won't fire,
-          // then call request_zone_start which routes through run_zone_with_cycles →
-          // sprinkler.start_single_valve → turn_on_action (scripted path) → relay fires with duration.
+          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
+          // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
+          // direct-switch path to work even though the sprinkler component already set active_valve()
+          // when it saw the zone switch turn on — before this lambda ran.
+          // After request_zone_start sets irrigation_busy=true, the if: block below fires
+          // output.turn_on — this is harmless (the relay is already being managed by
+          // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone8} (direct → routed to request_zone_start)");
-          // Turn off switch so the if-condition below sees irrigation_busy=false and skips output.turn_on.
-          // The relay will be fired by request_zone_start → sprinkler component → scripted path.
+          // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           id(request_zone_start).execute(7, (int)(id(Lawn_irrigation_controller_8_duration).state * 60), false, false, std::string("Manual: ${dev1_zone8}"));
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
@@ -15144,6 +15368,9 @@ switch:
           id(zone8_last_watered) = now_ts.timestamp;
           id(zone8_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
+          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+          // Immediately push updated trigger to HA (sensor uses update_interval: never)
+          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
           id(zone8_runtime_today) += (int)duration;
           if (duration > 5) {
             float water_used;
