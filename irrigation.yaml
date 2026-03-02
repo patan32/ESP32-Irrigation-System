@@ -332,10 +332,19 @@ esphome:
             }
             ESP_LOGI("irrigation", "🔄 BOOT: 3-slot queue initialized (Hunter Pro-C style)");
             
-            // Initialize Predictive Watering variables
+            // BUG #46 FIX: Do NOT reset pw_current_multiplier on boot.
+            // pw_current_multiplier has restore_value:True — its NVS value is valid and
+            // should be used until calculate_predictive_watering recalculates from live
+            // weather (within 60 min of boot). Resetting to 1.0 discards a valid seasonal
+            // multiplier (e.g. 1.8x in summer), causing under-watering until PW recalculates.
+            // Reset pw_last_calculation_time=0 so PW knows it needs to recalculate but
+            // leave pw_current_multiplier intact.
             id(pw_last_calculation_time) = 0;
-            id(pw_current_multiplier) = 1.0;
-            ESP_LOGI("irrigation", "💧 Predictive Watering™ system initialized");
+            // Apply the restored multiplier to the sprinkler component on boot.
+            // (set_multiplier is not called here; calculate_predictive_watering will call
+            // it on its first run. The sprinkler defaults to 1.0 until then — safe.)
+            ESP_LOGI("irrigation", "💧 Predictive Watering™ system initialized (multiplier=%.2f from NVS)",
+                     id(pw_current_multiplier));
 
             // ── Flow sensor: explicit zero on boot to prevent stale display ──
             id(flow_sensor_session_litres) = 0.0f;
@@ -2612,33 +2621,35 @@ time:
                   std::string active_window = "";
                   
                   // Check Window 1
+                  // BUG FIX: Use midnight-safe ternary (same as check_time_restriction).
+                  // Old: start <= now < end silently fails for windows crossing midnight.
                   if (id(window1_enabled)) {
                     int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
                     int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
-                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
-                      in_window = true;
-                      active_window = "ET Watering Window 1";
-                    }
+                    bool hit = (start_min < end_min)
+                        ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                        : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                    if (hit) { in_window = true; active_window = "ET Watering Window 1"; }
                   }
                   
                   // Check Window 2
                   if (!in_window && id(window2_enabled)) {
                     int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
                     int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
-                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
-                      in_window = true;
-                      active_window = "ET Watering Window 2";
-                    }
+                    bool hit = (start_min < end_min)
+                        ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                        : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                    if (hit) { in_window = true; active_window = "ET Watering Window 2"; }
                   }
                   
                   // Check Window 3
                   if (!in_window && id(window3_enabled)) {
                     int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
                     int end_min = (id(window3_end_hour) * 60) + id(window3_end_minute);
-                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
-                      in_window = true;
-                      active_window = "ET Watering Window 3";
-                    }
+                    bool hit = (start_min < end_min)
+                        ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                        : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                    if (hit) { in_window = true; active_window = "ET Watering Window 3"; }
                   }
                   
                   if (in_window) {
@@ -2683,12 +2694,13 @@ time:
                     }
                     id(start_all_zones_cycle_soak).press();
                     // BUG #33 FIX: Only clear deficit/last_water_time when run started immediately.
-                    // If queued, preserve deficit — it may be dropped before executing.
-                    if (!id(irrigation_busy)) {
-                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
-                    } else {
+                    // If the button press was blocked by a safety check, irrigation_busy stays false
+                    // and the deficit is preserved so the next window retry can fire it.
+                    if (id(irrigation_busy)) {
                       id(et_soil_moisture_deficit) = 0;
                       { auto _t2b = id(homeassistant_time).now(); if (_t2b.is_valid()) id(et_last_water_time) = _t2b.timestamp; }
+                    } else {
+                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run BLOCKED by safety check — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
                     }
                     id(et_pending_irrigation) = false;
                   }
@@ -2705,8 +2717,12 @@ time:
                 return;
               }
               
-              // Check if any valve is active
-              bool is_watering = id($devicename1).active_valve().has_value();
+              // BUG #46 FIX: Check irrigation_busy, not just active_valve().
+              // During a Cycle & Soak soak period the valve is OFF (active_valve() = false)
+              // but the system is still running (irrigation_busy=true). The old check fired
+              // restore_pw_multiplier mid-soak, resetting the ET multiplier to 1.0 and
+              // losing the ET-boosted duration for remaining cycles.
+              bool is_watering = id($devicename1).active_valve().has_value() || id(irrigation_busy);
               
               // If not watering and ET multiplier is not 1.0, restore PW multiplier
               if (!is_watering && id(et_duration_multiplier) != 1.0) {
@@ -4331,6 +4347,15 @@ interval:
           // ═══════════════════════════════════════════════
           // PRODUCTION FEATURE CHECKS (Every 30s)
           // ═══════════════════════════════════════════════
+
+          // 0. BUG #45 FIX: Recalculate rain_delay_end_time if it was set while time was
+          // unsynced (rain_delay_days > 0 but end_time == 0). This happens when the user
+          // sets a manual rain delay before HA time has synced — the end_time is left at 0
+          // so the delay is silently ignored. Now we restore it on the first synced tick.
+          if (id(rain_delay_days) > 0 && id(rain_delay_end_time) == 0) {
+            id(rain_delay_end_time) = now + (int64_t)(id(rain_delay_days) * ${seconds_per_day});
+            ESP_LOGW("irrigation", "🌧️ Rain delay end time recalculated after time sync: %d day(s)", id(rain_delay_days));
+          }
           
           // 1. FREEZE PROTECTION
           float temp = id(outside_temperature).state;
@@ -9725,33 +9750,34 @@ script:
               std::string active_window = "";
               
               // Check Window 1
+              // BUG FIX: Use midnight-safe ternary (same as check_time_restriction).
               if (id(window1_enabled)) {
                 int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
                 int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
-                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
-                  in_window = true;
-                  active_window = "Window 1";
-                }
+                bool hit = (start_min < end_min)
+                    ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                    : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                if (hit) { in_window = true; active_window = "Window 1"; }
               }
               
               // Check Window 2
               if (!in_window && id(window2_enabled)) {
                 int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
                 int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
-                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
-                  in_window = true;
-                  active_window = "Window 2";
-                }
+                bool hit = (start_min < end_min)
+                    ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                    : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                if (hit) { in_window = true; active_window = "Window 2"; }
               }
               
               // Check Window 3
               if (!in_window && id(window3_enabled)) {
                 int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
                 int end_min = (id(window3_end_hour) * 60) + id(window3_end_minute);
-                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
-                  in_window = true;
-                  active_window = "Window 3";
-                }
+                bool hit = (start_min < end_min)
+                    ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                    : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                if (hit) { in_window = true; active_window = "Window 3"; }
               }
               
               if (in_window) {
@@ -9771,18 +9797,19 @@ script:
                 id(start_all_zones_cycle_soak).press();
                 
                 // BUG #33 FIX: Only clear deficit and record last_water_time when the
-                // run actually started (system was idle). If the system is busy, the run
-                // was just queued — clearing the deficit now would lose the data if the
-                // queued run is later dropped (e.g. freeze kicks in before it executes).
-                // irrigation_busy was set inside run_all_zones_cycle_soak_script which
-                // was just execute()d; since it runs synchronously until its first yield
+                // run actually started. If the button press was blocked by a safety check,
+                // irrigation_busy stays false and we preserve the deficit so it can be
+                // retried in the next available window.
+                // irrigation_busy is set to true inside the button handler (BUG #47 FIX)
+                // BEFORE execute() is called, so it reflects the outcome synchronously.
                 // we check the script directly.
-                if (!id(irrigation_busy)) {
-                  // Was queued — preserve deficit data for when it eventually executes
-                  ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
-                } else {
+                if (id(irrigation_busy)) {
+                  // Run started immediately — clear deficit so it isn't re-triggered
                   id(et_soil_moisture_deficit) = 0;
                   { auto _t2b2 = id(homeassistant_time).now(); if (_t2b2.is_valid()) id(et_last_water_time) = _t2b2.timestamp; }
+                } else {
+                  // Run was BLOCKED by a safety check — preserve deficit for retry
+                  ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run BLOCKED by safety check — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
                 }
               } else {
                 ESP_LOGI("irrigation", "");
@@ -10410,30 +10437,34 @@ script:
               bool in_window = false;
               
               // Check window 1
+              // BUG FIX: Use midnight-safe ternary (same as check_time_restriction).
               if (id(window1_enabled)) {
                 int start_minutes = (id(window1_start_hour) * 60) + id(window1_start_minute);
                 int end_minutes = (id(window1_end_hour) * 60) + id(window1_end_minute);
-                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
-                  in_window = true;
-                }
+                bool hit = (start_minutes < end_minutes)
+                    ? (current_time_minutes >= start_minutes && current_time_minutes < end_minutes)
+                    : (current_time_minutes >= start_minutes || current_time_minutes < end_minutes);
+                if (hit) in_window = true;
               }
               
               // Check window 2
               if (id(window2_enabled)) {
                 int start_minutes = (id(window2_start_hour) * 60) + id(window2_start_minute);
                 int end_minutes = (id(window2_end_hour) * 60) + id(window2_end_minute);
-                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
-                  in_window = true;
-                }
+                bool hit = (start_minutes < end_minutes)
+                    ? (current_time_minutes >= start_minutes && current_time_minutes < end_minutes)
+                    : (current_time_minutes >= start_minutes || current_time_minutes < end_minutes);
+                if (hit) in_window = true;
               }
               
               // Check window 3
               if (id(window3_enabled)) {
                 int start_minutes = (id(window3_start_hour) * 60) + id(window3_start_minute);
                 int end_minutes = (id(window3_end_hour) * 60) + id(window3_end_minute);
-                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
-                  in_window = true;
-                }
+                bool hit = (start_minutes < end_minutes)
+                    ? (current_time_minutes >= start_minutes && current_time_minutes < end_minutes)
+                    : (current_time_minutes >= start_minutes || current_time_minutes < end_minutes);
+                if (hit) in_window = true;
               }
               
               // If all windows disabled, allow anytime
@@ -12553,7 +12584,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "$dev1_zone1"
+    initial_value: "${dev1_zone1}"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12564,7 +12595,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "$dev1_zone2"
+    initial_value: "${dev1_zone2}"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12576,7 +12607,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "$dev1_zone3"
+    initial_value: "${dev1_zone3}"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12587,7 +12618,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "$dev1_zone4"
+    initial_value: "${dev1_zone4}"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12598,7 +12629,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "$dev1_zone5"
+    initial_value: "${dev1_zone5}"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12609,7 +12640,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "$dev1_zone6"
+    initial_value: "${dev1_zone6}"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12620,7 +12651,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "$dev1_zone7"
+    initial_value: "${dev1_zone7}"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12631,7 +12662,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "$dev1_zone8"
+    initial_value: "${dev1_zone8}"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -14378,7 +14409,10 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          if (!id(irrigation_busy) || !id(cycle_soak_is_soaking)) {
+          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
+          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
+          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
       - lambda: |-
@@ -14522,7 +14556,10 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          if (!id(irrigation_busy) || !id(cycle_soak_is_soaking)) {
+          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
+          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
+          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
       - lambda: |-
@@ -14657,7 +14694,10 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          if (!id(irrigation_busy) || !id(cycle_soak_is_soaking)) {
+          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
+          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
+          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
       - lambda: |-
@@ -14792,7 +14832,10 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          if (!id(irrigation_busy) || !id(cycle_soak_is_soaking)) {
+          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
+          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
+          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
       - lambda: |-
@@ -14927,7 +14970,10 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          if (!id(irrigation_busy) || !id(cycle_soak_is_soaking)) {
+          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
+          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
+          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
       - lambda: |-
@@ -15062,7 +15108,10 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          if (!id(irrigation_busy) || !id(cycle_soak_is_soaking)) {
+          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
+          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
+          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
       - lambda: |-
@@ -15197,7 +15246,10 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          if (!id(irrigation_busy) || !id(cycle_soak_is_soaking)) {
+          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
+          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
+          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
       - lambda: |-
@@ -15332,7 +15384,10 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          if (!id(irrigation_busy) || !id(cycle_soak_is_soaking)) {
+          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
+          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
+          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
       - lambda: |-
@@ -16176,6 +16231,9 @@ button:
                 id(cycle_soak_is_soaking) = false;
                 id(cycle_soak_soak_end_time) = 0;
                 id(watering_trigger_source) = "Idle";
+                // BUG #45 FIX: drain_queue was missing here — queued items sat waiting
+                // up to 30s for the watchdog to notice irrigation_busy was cleared.
+                id(drain_queue).execute();
               }
             }
         - sprinkler.shutdown: $devicename1
@@ -16649,6 +16707,11 @@ button:
                                               ESP_LOGI("irrigation", "📍 TRIGGER: Manual: Cycle & Soak All Zones");
                                             }
                                             ESP_LOGI("irrigation", "▶️ STARTING Cycle & Soak immediately (system idle)");
+                                            // BUG #47 FIX: Set irrigation_busy=true BEFORE execute()
+                                            // to close the scheduler gap between execute() and the
+                                            // script's first lambda setting it. Without this a watchdog
+                                            // or concurrent press sees idle and starts a conflicting run.
+                                            id(irrigation_busy) = true;
                                             // Turn ON cycle and soak mode
                                             id(cycle_soak_switch).turn_on();
                                             id(run_all_zones_cycle_soak_script).execute();
