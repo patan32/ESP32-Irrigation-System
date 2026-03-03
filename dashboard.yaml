@@ -1,0 +1,2185 @@
+type: sections
+max_columns: 3
+title: Irrigation
+path: irrigation
+icon: mdi:sprinkler-variant
+badges:
+  - type: entity
+    show_name: true
+    show_state: true
+    show_icon: true
+    entity: sensor.irrigation_test_controller_current_day
+    name: Current Day
+  - type: entity
+    show_name: true
+    show_state: true
+    show_icon: true
+    entity: sensor.irrigation_test_controller_current_time
+    name: Time
+  - type: entity
+    show_name: true
+    show_state: true
+    show_icon: true
+    entity: sensor.irrigation_test_controller_weather_condition
+    name: Weather
+  - type: entity
+    show_name: true
+    show_state: true
+    show_icon: true
+    entity: sensor.irrigation_controller_lawn_rain_forecast_summary
+    name: Rain Forecast
+  - type: entity
+    show_name: true
+    show_state: true
+    show_icon: true
+    entity: >-
+      sensor.irrigation_test_controller_lawn_irrigation_controller_last_watering_trigger
+    name: Watering Trigger
+  - type: entity
+    show_name: true
+    show_state: true
+    show_icon: true
+    entity: sensor.irrigation_test_controller_lawn_irrigation_controller_flow_rate
+    name: Flow Rate
+  - type: entity
+    show_name: true
+    show_state: true
+    show_icon: true
+    entity: >-
+      sensor.irrigation_test_controller_lawn_irrigation_controller_time_remaining
+    show_entity_picture: false
+    name: Irrigation Time Remaining
+  - type: entity
+    show_name: true
+    show_state: true
+    show_icon: true
+    entity: sensor.irrigation_test_controller_lawn_irrigation_controller_progress
+    name: Irrigation Progress
+sections:
+  - type: grid
+    column_span: 3
+    columns: 1
+    cards:
+      - type: heading
+        heading: 🌿 Irrigation Control System
+        heading_style: title
+        grid_options:
+          columns: 18
+          rows: 1
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        icon: mdi:list-status
+        heading: System Status
+        heading_style: title
+      - type: custom:mushroom-template-card
+        primary: >
+          {% set t =
+          states('sensor.irrigation_test_controller_lawn_irrigation_controller_status')
+          %} {% set idle =
+          ['none','unavailable','unknown','','idle','off','inactive'] %} {% if t
+          | lower not in idle %}{{ t }}{% else %}System Idle{% endif %}
+        secondary: >
+          {% set t =
+          states('sensor.irrigation_test_controller_lawn_irrigation_controller_status')
+          %} {% set idle =
+          ['none','unavailable','unknown','','idle','off','inactive'] %} {% if t
+          | lower not in idle %}🟢 Irrigation Running{% else %}No zones active{%
+          endif %}
+        icon: >
+          {% set t =
+          states('sensor.irrigation_test_controller_lawn_irrigation_controller_status')
+          %} {% set idle =
+          ['none','unavailable','unknown','','idle','off','inactive'] %} {{
+          'mdi:sprinkler' if t | lower not in idle else 'mdi:sprinkler-variant'
+          }}
+        badge_icon: >
+          {% set t =
+          states('sensor.irrigation_test_controller_lawn_irrigation_controller_status')
+          %} {% set idle =
+          ['none','unavailable','unknown','','idle','off','inactive'] %} {% if t
+          | lower not in idle %}mdi:water{% endif %}
+        badge_color: green
+        color: >
+          {% set t =
+          states('sensor.irrigation_test_controller_lawn_irrigation_controller_status')
+          %} {% set idle =
+          ['none','unavailable','unknown','','idle','off','inactive'] %} {{
+          'green' if t | lower not in idle else 'blue' }}
+      - type: tile
+        entity: >-
+          sensor.irrigation_test_controller_lawn_irrigation_controller_time_remaining
+        name: Time Remaining
+        icon: mdi:timer-sand
+        color: teal
+        vertical: false
+      - type: tile
+        entity: sensor.irrigation_test_controller_lawn_irrigation_controller_progress
+        name: Progress
+        icon: mdi:progress-clock
+        color: cyan
+        vertical: false
+      - type: tile
+        entity: sensor.irrigation_test_controller_lawn_irrigation_controller_flow_rate
+        name: Flow Rate
+        icon: mdi:gauge
+        color: blue
+        vertical: false
+      - type: tile
+        entity: sensor.irrigation_test_controller_cycle_soak_detailed_status
+        name: Soak Cycle Status
+        icon: mdi:water-sync
+        color: indigo
+        vertical: false
+      - type: tile
+        entity: >-
+          sensor.irrigation_test_controller_lawn_irrigation_controller_flow_session_volume
+        name: Total Water Today
+        icon: mdi:water-outline
+        color: blue
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_lawn_total_water_used
+        name:
+          type: entity
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: >-
+          sensor.irrigation_test_controller_lawn_irrigation_controller_time_remaining
+        name: Irrigation Time Remaining
+        color: green
+        vertical: false
+        features_position: bottom
+  - type: grid
+    column_span: 1
+    columns: 5
+    cards:
+      - type: heading
+        icon: mdi:toggle-switch
+        heading: Program Switches
+        heading_style: title
+      - type: tile
+        entity: switch.irrigation_test_controller_irrigation_system_enable
+        name: System Enabled
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_lawn_enable_master_valve
+        name: Master Valve
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_lawn_budget_override
+        name: Water Budget Override
+        color: amber
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: bottom
+      - type: tile
+        entity: switch.irrigation_test_controller_time_restriction_override
+        name: Time Restriction Override
+        icon: mdi:clock-edit
+        color: orange
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: bottom
+      - type: tile
+        entity: switch.irrigation_test_controller_weather_override_force_watering
+        name: Weather Override
+        icon: mdi:clock-edit
+        color: orange
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: bottom
+      - type: tile
+        entity: switch.irrigation_test_controller_disable_auto_rain_delay
+        name: Disable Rain Delay
+        icon: mdi:weather-rainy
+        color: orange
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: bottom
+      - type: tile
+        entity: switch.irrigation_test_controller_vacation_mode
+        name: Vacation Mode
+        icon: mdi:airplane
+        color: purple
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: number.irrigation_test_controller_lawn_zone_runtime_limit
+        name: Runtime Limit
+        vertical: false
+        features_position: inline
+      - type: tile
+        entity: switch.irrigation_test_controller_lawn_auto_advance
+        name: Auto Advance Zones
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: bottom
+      - type: tile
+        entity: switch.irrigation_test_controller_cycle_and_soak_mode
+        name:
+          type: entity
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: bottom
+      - type: tile
+        entity: switch.irrigation_test_controller_lawn_enable_forecast_integration
+        name: Forecast Integration
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: bottom
+      - type: tile
+        entity: switch.irrigation_test_controller_time_restriction_enable
+        name:
+          type: entity
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: bottom
+  - type: grid
+    cards:
+      - type: heading
+        heading: Program Status
+        heading_style: title
+        icon: mdi:list-status
+      - type: tile
+        entity: binary_sensor.irrigation_test_controller_lawn_master_valve_status
+        name: Master Valve
+        icon: mdi:valve
+        color: green
+        vertical: false
+      - type: tile
+        entity: sensor.irrigation_test_controller_vacation_mode_status
+        name: Vacation Mode
+        icon: mdi:airplane
+        color: purple
+        vertical: false
+      - type: tile
+        entity: >-
+          binary_sensor.irrigation_test_controller_lawn_irrigation_blackout_active
+        name: Blackout
+        icon: mdi:cancel
+        color: amber
+        vertical: false
+      - type: tile
+        entity: >-
+          binary_sensor.irrigation_test_controller_lawn_irrigation_controller_leak_detected
+        name: Leak Detector
+        icon: mdi:pipe-leak
+        color: red
+        vertical: false
+      - type: tile
+        entity: sensor.irrigation_test_controller_weekly_schedule_status
+        name:
+          type: entity
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_program_1_status
+        name:
+          type: entity
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_program_2_status
+        name:
+          type: entity
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_program_3_status
+        name:
+          type: entity
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_queue_status
+        name:
+          type: entity
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_time_restriction_status
+        name:
+          type: entity
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_weekly_schedule_status
+        name:
+          type: entity
+        vertical: false
+        features_position: bottom
+  - type: grid
+    column_span: 1
+    columns: 1
+    cards:
+      - type: heading
+        heading: Controls
+        heading_style: title
+        icon: mdi:remote
+      - type: custom:mushroom-template-card
+        primary: Start All Zones
+        secondary: Run all zones normally
+        icon: mdi:play-circle
+        icon_color: green
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_start_all_zones_normal
+      - type: custom:mushroom-template-card
+        primary: Cycle & Soak
+        secondary: Smart multi-cycle mode
+        icon: mdi:water-sync
+        icon_color: blue
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_start_all_zones_cycle_soak
+      - type: custom:mushroom-template-card
+        primary: Pause
+        secondary: Pause current run
+        icon: mdi:pause-circle
+        icon_color: amber
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_pause
+      - type: custom:mushroom-template-card
+        primary: Resume
+        secondary: Continue paused run
+        icon: mdi:play-circle-outline
+        icon_color: light-green
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_resume
+      - type: custom:mushroom-template-card
+        primary: Stop All
+        secondary: Stop everything immediately
+        icon: mdi:stop-circle
+        icon_color: red
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_stop
+  - type: grid
+    column_span: 2
+    columns: 4
+    cards:
+      - type: heading
+        heading: Quick Run Zones
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        primary: Zone 1
+        secondary: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone1 Active') %}Active{% else %}Idle{% endif %}
+        icon: mdi:sprinkler
+        icon_color: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone1 Active') %}green{% else %}cyan{% endif %}
+        badge_icon: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone1 Active') %}mdi:water{% endif %}
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone1_quick_run
+      - type: custom:mushroom-template-card
+        primary: Zone 2
+        secondary: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone2 Active') %}Active{% else %}Idle{% endif %}
+        icon: mdi:sprinkler
+        icon_color: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone2 Active') %}green{% else %}cyan{% endif %}
+        badge_icon: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone2 Active') %}mdi:water{% endif %}
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone2_quick_run
+      - type: custom:mushroom-template-card
+        primary: Zone 3
+        secondary: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone3 Active') %}Active{% else %}Idle{% endif %}
+        icon: mdi:sprinkler
+        icon_color: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone3 Active') %}green{% else %}cyan{% endif %}
+        badge_icon: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone3 Active') %}mdi:water{% endif %}
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone3_quick_run
+      - type: custom:mushroom-template-card
+        primary: Zone 4
+        secondary: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone4 Active') %}Active{% else %}Idle{% endif %}
+        icon: mdi:sprinkler
+        icon_color: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone4 Active') %}green{% else %}cyan{% endif %}
+        badge_icon: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone4 Active') %}mdi:water{% endif %}
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone4_quick_run
+      - type: custom:mushroom-template-card
+        primary: Zone 5
+        secondary: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone5 Active') %}Active{% else %}Idle{% endif %}
+        icon: mdi:sprinkler
+        icon_color: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone5 Active') %}green{% else %}cyan{% endif %}
+        badge_icon: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone5 Active') %}mdi:water{% endif %}
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone5_quick_run
+      - type: custom:mushroom-template-card
+        primary: Zone 6
+        secondary: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone6 Active') %}Active{% else %}Idle{% endif %}
+        icon: mdi:sprinkler
+        icon_color: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone6 Active') %}green{% else %}cyan{% endif %}
+        badge_icon: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone6 Active') %}mdi:water{% endif %}
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone6_quick_run
+      - type: custom:mushroom-template-card
+        primary: Zone 7
+        secondary: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone7 Active') %}Active{% else %}Idle{% endif %}
+        icon: mdi:sprinkler
+        icon_color: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone7 Active') %}green{% else %}cyan{% endif %}
+        badge_icon: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone7 Active') %}mdi:water{% endif %}
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone7_quick_run
+      - type: custom:mushroom-template-card
+        primary: Zone 8
+        secondary: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone8 Active') %}Active{% else %}Idle{% endif %}
+        icon: mdi:sprinkler
+        icon_color: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone8 Active') %}green{% else %}cyan{% endif %}
+        badge_icon: >
+          {% if
+          is_state('sensor.irrigation_test_controller_lawn_irrigation_controller_status',
+          'Lawn Zone8 Active') %}mdi:water{% endif %}
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone8_quick_run
+  - type: grid
+    column_span: 2
+    columns: 2
+    cards:
+      - type: heading
+        heading: Zone Durations
+        heading_style: title
+        icon: mdi:timer-outline
+      - type: custom:mushroom-number-card
+        entity: number.irrigation_test_controller_lawn_zone1_run_duration
+        name: Zone 1
+        icon: mdi:timer
+        icon_color: blue
+        display_mode: slider
+        layout: horizontal
+        fill_container: true
+      - type: custom:mushroom-number-card
+        entity: number.irrigation_test_controller_lawn_zone2_run_duration
+        name: Zone 2
+        icon: mdi:timer
+        icon_color: blue
+        display_mode: slider
+        layout: horizontal
+        fill_container: true
+      - type: custom:mushroom-number-card
+        entity: number.irrigation_test_controller_lawn_zone3_run_duration
+        name: Zone 3
+        icon: mdi:timer
+        icon_color: blue
+        display_mode: slider
+        layout: horizontal
+        fill_container: true
+      - type: custom:mushroom-number-card
+        entity: number.irrigation_test_controller_lawn_zone4_run_duration
+        name: Zone 4
+        icon: mdi:timer
+        icon_color: blue
+        display_mode: slider
+        layout: horizontal
+        fill_container: true
+      - type: custom:mushroom-number-card
+        entity: number.irrigation_test_controller_lawn_zone5_run_duration
+        name: Zone 5
+        icon: mdi:timer
+        icon_color: blue
+        display_mode: slider
+        layout: horizontal
+        fill_container: true
+      - type: custom:mushroom-number-card
+        entity: number.irrigation_test_controller_lawn_zone6_run_duration
+        name: Zone 6
+        icon: mdi:timer
+        icon_color: blue
+        display_mode: slider
+        layout: horizontal
+        fill_container: true
+      - type: custom:mushroom-number-card
+        entity: number.irrigation_test_controller_lawn_zone7_run_duration
+        name: Zone 7
+        icon: mdi:timer
+        icon_color: blue
+        display_mode: slider
+        layout: horizontal
+        fill_container: true
+      - type: custom:mushroom-number-card
+        entity: number.irrigation_test_controller_lawn_zone8_run_duration
+        name: Zone 8
+        icon: mdi:timer
+        icon_color: blue
+        display_mode: slider
+        layout: horizontal
+        fill_container: true
+  - type: grid
+    column_span: 1
+    columns: 1
+    cards:
+      - type: heading
+        heading: Water Usage
+        heading_style: title
+        icon: mdi:water-pump
+      - type: gauge
+        entity: sensor.irrigation_test_controller_lawn_irrigation_controller_flow_rate
+        name: Live Flow Rate
+        unit: L/min
+        min: 0
+        max: 40
+        needle: true
+        severity:
+          green: 0
+          yellow: 20
+          red: 32
+      - type: tile
+        entity: >-
+          sensor.irrigation_test_controller_lawn_irrigation_controller_flow_session_volume
+        name: Session Volume
+        icon: mdi:water-outline
+        color: cyan
+      - type: tile
+        entity: sensor.irrigation_test_controller_lawn_total_water_used
+        name: This Month
+        icon: mdi:calendar-month
+        color: indigo
+  - type: grid
+    column_span: 1
+    columns: 1
+    cards:
+      - type: heading
+        heading: Smart Watering
+        heading_style: title
+        icon: mdi:brain
+      - type: tile
+        entity: switch.irrigation_test_controller_lawn_smart_et_watering
+        name: Smart ET Watering
+        icon: mdi:leaf
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_lawn_predictive_wateringtm
+        name: Predictive Watering
+        icon: mdi:cloud-check
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-number-card
+        entity: number.irrigation_test_controller_soak_duration
+        name: Soak Duration
+        icon: mdi:timer-sand
+        icon_color: cyan
+        display_mode: slider
+        layout: horizontal
+        fill_container: true
+        grid_options:
+          columns: 12
+          rows: 1
+  - type: grid
+    column_span: 2
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone Enable / Disable
+        heading_style: title
+        icon: mdi:toggle-switch-outline
+      - type: tile
+        entity: switch.irrigation_test_controller_enable_lawn_zone1
+        name: Zone 1
+        icon: mdi:sprinkler
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_enable_lawn_zone2
+        name: Zone 2
+        icon: mdi:sprinkler
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_enable_lawn_zone3
+        name: Zone 3
+        icon: mdi:sprinkler
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_enable_lawn_zone4
+        name: Zone 4
+        icon: mdi:sprinkler
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_enable_lawn_zone5
+        name: Zone 5
+        icon: mdi:sprinkler
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_enable_lawn_zone6
+        name: Zone 6
+        icon: mdi:sprinkler
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_enable_lawn_zone7
+        name: Zone 7
+        icon: mdi:sprinkler
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_enable_lawn_zone8
+        name: Zone 8
+        icon: mdi:sprinkler
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+  - type: grid
+    column_span: 1
+    columns: 2
+    cards:
+      - type: heading
+        heading: Programs & Schedules
+        heading_style: title
+        icon: mdi:calendar-clock
+      - type: tile
+        entity: switch.irrigation_test_controller_program_1_enabled
+        name: Program 1
+        icon: mdi:calendar-clock
+        color: blue
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_program_2_enabled
+        name: Program 2
+        icon: mdi:calendar-clock
+        color: blue
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_program_3_enabled
+        name: Program 3
+        icon: mdi:calendar-clock
+        color: blue
+        vertical: false
+        tap_action:
+          action: toggle
+      - type: tile
+        entity: switch.irrigation_test_controller_enable_weekly_schedule
+        name: Weekly Schedule
+        icon: mdi:calendar-week
+        color: indigo
+        vertical: false
+        tap_action:
+          action: toggle
+  - type: grid
+    column_span: 2
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone Switch (On/Off)
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        entity: switch.irrigation_test_controller_lawn_zone1
+        primary: Zone 1 Switch
+        secondary: "{{ 'Active' if is_state(entity, 'on') else 'Idle' }}"
+        icon: mdi:sprinkler
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:water' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        entity: switch.irrigation_test_controller_lawn_zone2
+        primary: Zone 2 Switch
+        secondary: "{{ 'Active' if is_state(entity, 'on') else 'Idle' }}"
+        icon: mdi:sprinkler
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:water' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        entity: switch.irrigation_test_controller_lawn_zone3
+        primary: Zone 3 Switch
+        secondary: "{{ 'Active' if is_state(entity, 'on') else 'Idle' }}"
+        icon: mdi:sprinkler
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:water' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        entity: switch.irrigation_test_controller_lawn_zone4
+        primary: Zone 4 Switch
+        secondary: "{{ 'Active' if is_state(entity, 'on') else 'Idle' }}"
+        icon: mdi:sprinkler
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:water' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        entity: switch.irrigation_test_controller_lawn_zone5
+        primary: Zone 5 Switch
+        secondary: "{{ 'Active' if is_state(entity, 'on') else 'Idle' }}"
+        icon: mdi:sprinkler
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:water' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        entity: switch.irrigation_test_controller_lawn_zone6
+        primary: Zone 6 Switch
+        secondary: "{{ 'Active' if is_state(entity, 'on') else 'Idle' }}"
+        icon: mdi:sprinkler
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:water' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        entity: switch.irrigation_test_controller_lawn_zone7
+        primary: Zone 7 Switch
+        secondary: "{{ 'Active' if is_state(entity, 'on') else 'Idle' }}"
+        icon: mdi:sprinkler
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:water' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        entity: switch.irrigation_test_controller_lawn_zone8
+        primary: Zone 8 Switch
+        secondary: "{{ 'Active' if is_state(entity, 'on') else 'Idle' }}"
+        icon: mdi:sprinkler
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:water' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+  - type: grid
+    column_span: 1
+    columns: 2
+    cards:
+      - type: heading
+        heading: Advanced
+        heading_style: title
+        icon: mdi:tools
+      - type: custom:mushroom-template-card
+        primary: Diagnostics
+        secondary: System health check
+        icon: mdi:stethoscope
+        icon_color: purple
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_run_system_diagnostics
+      - type: custom:mushroom-template-card
+        primary: Test Master Valve
+        secondary: Brief valve test
+        icon: mdi:test-tube
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_test_master_valve
+        color: teal
+        features_position: bottom
+      - type: custom:mushroom-template-card
+        primary: Predictive Water
+        secondary: Recalculate schedule
+        icon: mdi:cloud-refresh
+        icon_color: light-blue
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: >-
+              button.irrigation_test_controller_lawn_recalculate_predictive_watering
+      - type: custom:mushroom-template-card
+        primary: Recalc Smart ET
+        secondary: Evapotranspiration
+        icon: mdi:calculator
+        icon_color: orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_recalculate_smart_et
+      - type: custom:mushroom-template-card
+        primary: Reset ET Deficit
+        secondary: Clear ET value
+        icon: mdi:water-off
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_reset_et_deficit
+      - type: custom:mushroom-template-card
+        primary: Reset Daily Limits
+        secondary: Clear runtime limits
+        icon: mdi:restart
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_reset_daily_runtime_limits
+  - type: grid
+    column_span: 1
+    columns: 1
+    cards:
+      - type: heading
+        heading: ⚠️ Danger Zone
+        heading_style: title
+      - type: tile
+        entity: button.irrigation_test_controller_restart_irrigation_control_system
+        name: Restart Controller
+        icon: mdi:restart-alert
+        color: red
+        hide_state: true
+        vertical: false
+  - type: grid
+    column_span: 3
+    columns: 2
+    cards:
+      - type: heading
+        heading: Reset Actions
+        heading_style: title
+        icon: mdi:alert-circle-outline
+      - type: custom:mushroom-template-card
+        primary: Reset All
+        secondary: Wipe all water stats
+        icon: mdi:database-remove
+        icon_color: red
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_reset_all_water_usage
+      - type: custom:mushroom-template-card
+        primary: Daily Limits
+        secondary: Wipe runtime limits
+        icon: mdi:timer-remove
+        icon_color: red
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_reset_daily_runtime_limits
+      - type: custom:mushroom-template-card
+        primary: ET Deficit
+        secondary: Wipe ET value
+        icon: mdi:leaf-off
+        icon_color: red
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_reset_et_deficit
+      - type: custom:mushroom-template-card
+        primary: Zone 1
+        secondary: Reset water stats
+        icon: mdi:water-off
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone1_reset_water_usage
+      - type: custom:mushroom-template-card
+        primary: Zone 2
+        secondary: Reset water stats
+        icon: mdi:water-off
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone2_reset_water_usage
+      - type: custom:mushroom-template-card
+        primary: Zone 3
+        secondary: Reset water stats
+        icon: mdi:water-off
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone3_reset_water_usage
+      - type: custom:mushroom-template-card
+        primary: Zone 4
+        secondary: Reset water stats
+        icon: mdi:water-off
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone4_reset_water_usage
+      - type: custom:mushroom-template-card
+        primary: Zone 5
+        secondary: Reset water stats
+        icon: mdi:water-off
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone5_reset_water_usage
+      - type: custom:mushroom-template-card
+        primary: Zone 6
+        secondary: Reset water stats
+        icon: mdi:water-off
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone6_reset_water_usage
+      - type: custom:mushroom-template-card
+        primary: Zone 7
+        secondary: Reset water stats
+        icon: mdi:water-off
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone7_reset_water_usage
+      - type: custom:mushroom-template-card
+        primary: Zone 8
+        secondary: Reset water stats
+        icon: mdi:water-off
+        icon_color: deep-orange
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_test_controller_lawn_zone8_reset_water_usage
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: ET Weekly Schedule Days
+        heading_style: title
+        icon: mdi:calendar-week
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_et_schedule_1_monday
+        name: Monday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_et_schedule_2_tuesday
+        name: Tuesday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_et_schedule_3_wednesday
+        name: Wednesday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_et_schedule_4_thursday
+        name: Thursday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_et_schedule_5_friday
+        name: Friday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_et_schedule_6_saturday
+        name: Saturday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_et_schedule_7_sunday
+        name: Sunday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: ET Window 1 Schedule
+        heading_style: title
+        icon: mdi:clock-time-four-outline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_window_1_start_am_pm
+        name: Start AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_window_1_end_am_pm
+        name: End AM/PM
+        icon: mdi:weather-sunset-down
+        color: indigo
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_1_start_hour
+        name: Start Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_1_end_hour
+        name: End Hour
+        icon: mdi:clock-end
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_1_start_minute
+        name: Start Min
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_1_end_minute
+        name: End Min
+        icon: mdi:timer-off-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_et_watering_window_1_enable
+        name: Window 1 Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: ET Window 2 Schedule
+        heading_style: title
+        icon: mdi:clock-time-four-outline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_window_2_start_am_pm
+        name: Start AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_window_2_end_am_pm
+        name: End AM/PM
+        icon: mdi:weather-sunset-down
+        color: indigo
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_2_start_hour
+        name: Start Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_2_end_hour
+        name: End Hour
+        icon: mdi:clock-end
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_2_start_minute
+        name: Start Min
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_2_end_minute
+        name: End Min
+        icon: mdi:timer-off-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_et_watering_window_2_enable
+        name: Window 2 Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: ET Window 3 Schedule
+        heading_style: title
+        icon: mdi:clock-time-four-outline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_window_3_start_am_pm
+        name: Start AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_window_3_end_am_pm
+        name: End AM/PM
+        icon: mdi:weather-sunset-down
+        color: indigo
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_3_start_hour
+        name: Start Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_3_end_hour
+        name: End Hour
+        icon: mdi:clock-end
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_3_start_minute
+        name: Start Min
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_window_3_end_minute
+        name: End Min
+        icon: mdi:timer-off-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_et_watering_window_3_enable
+        name: Window 3 Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 1 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_zone1_schedule_am_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone1_schedule_hour
+        name: Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone1_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_lawn_zone1_schedule_enable
+        name: Schedule Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: inline
+        features:
+          - type: toggle
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 2 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_zone2_schedule_am_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone2_schedule_hour
+        name: Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone2_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_lawn_zone2_schedule_enable
+        name: Schedule Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: inline
+        features:
+          - type: toggle
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 3 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_zone3_schedule_am_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone3_schedule_hour
+        name: Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone3_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_lawn_zone3_schedule_enable
+        name: Schedule Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: inline
+        features:
+          - type: toggle
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 4 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_zone4_schedule_am_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone4_schedule_hour
+        name: Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone4_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_lawn_zone4_schedule_enable
+        name: Schedule Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: inline
+        features:
+          - type: toggle
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 5 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_zone5_schedule_am_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone5_schedule_hour
+        name: Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone5_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_lawn_zone5_schedule_enable
+        name: Schedule Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: inline
+        features:
+          - type: toggle
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 6 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_zone6_schedule_am_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone6_schedule_hour
+        name: Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone6_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_lawn_zone6_schedule_enable
+        name: Schedule Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: inline
+        features:
+          - type: toggle
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 7 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_zone7_schedule_am_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone7_schedule_hour
+        name: Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone7_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_lawn_zone7_schedule_enable
+        name: Schedule Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: inline
+        features:
+          - type: toggle
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 8 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_lawn_zone8_schedule_am_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone8_schedule_hour
+        name: Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_lawn_zone8_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_lawn_zone8_schedule_enable
+        name: Schedule Enabled
+        icon: mdi:calendar-check
+        color: green
+        show_entity_picture: false
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: inline
+        features:
+          - type: toggle
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Weekly Schedule
+        heading_style: title
+        icon: mdi:calendar-week
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: select.irrigation_test_controller_weekly_schedule_am_or_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_weekly_schedule_start_hour
+        name: Hour
+        icon: mdi:clock-start
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 1
+          rows: 1
+        entity: number.irrigation_test_controller_weekly_schedule_start_minute
+        name: Minute
+        icon: mdi:timer-outline
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_weekly_schedule_1_monday
+        name: Monday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_weekly_schedule_2_tuesday
+        name: Tuesday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_weekly_schedule_3_wednesday
+        name: Wednesday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_weekly_schedule_4_thursday
+        name: Thursday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_weekly_schedule_5_friday
+        name: Friday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_weekly_schedule_6_saturday
+        name: Saturday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
+          columns: 2
+          rows: 1
+        entity: switch.irrigation_test_controller_weekly_schedule_7_sunday
+        name: Sunday
+        icon: mdi:calendar-today
+        color: teal
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+cards: []
