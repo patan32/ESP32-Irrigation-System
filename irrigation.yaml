@@ -2696,13 +2696,16 @@ time:
                     // BUG #33 FIX: Only clear deficit/last_water_time when run started immediately.
                     // If the button press was blocked by a safety check, irrigation_busy stays false
                     // and the deficit is preserved so the next window retry can fire it.
+                    // BUG FIX: Also only clear et_pending_irrigation if the run started.
+                    // Clearing it unconditionally when blocked stops the 5-min retry loop,
+                    // forcing a wait of up to 1h for the next hourly ET recalculation.
                     if (id(irrigation_busy)) {
                       id(et_soil_moisture_deficit) = 0;
                       { auto _t2b = id(homeassistant_time).now(); if (_t2b.is_valid()) id(et_last_water_time) = _t2b.timestamp; }
+                      id(et_pending_irrigation) = false;
                     } else {
-                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run BLOCKED by safety check — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
+                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run BLOCKED by safety check — deficit and pending preserved for retry (%.1fmm)", id(et_soil_moisture_deficit));
                     }
-                    id(et_pending_irrigation) = false;
                   }
                 }
               }
@@ -3879,6 +3882,9 @@ time:
                     return false;
                   }
                   
+                  // Blackout date check (incl. NZ public holidays via is_blackout_date sensor)
+                  if (id(is_blackout_date).state) return false;
+                  
                   // Weather check (unless override active)
                   if (!id(manual_weather_override)) {
                     std::string w = id(weather_forecast_home).state;
@@ -4743,8 +4749,8 @@ interval:
             id(drain_queue).execute();
           }
 
-  # Update time restriction status every 30 seconds
-  - interval: 30s
+  # Update time restriction status every 10 seconds for near-instant HA feedback
+  - interval: 10s
     then:
       - script.execute: check_time_restriction
 
@@ -5692,11 +5698,12 @@ text_sensor:
 
 
   # Time Restriction Status (live)
+  # update_interval: never — pushed explicitly from check_time_restriction on every run
   - platform: template
     id: time_restriction_status
     name: "Time Restriction Status"
     icon: "mdi:clock-alert"
-    update_interval: 30s
+    update_interval: never
     lambda: |-
       auto t = id(homeassistant_time).now();
       int sh = id(restrict_start_hour);
@@ -5723,11 +5730,12 @@ text_sensor:
       }
       return {buf};
 
+  # update_interval: never — pushed explicitly from check_time_restriction on every run
   - platform: template
     id: time_restriction_next_allowed
     name: "Time Restriction Next Allowed"
     icon: "mdi:calendar-clock"
-    update_interval: 30s
+    update_interval: never
     lambda: |-
       auto t = id(homeassistant_time).now();
       int sh = id(restrict_start_hour);
@@ -8548,10 +8556,12 @@ number:
     icon: "mdi:timer-sand"
     mode: slider
     unit_of_measurement: "min"
-    lambda: "return id(max_zone_runtime_daily);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: |-
           id(max_zone_runtime_daily) = x;
+          id(zone_runtime_limit_input).publish_state(x);
           ESP_LOGI("irrigation", "⏱️ Zone daily runtime limit set to %.0f minutes", x);
   
   # Watering Window 1 - Start Hour (12-hour format)
@@ -9711,6 +9721,13 @@ script:
             } else if (id(is_time_restricted)) {
               ESP_LOGW("irrigation", "   ⏰ Time restricted - will water when allowed");
               id(et_pending_irrigation) = true;
+              // BUG FIX: Restore PW multiplier while waiting — same as system_disabled and
+              // rain_delay paths above. Without this, the ET-boosted multiplier stays set
+              // until restore_pw_multiplier fires (up to 5 min), affecting any run that
+              // starts in that window. et_duration_multiplier is reset to 1.0 so the
+              // restore loop doesn't re-trigger unnecessarily.
+              id(et_duration_multiplier) = 1.0;
+              { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
             } else {
               // Check if current time matches Smart ET schedule
               auto now = id(homeassistant_time).now();
@@ -9787,7 +9804,6 @@ script:
                 ESP_LOGI("irrigation", "");
                 ESP_LOGI("irrigation", "   ✅ Starting irrigation cycle NOW (%s is open)", active_window.c_str());
                 ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
-                id(et_pending_irrigation) = false;
                 
                 // Turn ON Cycle & Soak for Smart ET
                 id(cycle_soak_switch).turn_on();
@@ -9803,13 +9819,16 @@ script:
                 // irrigation_busy is set to true inside the button handler (BUG #47 FIX)
                 // BEFORE execute() is called, so it reflects the outcome synchronously.
                 // we check the script directly.
+                // BUG FIX: Also only clear et_pending_irrigation if the run started.
+                // Clearing it when blocked stops the 5-min retry loop for the current window.
                 if (id(irrigation_busy)) {
-                  // Run started immediately — clear deficit so it isn't re-triggered
+                  // Run started immediately — clear deficit and pending so it isn't re-triggered
+                  id(et_pending_irrigation) = false;
                   id(et_soil_moisture_deficit) = 0;
                   { auto _t2b2 = id(homeassistant_time).now(); if (_t2b2.is_valid()) id(et_last_water_time) = _t2b2.timestamp; }
                 } else {
-                  // Run was BLOCKED by a safety check — preserve deficit for retry
-                  ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run BLOCKED by safety check — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
+                  // Run was BLOCKED by a safety check — preserve deficit AND pending for retry
+                  ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run BLOCKED by safety check — deficit and pending preserved for retry (%.1fmm)", id(et_soil_moisture_deficit));
                 }
               } else {
                 ESP_LOGI("irrigation", "");
@@ -11741,6 +11760,9 @@ script:
                                                 : (now_min >= start_min || now_min < end_min);
           
           id(is_time_restricted) = blocked;
+      # Push updated state to HA immediately (sensors use update_interval: never)
+      - component.update: time_restriction_status
+      - component.update: time_restriction_next_allowed
 
 
 ###############################################
@@ -15828,8 +15850,12 @@ button:
           ESP_LOGI("irrigation", "🔄 ═══════════════════════════════════════════════");
           
           // Get current day to check if we need to log
+          // BUG FIX: Use day_of_month (1-31) to match the watchdog's daily-reset check.
+          // Was day_of_year (1-366), which never matches the watchdog's day_of_month
+          // comparison — causing a false "New day detected" log within 30s of pressing
+          // this button, and a redundant (harmless) counter reset by the watchdog.
           auto now = id(homeassistant_time).now();
-          int current_day = now.day_of_year;
+          int current_day = now.day_of_month;
           
           ESP_LOGI("irrigation", "📊 Runtime before reset:");
           ESP_LOGI("irrigation", "   Zone 1: %d min (limit: %d min)", 
