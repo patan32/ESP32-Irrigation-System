@@ -4252,10 +4252,16 @@ interval:
           
           // Update soak countdown if currently soaking (and not paused)
           if (id(cycle_soak_is_soaking) && id(cycle_soak_soak_end_time) > 0 && !id(is_paused)) {
-            int64_t now = id(homeassistant_time).now().timestamp;
-            int remaining = id(cycle_soak_soak_end_time) - now;
-            if (remaining < 0) remaining = 0;
-            id(soak_countdown_seconds) = remaining;
+            // BUG #13 FIX: Guard against time de-sync mid-soak (e.g. WiFi drop).
+            // Without is_valid(), now().timestamp = 0 → remaining = end_time - 0 = huge positive
+            // number → countdown sensor shows thousands of seconds instead of ~0.
+            auto _sk_time = id(homeassistant_time).now();
+            if (_sk_time.is_valid()) {
+              int remaining = (int)(id(cycle_soak_soak_end_time) - _sk_time.timestamp);
+              if (remaining < 0) remaining = 0;
+              id(soak_countdown_seconds) = remaining;
+            }
+            // If time not valid, leave soak_countdown_seconds unchanged (frozen at last good value)
           } else if (id(is_paused) && id(cycle_soak_is_soaking)) {
             // During pause keep the countdown at the frozen value (don't decrement)
             // soak_countdown_seconds was last set just before pause; leave it unchanged.
@@ -4709,7 +4715,26 @@ interval:
               id(active_zone_number) = -1;
               id(current_cycle) = 0;
               id(total_cycles) = 0;
+              id(cycle_soak_total_duration) = 0;
+              id(cycle_soak_elapsed_time) = 0;
+              id(cycle_soak_is_soaking) = false;
+              id(cycle_soak_soak_end_time) = 0;
+              id(soak_countdown_seconds) = 0;
+              id(is_paused) = false;
+              id(paused_zone) = -1;
+              id(paused_cycle) = 0;
+              id(time_remaining_when_paused) = 0;
+              id(paused_was_soaking) = false;
+              id(paused_soak_remaining_seconds) = 0;
+              id(paused_total_cycles) = 0;
+              id(paused_cycle_soak_total_duration) = 0;
+              id(paused_cycle_soak_elapsed_time) = 0;
+              id(resume_csa_blocked) = false;
+              // Restore Auto Advance — C&S turns it OFF; must be restored so future
+              // normal-mode runs can step through zones correctly.
+              id(dev1_auto_advance).turn_on();
               id(watering_trigger_source) = "Idle";  // Clear trigger after watchdog reset
+              id(dev1_valve_status).publish_state("Idle");
 
               id(drain_queue).execute();
             }
@@ -6999,8 +7024,11 @@ sensor:
       if (id(water_reset_timestamp) == 0) {
         return 0.0;
       }
-      int64_t now = id(homeassistant_time).now().timestamp;
-      float days = (now - id(water_reset_timestamp)) / (float)${seconds_per_day};
+      // BUG #15 FIX: Guard against time not synced.
+      // Without is_valid(), now().timestamp=0 → days = (0 - reset_timestamp) = large negative.
+      auto _dib_time = id(homeassistant_time).now();
+      if (!_dib_time.is_valid()) return 0.0;
+      float days = (_dib_time.timestamp - id(water_reset_timestamp)) / (float)${seconds_per_day};
       return days;
 
   # ═══════════════════════════════════════════════════════════
@@ -9528,7 +9556,7 @@ script:
             ESP_LOGI("irrigation", "");
             ESP_LOGI("irrigation", "📊 MULTIPLIER CHANGED: %.2f → %.2f (%.1f%% %s)", 
                      old_multiplier, combined_multiplier,
-                     fabs(((combined_multiplier - old_multiplier) / old_multiplier) * 100.0),
+                     (old_multiplier > 0.001f ? fabs(((combined_multiplier - old_multiplier) / old_multiplier) * 100.0) : 0.0),
                      (combined_multiplier > old_multiplier) ? "increase" : "decrease");
           }
           
@@ -10665,27 +10693,33 @@ script:
               if (id(window1_enabled)) {
                 int start_minutes = (id(window1_start_hour) * 60) + id(window1_start_minute);
                 int end_minutes = (id(window1_end_hour) * 60) + id(window1_end_minute);
-                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
-                  in_window = true;
-                }
+                // Support midnight-crossing windows (e.g. 22:00–02:00)
+                bool in_win1 = (start_minutes < end_minutes)
+                    ? (current_time_minutes >= start_minutes && current_time_minutes < end_minutes)
+                    : (current_time_minutes >= start_minutes || current_time_minutes < end_minutes);
+                if (in_win1) in_window = true;
               }
               
               // Check window 2
               if (id(window2_enabled)) {
                 int start_minutes = (id(window2_start_hour) * 60) + id(window2_start_minute);
                 int end_minutes = (id(window2_end_hour) * 60) + id(window2_end_minute);
-                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
-                  in_window = true;
-                }
+                // Support midnight-crossing windows (e.g. 22:00–02:00)
+                bool in_win2 = (start_minutes < end_minutes)
+                    ? (current_time_minutes >= start_minutes && current_time_minutes < end_minutes)
+                    : (current_time_minutes >= start_minutes || current_time_minutes < end_minutes);
+                if (in_win2) in_window = true;
               }
               
               // Check window 3
               if (id(window3_enabled)) {
                 int start_minutes = (id(window3_start_hour) * 60) + id(window3_start_minute);
                 int end_minutes = (id(window3_end_hour) * 60) + id(window3_end_minute);
-                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
-                  in_window = true;
-                }
+                // Support midnight-crossing windows (e.g. 22:00–02:00)
+                bool in_win3 = (start_minutes < end_minutes)
+                    ? (current_time_minutes >= start_minutes && current_time_minutes < end_minutes)
+                    : (current_time_minutes >= start_minutes || current_time_minutes < end_minutes);
+                if (in_win3) in_window = true;
               }
               
               // If all windows disabled, allow anytime
@@ -11868,18 +11902,25 @@ script:
       # Update last run time ONLY for interval-based schedules (type 3)
       - lambda: |-
           if (id(zone_run_blocked)) return;  // Pre-flight blocked — skip completion logging
-          int64_t now = id(homeassistant_time).now().timestamp;
-          
-          // Only update last_run for interval schedules (type 3)
-          if (program == 1 && id(program_a_schedule_type) == 3) {
-            id(program_a_last_run) = now;
-            ESP_LOGI("irrigation", "${program_a_name} last run updated for interval scheduling");
-          } else if (program == 2 && id(program_b_schedule_type) == 3) {
-            id(program_b_last_run) = now;
-            ESP_LOGI("irrigation", "${program_b_name} last run updated for interval scheduling");
-          } else if (program == 3 && id(program_c_schedule_type) == 3) {
-            id(program_c_last_run) = now;
-            ESP_LOGI("irrigation", "${program_c_name} last run updated for interval scheduling");
+          auto _lr_time = id(homeassistant_time).now();
+          if (!_lr_time.is_valid()) {
+            // BUG #12 FIX: Don't store last_run if time is not synced.
+            // Storing 0 (epoch) would make interval scheduling think the program
+            // never ran and fire it again immediately on the next minute tick.
+            ESP_LOGW("irrigation", "⚠️ Program %d complete but time not synced — last_run NOT updated (avoids spurious re-fire)", program);
+          } else {
+            int64_t now = _lr_time.timestamp;
+            // Only update last_run for interval schedules (type 3)
+            if (program == 1 && id(program_a_schedule_type) == 3) {
+              id(program_a_last_run) = now;
+              ESP_LOGI("irrigation", "${program_a_name} last run updated for interval scheduling");
+            } else if (program == 2 && id(program_b_schedule_type) == 3) {
+              id(program_b_last_run) = now;
+              ESP_LOGI("irrigation", "${program_b_name} last run updated for interval scheduling");
+            } else if (program == 3 && id(program_c_schedule_type) == 3) {
+              id(program_c_last_run) = now;
+              ESP_LOGI("irrigation", "${program_c_name} last run updated for interval scheduling");
+            }
           }
           
           // Get program name from substitutions
@@ -14631,14 +14672,50 @@ switch:
           }
           // ── DIRECT SWITCH PATH: consolidated safety check via is_safe_to_water ──
           // is_safe_to_water evaluates: paused, system enable, freeze, budget, rain delay,
-          // time restriction, blackout, weather. Per-condition logging happens in request_zone_start.
+          // time restriction, blackout, weather. Per-condition logging happens here.
           if (!id(is_safe_to_water).state) {
-            ESP_LOGW("irrigation", "🚫 Zone 1 BLOCKED (direct) - system not safe to water (see request_zone_start for details)");
+            // Determine specific blocking reason for better UX
+            std::string _reason;
+            if (id(is_paused)) {
+              _reason = "⏸️ System is paused";
+            } else if (!id(irrigation_system_enable).state) {
+              _reason = "🚫 Irrigation system disabled";
+            } else if (id(freeze_protection_active)) {
+              _reason = "❄️ Freeze protection active";
+            } else if (id(budget_exceeded) && !id(budget_override_active)) {
+              _reason = "💧 Monthly water budget exceeded";
+            } else {
+              auto _now = id(homeassistant_time).now();
+              if (_now.is_valid() && id(rain_delay_end_time) > _now.timestamp) {
+                int64_t rd_days = (id(rain_delay_end_time) - _now.timestamp) / ${seconds_per_day};
+                char _rb[60];
+                snprintf(_rb, sizeof(_rb), "🌧️ Zone 1 blocked - Rain delay (%lld day(s))", rd_days);
+                _reason = std::string(_rb);
+              } else if (id(is_time_restricted)) {
+                _reason = "⏰ Time restriction active";
+              } else if (id(is_blackout_date).state) {
+                _reason = "🚫 Blackout date active";
+              } else if (!id(manual_weather_override)) {
+                std::string w = id(weather_forecast_home).state;
+                if (!w.empty() && w != "unknown" && w != "unavailable") {
+                  if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                    _reason = "⛈️ Bad weather blocked";
+                  }
+                }
+              }
+            }
+            if (_reason.empty()) _reason = "🚫 Zone 1 blocked - system check failed";
+            ESP_LOGW("irrigation", "🚫 Zone 1 BLOCKED (direct) - %s", _reason.c_str());
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_1).turn_off(); return;
           }
           // Zone-specific: zone enable check
           if (!id(zone1_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 1 BLOCKED (direct) - zone disabled");
+            std::string _reason = "🚫 Zone 1 disabled (direct switch)";
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_1).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
@@ -14778,14 +14855,50 @@ switch:
           }
           // ── DIRECT SWITCH PATH: consolidated safety check via is_safe_to_water ──
           // is_safe_to_water evaluates: paused, system enable, freeze, budget, rain delay,
-          // time restriction, blackout, weather. Per-condition logging happens in request_zone_start.
+          // time restriction, blackout, weather. Per-condition logging happens here.
           if (!id(is_safe_to_water).state) {
-            ESP_LOGW("irrigation", "🚫 Zone 2 BLOCKED (direct) - system not safe to water (see request_zone_start for details)");
+            // Determine specific blocking reason for better UX
+            std::string _reason;
+            if (id(is_paused)) {
+              _reason = "⏸️ System is paused";
+            } else if (!id(irrigation_system_enable).state) {
+              _reason = "🚫 Irrigation system disabled";
+            } else if (id(freeze_protection_active)) {
+              _reason = "❄️ Freeze protection active";
+            } else if (id(budget_exceeded) && !id(budget_override_active)) {
+              _reason = "💧 Monthly water budget exceeded";
+            } else {
+              auto _now = id(homeassistant_time).now();
+              if (_now.is_valid() && id(rain_delay_end_time) > _now.timestamp) {
+                int64_t rd_days = (id(rain_delay_end_time) - _now.timestamp) / ${seconds_per_day};
+                char _rb[60];
+                snprintf(_rb, sizeof(_rb), "🌧️ Zone 2 blocked - Rain delay (%lld day(s))", rd_days);
+                _reason = std::string(_rb);
+              } else if (id(is_time_restricted)) {
+                _reason = "⏰ Time restriction active";
+              } else if (id(is_blackout_date).state) {
+                _reason = "🚫 Blackout date active";
+              } else if (!id(manual_weather_override)) {
+                std::string w = id(weather_forecast_home).state;
+                if (!w.empty() && w != "unknown" && w != "unavailable") {
+                  if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                    _reason = "⛈️ Bad weather blocked";
+                  }
+                }
+              }
+            }
+            if (_reason.empty()) _reason = "🚫 Zone 2 blocked - system check failed";
+            ESP_LOGW("irrigation", "🚫 Zone 2 BLOCKED (direct) - %s", _reason.c_str());
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_2).turn_off(); return;
           }
           // Zone-specific: zone enable check
           if (!id(zone2_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 2 BLOCKED (direct) - zone disabled");
+            std::string _reason = "🚫 Zone 2 disabled (direct switch)";
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_2).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
@@ -14916,14 +15029,50 @@ switch:
           }
           // ── DIRECT SWITCH PATH: consolidated safety check via is_safe_to_water ──
           // is_safe_to_water evaluates: paused, system enable, freeze, budget, rain delay,
-          // time restriction, blackout, weather. Per-condition logging happens in request_zone_start.
+          // time restriction, blackout, weather. Per-condition logging happens here.
           if (!id(is_safe_to_water).state) {
-            ESP_LOGW("irrigation", "🚫 Zone 3 BLOCKED (direct) - system not safe to water (see request_zone_start for details)");
+            // Determine specific blocking reason for better UX
+            std::string _reason;
+            if (id(is_paused)) {
+              _reason = "⏸️ System is paused";
+            } else if (!id(irrigation_system_enable).state) {
+              _reason = "🚫 Irrigation system disabled";
+            } else if (id(freeze_protection_active)) {
+              _reason = "❄️ Freeze protection active";
+            } else if (id(budget_exceeded) && !id(budget_override_active)) {
+              _reason = "💧 Monthly water budget exceeded";
+            } else {
+              auto _now = id(homeassistant_time).now();
+              if (_now.is_valid() && id(rain_delay_end_time) > _now.timestamp) {
+                int64_t rd_days = (id(rain_delay_end_time) - _now.timestamp) / ${seconds_per_day};
+                char _rb[60];
+                snprintf(_rb, sizeof(_rb), "🌧️ Zone 3 blocked - Rain delay (%lld day(s))", rd_days);
+                _reason = std::string(_rb);
+              } else if (id(is_time_restricted)) {
+                _reason = "⏰ Time restriction active";
+              } else if (id(is_blackout_date).state) {
+                _reason = "🚫 Blackout date active";
+              } else if (!id(manual_weather_override)) {
+                std::string w = id(weather_forecast_home).state;
+                if (!w.empty() && w != "unknown" && w != "unavailable") {
+                  if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                    _reason = "⛈️ Bad weather blocked";
+                  }
+                }
+              }
+            }
+            if (_reason.empty()) _reason = "🚫 Zone 3 blocked - system check failed";
+            ESP_LOGW("irrigation", "🚫 Zone 3 BLOCKED (direct) - %s", _reason.c_str());
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_3).turn_off(); return;
           }
           // Zone-specific: zone enable check
           if (!id(zone3_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 3 BLOCKED (direct) - zone disabled");
+            std::string _reason = "🚫 Zone 3 disabled (direct switch)";
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_3).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
@@ -15054,14 +15203,50 @@ switch:
           }
           // ── DIRECT SWITCH PATH: consolidated safety check via is_safe_to_water ──
           // is_safe_to_water evaluates: paused, system enable, freeze, budget, rain delay,
-          // time restriction, blackout, weather. Per-condition logging happens in request_zone_start.
+          // time restriction, blackout, weather. Per-condition logging happens here.
           if (!id(is_safe_to_water).state) {
-            ESP_LOGW("irrigation", "🚫 Zone 4 BLOCKED (direct) - system not safe to water (see request_zone_start for details)");
+            // Determine specific blocking reason for better UX
+            std::string _reason;
+            if (id(is_paused)) {
+              _reason = "⏸️ System is paused";
+            } else if (!id(irrigation_system_enable).state) {
+              _reason = "🚫 Irrigation system disabled";
+            } else if (id(freeze_protection_active)) {
+              _reason = "❄️ Freeze protection active";
+            } else if (id(budget_exceeded) && !id(budget_override_active)) {
+              _reason = "💧 Monthly water budget exceeded";
+            } else {
+              auto _now = id(homeassistant_time).now();
+              if (_now.is_valid() && id(rain_delay_end_time) > _now.timestamp) {
+                int64_t rd_days = (id(rain_delay_end_time) - _now.timestamp) / ${seconds_per_day};
+                char _rb[60];
+                snprintf(_rb, sizeof(_rb), "🌧️ Zone 4 blocked - Rain delay (%lld day(s))", rd_days);
+                _reason = std::string(_rb);
+              } else if (id(is_time_restricted)) {
+                _reason = "⏰ Time restriction active";
+              } else if (id(is_blackout_date).state) {
+                _reason = "🚫 Blackout date active";
+              } else if (!id(manual_weather_override)) {
+                std::string w = id(weather_forecast_home).state;
+                if (!w.empty() && w != "unknown" && w != "unavailable") {
+                  if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                    _reason = "⛈️ Bad weather blocked";
+                  }
+                }
+              }
+            }
+            if (_reason.empty()) _reason = "🚫 Zone 4 blocked - system check failed";
+            ESP_LOGW("irrigation", "🚫 Zone 4 BLOCKED (direct) - %s", _reason.c_str());
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_4).turn_off(); return;
           }
           // Zone-specific: zone enable check
           if (!id(zone4_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 4 BLOCKED (direct) - zone disabled");
+            std::string _reason = "🚫 Zone 4 disabled (direct switch)";
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_4).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
@@ -15192,14 +15377,50 @@ switch:
           }
           // ── DIRECT SWITCH PATH: consolidated safety check via is_safe_to_water ──
           // is_safe_to_water evaluates: paused, system enable, freeze, budget, rain delay,
-          // time restriction, blackout, weather. Per-condition logging happens in request_zone_start.
+          // time restriction, blackout, weather. Per-condition logging happens here.
           if (!id(is_safe_to_water).state) {
-            ESP_LOGW("irrigation", "🚫 Zone 5 BLOCKED (direct) - system not safe to water (see request_zone_start for details)");
+            // Determine specific blocking reason for better UX
+            std::string _reason;
+            if (id(is_paused)) {
+              _reason = "⏸️ System is paused";
+            } else if (!id(irrigation_system_enable).state) {
+              _reason = "🚫 Irrigation system disabled";
+            } else if (id(freeze_protection_active)) {
+              _reason = "❄️ Freeze protection active";
+            } else if (id(budget_exceeded) && !id(budget_override_active)) {
+              _reason = "💧 Monthly water budget exceeded";
+            } else {
+              auto _now = id(homeassistant_time).now();
+              if (_now.is_valid() && id(rain_delay_end_time) > _now.timestamp) {
+                int64_t rd_days = (id(rain_delay_end_time) - _now.timestamp) / ${seconds_per_day};
+                char _rb[60];
+                snprintf(_rb, sizeof(_rb), "🌧️ Zone 5 blocked - Rain delay (%lld day(s))", rd_days);
+                _reason = std::string(_rb);
+              } else if (id(is_time_restricted)) {
+                _reason = "⏰ Time restriction active";
+              } else if (id(is_blackout_date).state) {
+                _reason = "🚫 Blackout date active";
+              } else if (!id(manual_weather_override)) {
+                std::string w = id(weather_forecast_home).state;
+                if (!w.empty() && w != "unknown" && w != "unavailable") {
+                  if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                    _reason = "⛈️ Bad weather blocked";
+                  }
+                }
+              }
+            }
+            if (_reason.empty()) _reason = "🚫 Zone 5 blocked - system check failed";
+            ESP_LOGW("irrigation", "🚫 Zone 5 BLOCKED (direct) - %s", _reason.c_str());
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_5).turn_off(); return;
           }
           // Zone-specific: zone enable check
           if (!id(zone5_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 5 BLOCKED (direct) - zone disabled");
+            std::string _reason = "🚫 Zone 5 disabled (direct switch)";
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_5).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
@@ -15330,14 +15551,50 @@ switch:
           }
           // ── DIRECT SWITCH PATH: consolidated safety check via is_safe_to_water ──
           // is_safe_to_water evaluates: paused, system enable, freeze, budget, rain delay,
-          // time restriction, blackout, weather. Per-condition logging happens in request_zone_start.
+          // time restriction, blackout, weather. Per-condition logging happens here.
           if (!id(is_safe_to_water).state) {
-            ESP_LOGW("irrigation", "🚫 Zone 6 BLOCKED (direct) - system not safe to water (see request_zone_start for details)");
+            // Determine specific blocking reason for better UX
+            std::string _reason;
+            if (id(is_paused)) {
+              _reason = "⏸️ System is paused";
+            } else if (!id(irrigation_system_enable).state) {
+              _reason = "🚫 Irrigation system disabled";
+            } else if (id(freeze_protection_active)) {
+              _reason = "❄️ Freeze protection active";
+            } else if (id(budget_exceeded) && !id(budget_override_active)) {
+              _reason = "💧 Monthly water budget exceeded";
+            } else {
+              auto _now = id(homeassistant_time).now();
+              if (_now.is_valid() && id(rain_delay_end_time) > _now.timestamp) {
+                int64_t rd_days = (id(rain_delay_end_time) - _now.timestamp) / ${seconds_per_day};
+                char _rb[60];
+                snprintf(_rb, sizeof(_rb), "🌧️ Zone 6 blocked - Rain delay (%lld day(s))", rd_days);
+                _reason = std::string(_rb);
+              } else if (id(is_time_restricted)) {
+                _reason = "⏰ Time restriction active";
+              } else if (id(is_blackout_date).state) {
+                _reason = "🚫 Blackout date active";
+              } else if (!id(manual_weather_override)) {
+                std::string w = id(weather_forecast_home).state;
+                if (!w.empty() && w != "unknown" && w != "unavailable") {
+                  if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                    _reason = "⛈️ Bad weather blocked";
+                  }
+                }
+              }
+            }
+            if (_reason.empty()) _reason = "🚫 Zone 6 blocked - system check failed";
+            ESP_LOGW("irrigation", "🚫 Zone 6 BLOCKED (direct) - %s", _reason.c_str());
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_6).turn_off(); return;
           }
           // Zone-specific: zone enable check
           if (!id(zone6_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 6 BLOCKED (direct) - zone disabled");
+            std::string _reason = "🚫 Zone 6 disabled (direct switch)";
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_6).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
@@ -15468,14 +15725,50 @@ switch:
           }
           // ── DIRECT SWITCH PATH: consolidated safety check via is_safe_to_water ──
           // is_safe_to_water evaluates: paused, system enable, freeze, budget, rain delay,
-          // time restriction, blackout, weather. Per-condition logging happens in request_zone_start.
+          // time restriction, blackout, weather. Per-condition logging happens here.
           if (!id(is_safe_to_water).state) {
-            ESP_LOGW("irrigation", "🚫 Zone 7 BLOCKED (direct) - system not safe to water (see request_zone_start for details)");
+            // Determine specific blocking reason for better UX
+            std::string _reason;
+            if (id(is_paused)) {
+              _reason = "⏸️ System is paused";
+            } else if (!id(irrigation_system_enable).state) {
+              _reason = "🚫 Irrigation system disabled";
+            } else if (id(freeze_protection_active)) {
+              _reason = "❄️ Freeze protection active";
+            } else if (id(budget_exceeded) && !id(budget_override_active)) {
+              _reason = "💧 Monthly water budget exceeded";
+            } else {
+              auto _now = id(homeassistant_time).now();
+              if (_now.is_valid() && id(rain_delay_end_time) > _now.timestamp) {
+                int64_t rd_days = (id(rain_delay_end_time) - _now.timestamp) / ${seconds_per_day};
+                char _rb[60];
+                snprintf(_rb, sizeof(_rb), "🌧️ Zone 7 blocked - Rain delay (%lld day(s))", rd_days);
+                _reason = std::string(_rb);
+              } else if (id(is_time_restricted)) {
+                _reason = "⏰ Time restriction active";
+              } else if (id(is_blackout_date).state) {
+                _reason = "🚫 Blackout date active";
+              } else if (!id(manual_weather_override)) {
+                std::string w = id(weather_forecast_home).state;
+                if (!w.empty() && w != "unknown" && w != "unavailable") {
+                  if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                    _reason = "⛈️ Bad weather blocked";
+                  }
+                }
+              }
+            }
+            if (_reason.empty()) _reason = "🚫 Zone 7 blocked - system check failed";
+            ESP_LOGW("irrigation", "🚫 Zone 7 BLOCKED (direct) - %s", _reason.c_str());
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_7).turn_off(); return;
           }
           // Zone-specific: zone enable check
           if (!id(zone7_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 7 BLOCKED (direct) - zone disabled");
+            std::string _reason = "🚫 Zone 7 disabled (direct switch)";
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_7).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
@@ -15606,14 +15899,50 @@ switch:
           }
           // ── DIRECT SWITCH PATH: consolidated safety check via is_safe_to_water ──
           // is_safe_to_water evaluates: paused, system enable, freeze, budget, rain delay,
-          // time restriction, blackout, weather. Per-condition logging happens in request_zone_start.
+          // time restriction, blackout, weather. Per-condition logging happens here.
           if (!id(is_safe_to_water).state) {
-            ESP_LOGW("irrigation", "🚫 Zone 8 BLOCKED (direct) - system not safe to water (see request_zone_start for details)");
+            // Determine specific blocking reason for better UX
+            std::string _reason;
+            if (id(is_paused)) {
+              _reason = "⏸️ System is paused";
+            } else if (!id(irrigation_system_enable).state) {
+              _reason = "🚫 Irrigation system disabled";
+            } else if (id(freeze_protection_active)) {
+              _reason = "❄️ Freeze protection active";
+            } else if (id(budget_exceeded) && !id(budget_override_active)) {
+              _reason = "💧 Monthly water budget exceeded";
+            } else {
+              auto _now = id(homeassistant_time).now();
+              if (_now.is_valid() && id(rain_delay_end_time) > _now.timestamp) {
+                int64_t rd_days = (id(rain_delay_end_time) - _now.timestamp) / ${seconds_per_day};
+                char _rb[60];
+                snprintf(_rb, sizeof(_rb), "🌧️ Zone 8 blocked - Rain delay (%lld day(s))", rd_days);
+                _reason = std::string(_rb);
+              } else if (id(is_time_restricted)) {
+                _reason = "⏰ Time restriction active";
+              } else if (id(is_blackout_date).state) {
+                _reason = "🚫 Blackout date active";
+              } else if (!id(manual_weather_override)) {
+                std::string w = id(weather_forecast_home).state;
+                if (!w.empty() && w != "unknown" && w != "unavailable") {
+                  if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                    _reason = "⛈️ Bad weather blocked";
+                  }
+                }
+              }
+            }
+            if (_reason.empty()) _reason = "🚫 Zone 8 blocked - system check failed";
+            ESP_LOGW("irrigation", "🚫 Zone 8 BLOCKED (direct) - %s", _reason.c_str());
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_8).turn_off(); return;
           }
           // Zone-specific: zone enable check
           if (!id(zone8_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone 8 BLOCKED (direct) - zone disabled");
+            std::string _reason = "🚫 Zone 8 disabled (direct switch)";
+            id(last_zone_block_reason) = _reason;
+            id(zone_block_reason_sensor).publish_state(_reason);
             id(${devicename1}_8).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
@@ -15876,6 +16205,9 @@ sprinkler:
         - lambda: |-
             // CRITICAL: Check if irrigation system is enabled
             if (!id(irrigation_system_enable).state) {
+              std::string _reason = "🚫 Irrigation system disabled";
+              id(last_zone_block_reason) = _reason;
+              id(zone_block_reason_sensor).publish_state(_reason);
               ESP_LOGW("irrigation", "🚫 BLOCKED - Irrigation system is DISABLED");
               id(dev1_main_switch).turn_off();
               return;
@@ -15885,6 +16217,12 @@ sprinkler:
             {
               auto _msw_time = id(homeassistant_time).now();
               if (_msw_time.is_valid() && id(rain_delay_end_time) > _msw_time.timestamp) {
+                int64_t rd_days = (id(rain_delay_end_time) - _msw_time.timestamp) / ${seconds_per_day};
+                char _rb[60];
+                snprintf(_rb, sizeof(_rb), "🌧️ Rain delay active (%lld day(s))", rd_days);
+                std::string _reason(_rb);
+                id(last_zone_block_reason) = _reason;
+                id(zone_block_reason_sensor).publish_state(_reason);
                 ESP_LOGW("irrigation", "⛈️ BLOCKED - Rain delay is active");
                 id(dev1_main_switch).turn_off();
                 return;
@@ -15896,6 +16234,11 @@ sprinkler:
               std::string w = id(weather_forecast_home).state;
               if (!w.empty() && w != "unknown" && w != "unavailable") {
                 if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                  char _wb[80];
+                  snprintf(_wb, sizeof(_wb), "⛈️ Bad weather: %s", w.c_str());
+                  std::string _reason(_wb);
+                  id(last_zone_block_reason) = _reason;
+                  id(zone_block_reason_sensor).publish_state(_reason);
                   ESP_LOGW("irrigation", "⛈️ BLOCKED - Bad weather: %s (Enable Weather Override to force)", w.c_str());
                   id(dev1_main_switch).turn_off();
                   return;
@@ -15905,6 +16248,9 @@ sprinkler:
             
             // Time restriction check
             if (id(is_time_restricted)) {
+              std::string _reason = "⏰ Time restriction active";
+              id(last_zone_block_reason) = _reason;
+              id(zone_block_reason_sensor).publish_state(_reason);
               ESP_LOGW("irrigation", "⏰ BLOCKED - Time restriction active");
               id(dev1_main_switch).turn_off();
               return;
@@ -15912,10 +16258,61 @@ sprinkler:
             
             // Blackout check (incl. NZ public holidays via is_blackout_date sensor)
             if (id(is_blackout_date).state) {
+              std::string _reason = "🚫 Blackout date active";
+              id(last_zone_block_reason) = _reason;
+              id(zone_block_reason_sensor).publish_state(_reason);
               ESP_LOGW("irrigation", "🚫 BLOCKED - Blackout date active");
               id(dev1_main_switch).turn_off();
               return;
             }
+            
+            // ═══════════════════════════════════════════════════════════
+            // ZONE ENABLE CHECK - FIX FOR BUG: Main switch activates when disabled zone is pressed
+            // ═══════════════════════════════════════════════════════════
+            // The ESPHome sprinkler component automatically turns on the main switch when ANY zone
+            // switch is activated - even if that zone is disabled. We need to verify that the zone
+            // requesting activation is actually enabled before allowing the main switch to proceed.
+            //
+            // Without this check, the following sequence occurs when a disabled zone is pressed:
+            //   1. User presses disabled Zone X switch
+            //   2. Sprinkler component turns ON main switch (immediate, before zone checks)
+            //   3. Zone X turn_on_action detects disabled state and turns off zone
+            //   4. Main switch already activated and logged "all checks passed"
+            //   5. Zone turns off, causing main switch to turn off
+            //   Result: Brief activation, timer runs, confusing UX
+            //
+            // This check prevents the race condition by validating zone enable state at main switch level.
+            
+            // Get the active valve number (0-7 for zones 1-8, or -1 if none active)
+            int active_valve = id($devicename1).active_valve().value_or(-1);
+            
+            if (active_valve >= 0 && active_valve < 8) {
+              bool zone_enabled = false;
+              
+              // Check if the specific zone requesting activation is enabled
+              switch(active_valve) {
+                case 0: zone_enabled = id(zone1_enable).state; break;
+                case 1: zone_enabled = id(zone2_enable).state; break;
+                case 2: zone_enabled = id(zone3_enable).state; break;
+                case 3: zone_enabled = id(zone4_enable).state; break;
+                case 4: zone_enabled = id(zone5_enable).state; break;
+                case 5: zone_enabled = id(zone6_enable).state; break;
+                case 6: zone_enabled = id(zone7_enable).state; break;
+                case 7: zone_enabled = id(zone8_enable).state; break;
+              }
+              
+              if (!zone_enabled) {
+                char _reason_buf[80];
+                snprintf(_reason_buf, sizeof(_reason_buf), "🚫 Zone %d disabled (main switch blocked)", active_valve + 1);
+                std::string _reason(_reason_buf);
+                id(last_zone_block_reason) = _reason;
+                id(zone_block_reason_sensor).publish_state(_reason);
+                ESP_LOGW("irrigation", "🚫 BLOCKED - Main switch activation denied: Zone %d is DISABLED", active_valve + 1);
+                id(dev1_main_switch).turn_off();
+                return;
+              }
+            }
+            // ═══════════════════════════════════════════════════════════
             
             ESP_LOGI("irrigation", "✅ Main switch turned ON - all checks passed");
 
@@ -16464,10 +16861,30 @@ button:
             } else if (id(cycle_soak_is_soaking) && id(active_zone_number) >= 0 && id(total_cycles) > 0) {
               id(paused_zone) = id(active_zone_number);
               id(paused_cycle) = id(current_cycle);
-              int64_t now = id(homeassistant_time).now().timestamp;
-              int64_t rem = id(cycle_soak_soak_end_time) - now;
-              if (rem < 0) rem = 0;
-              id(paused_soak_remaining_seconds) = (int) rem;
+              // BUG #14 FIX: Guard against time de-sync mid-soak.
+              // Without is_valid(), now().timestamp=0 → rem = soak_end_time - 0 = a large
+              // future timestamp → paused_soak_remaining_seconds gets a huge value →
+              // resume re-runs the soak for hours or days instead of the intended seconds.
+              // Fallback: use soak_countdown_seconds (last known countdown before pause).
+              {
+                auto _ps_time = id(homeassistant_time).now();
+                int64_t rem;
+                if (_ps_time.is_valid()) {
+                  rem = id(cycle_soak_soak_end_time) - _ps_time.timestamp;
+                } else {
+                  // Time de-synced: use the last-known countdown value as fallback
+                  rem = id(soak_countdown_seconds);
+                  ESP_LOGW("irrigation", "⚠️ Pause-during-soak: time not synced — using last countdown value (%lld sec)", rem);
+                }
+                if (rem < 0) rem = 0;
+                // Safety cap: remaining soak cannot exceed the configured soak duration
+                int max_soak = id(soak_duration_minutes) * 60;
+                if (rem > max_soak) {
+                  ESP_LOGW("irrigation", "⚠️ Pause-during-soak: capping soak_remaining %lld → %d sec (max soak duration)", rem, max_soak);
+                  rem = max_soak;
+                }
+                id(paused_soak_remaining_seconds) = (int) rem;
+              }
               id(time_remaining_when_paused) = 0;
               id(paused_was_soaking) = true;
               id(is_paused) = true;
