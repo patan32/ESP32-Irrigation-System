@@ -932,6 +932,11 @@ globals:
     restore_value: False  # Runtime — republished from HA on reconnect if needed
     initial_value: '""'   # Empty on boot
 
+  - id: last_zone_block_reason
+    type: std::string
+    restore_value: False  # Runtime state — cleared on boot
+    initial_value: '""'   # Empty until first block occurs
+
   - id: watering_trigger_source
     type: std::string
     restore_value: False  # Transient state — set at run start
@@ -2621,35 +2626,33 @@ time:
                   std::string active_window = "";
                   
                   // Check Window 1
-                  // BUG FIX: Use midnight-safe ternary (same as check_time_restriction).
-                  // Old: start <= now < end silently fails for windows crossing midnight.
                   if (id(window1_enabled)) {
                     int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
                     int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
-                    bool hit = (start_min < end_min)
-                        ? (current_time_minutes >= start_min && current_time_minutes < end_min)
-                        : (current_time_minutes >= start_min || current_time_minutes < end_min);
-                    if (hit) { in_window = true; active_window = "ET Watering Window 1"; }
+                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                      in_window = true;
+                      active_window = "ET Watering Window 1";
+                    }
                   }
                   
                   // Check Window 2
                   if (!in_window && id(window2_enabled)) {
                     int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
                     int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
-                    bool hit = (start_min < end_min)
-                        ? (current_time_minutes >= start_min && current_time_minutes < end_min)
-                        : (current_time_minutes >= start_min || current_time_minutes < end_min);
-                    if (hit) { in_window = true; active_window = "ET Watering Window 2"; }
+                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                      in_window = true;
+                      active_window = "ET Watering Window 2";
+                    }
                   }
                   
                   // Check Window 3
                   if (!in_window && id(window3_enabled)) {
                     int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
                     int end_min = (id(window3_end_hour) * 60) + id(window3_end_minute);
-                    bool hit = (start_min < end_min)
-                        ? (current_time_minutes >= start_min && current_time_minutes < end_min)
-                        : (current_time_minutes >= start_min || current_time_minutes < end_min);
-                    if (hit) { in_window = true; active_window = "ET Watering Window 3"; }
+                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                      in_window = true;
+                      active_window = "ET Watering Window 3";
+                    }
                   }
                   
                   if (in_window) {
@@ -2694,18 +2697,14 @@ time:
                     }
                     id(start_all_zones_cycle_soak).press();
                     // BUG #33 FIX: Only clear deficit/last_water_time when run started immediately.
-                    // If the button press was blocked by a safety check, irrigation_busy stays false
-                    // and the deficit is preserved so the next window retry can fire it.
-                    // BUG FIX: Also only clear et_pending_irrigation if the run started.
-                    // Clearing it unconditionally when blocked stops the 5-min retry loop,
-                    // forcing a wait of up to 1h for the next hourly ET recalculation.
-                    if (id(irrigation_busy)) {
+                    // If queued, preserve deficit — it may be dropped before executing.
+                    if (!id(irrigation_busy)) {
+                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
+                    } else {
                       id(et_soil_moisture_deficit) = 0;
                       { auto _t2b = id(homeassistant_time).now(); if (_t2b.is_valid()) id(et_last_water_time) = _t2b.timestamp; }
-                      id(et_pending_irrigation) = false;
-                    } else {
-                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run BLOCKED by safety check — deficit and pending preserved for retry (%.1fmm)", id(et_soil_moisture_deficit));
                     }
+                    id(et_pending_irrigation) = false;
                   }
                 }
               }
@@ -3882,9 +3881,6 @@ time:
                     return false;
                   }
                   
-                  // Blackout date check (incl. NZ public holidays via is_blackout_date sensor)
-                  if (id(is_blackout_date).state) return false;
-                  
                   // Weather check (unless override active)
                   if (!id(manual_weather_override)) {
                     std::string w = id(weather_forecast_home).state;
@@ -4749,8 +4745,8 @@ interval:
             id(drain_queue).execute();
           }
 
-  # Update time restriction status every 10 seconds for near-instant HA feedback
-  - interval: 10s
+  # Update time restriction status every 30 seconds
+  - interval: 30s
     then:
       - script.execute: check_time_restriction
 
@@ -4780,8 +4776,8 @@ text_sensor:
             then:
               # Write to persistent HA input_text so automations survive HA restarts.
               # Create in HA: Settings → Helpers → Text → "Irrigation Latest Alert"
-              - homeassistant.action:
-                  action: input_text.set_value
+              - homeassistant.service:
+                  service: input_text.set_value
                   data:
                     entity_id: ${ha_alert_entity}
                     value: !lambda 'return x;'
@@ -4794,6 +4790,19 @@ text_sensor:
     entity_category: diagnostic
     lambda: |-
       return id(last_boot_nvs_action);
+
+  # ── Why a zone was last blocked — shows in HA dashboard ──────────────────────
+  # Clears automatically when a zone starts successfully.
+  # Shows the most recent reason any zone or run was prevented from starting.
+  - platform: template
+    id: zone_block_reason_sensor
+    name: "$upper_devicename1 Last Block Reason"
+    icon: "mdi:alert-octagon"
+    entity_category: diagnostic
+    lambda: |-
+      if (id(last_zone_block_reason).empty()) return {"None"};
+      return {id(last_zone_block_reason)};
+
 
   - platform: version
     name: $esphome_name ESPHome Version
@@ -5624,34 +5633,25 @@ text_sensor:
     update_interval: $sensor_update_frequency
     icon: "mdi:progress-clock"
     lambda: |-
-      // CYCLE & SOAK MODE: use the session-level elapsed/total which covers
-      // all cycles AND all soak periods, starting from 0% and running to 100%.
-      // This fixes two issues with the old valve-only approach:
-      //   1. Progress started partway through (e.g. 75%) because it tracked the
-      //      current cycle relative to the full valve duration, not the session.
-      //   2. Progress froze at 0% during soak because active_valve() has no value.
-      if (id(cycle_soak_total_duration) > 0) {
-        int elapsed = id(cycle_soak_elapsed_time);
-        int total   = id(cycle_soak_total_duration);
-        if (total <= 0) return {"0%"};
-        int progress = (int)((float)elapsed / (float)total * 100.0f);
-        if (progress < 0)   progress = 0;
-        if (progress > 100) progress = 100;
-        return {std::to_string(progress) + "%"};
-      }
-
-      // NORMAL MODE: use the current valve's remaining time.
+      // Check if a valve is active
       if (!id($devicename1).active_valve().has_value()) {
         return {"0%"};
       }
+      
       auto valve_num = id($devicename1).active_valve().value();
       auto remaining = id($devicename1).time_remaining_active_valve().value_or(0);
-      auto duration  = id($devicename1).valve_run_duration_adjusted(valve_num);
-      if (duration <= 0 || remaining < 0) return {"0%"};
-      float elapsed_f = duration - remaining;
-      int progress = (int)(elapsed_f / duration * 100.0f);
-      if (progress < 0)   progress = 0;
+      auto duration = id($devicename1).valve_run_duration_adjusted(valve_num);
+      
+      if (duration <= 0 || remaining < 0) {
+        return {"0%"};
+      }
+      
+      float elapsed = duration - remaining;
+      int progress = (int)((elapsed / duration) * 100.0);
+      
+      if (progress < 0) progress = 0;
       if (progress > 100) progress = 100;
+      
       return {std::to_string(progress) + "%"};
       
   # Expose Valve Status as a sensor
@@ -5707,12 +5707,11 @@ text_sensor:
 
 
   # Time Restriction Status (live)
-  # update_interval: never — pushed explicitly from check_time_restriction on every run
   - platform: template
     id: time_restriction_status
     name: "Time Restriction Status"
     icon: "mdi:clock-alert"
-    update_interval: never
+    update_interval: 30s
     lambda: |-
       auto t = id(homeassistant_time).now();
       int sh = id(restrict_start_hour);
@@ -5739,12 +5738,11 @@ text_sensor:
       }
       return {buf};
 
-  # update_interval: never — pushed explicitly from check_time_restriction on every run
   - platform: template
     id: time_restriction_next_allowed
     name: "Time Restriction Next Allowed"
     icon: "mdi:calendar-clock"
-    update_interval: never
+    update_interval: 30s
     lambda: |-
       auto t = id(homeassistant_time).now();
       int sh = id(restrict_start_hour);
@@ -7187,6 +7185,7 @@ number:
       - sprinkler.set_multiplier:
           id: $devicename1
           multiplier: !lambda 'return x;'
+      - lambda: "id(${dev1_what}_multiplier).publish_state(x);"
 
   # Rain delay days
   - platform: template
@@ -7200,7 +7199,7 @@ number:
     lambda: "return id(rain_delay_days);"
     set_action:
       - lambda: |-
-          id(rain_delay_days) = x;
+          id(rain_delay_days) = (int)x;
           if (x > 0) {
             auto _rd_time = id(homeassistant_time).now();
             if (!_rd_time.is_valid()) {
@@ -7235,6 +7234,7 @@ number:
       - lambda: |-
           id(et_water_threshold) = x;
           ESP_LOGI("irrigation", "ET threshold updated to %.0f mm", x);
+          id(et_threshold_input).publish_state(x);
 
   # Quick run duration
   - platform: template
@@ -7265,7 +7265,9 @@ number:
     unit_of_measurement: "L/min"
     lambda: "return id(zone1_flow_rate);"
     set_action:
-      - lambda: "id(zone1_flow_rate) = x;"
+      - lambda: |-
+          id(zone1_flow_rate) = x;
+          id(zone1_flow_rate_input).publish_state(x);
       
   - platform: template
     id: zone2_flow_rate_input
@@ -7278,7 +7280,9 @@ number:
     unit_of_measurement: "L/min"
     lambda: "return id(zone2_flow_rate);"
     set_action:
-      - lambda: "id(zone2_flow_rate) = x;"
+      - lambda: |-
+          id(zone2_flow_rate) = x;
+          id(zone2_flow_rate_input).publish_state(x);
       
   - platform: template
     id: zone3_flow_rate_input
@@ -7291,7 +7295,9 @@ number:
     unit_of_measurement: "L/min"
     lambda: "return id(zone3_flow_rate);"
     set_action:
-      - lambda: "id(zone3_flow_rate) = x;"
+      - lambda: |-
+          id(zone3_flow_rate) = x;
+          id(zone3_flow_rate_input).publish_state(x);
       
   - platform: template
     id: zone4_flow_rate_input
@@ -7304,7 +7310,9 @@ number:
     unit_of_measurement: "L/min"
     lambda: "return id(zone4_flow_rate);"
     set_action:
-      - lambda: "id(zone4_flow_rate) = x;"
+      - lambda: |-
+          id(zone4_flow_rate) = x;
+          id(zone4_flow_rate_input).publish_state(x);
       
   - platform: template
     id: zone5_flow_rate_input
@@ -7317,7 +7325,9 @@ number:
     unit_of_measurement: "L/min"
     lambda: "return id(zone5_flow_rate);"
     set_action:
-      - lambda: "id(zone5_flow_rate) = x;"
+      - lambda: |-
+          id(zone5_flow_rate) = x;
+          id(zone5_flow_rate_input).publish_state(x);
       
   - platform: template
     id: zone6_flow_rate_input
@@ -7330,7 +7340,9 @@ number:
     unit_of_measurement: "L/min"
     lambda: "return id(zone6_flow_rate);"
     set_action:
-      - lambda: "id(zone6_flow_rate) = x;"
+      - lambda: |-
+          id(zone6_flow_rate) = x;
+          id(zone6_flow_rate_input).publish_state(x);
       
   - platform: template
     id: zone7_flow_rate_input
@@ -7343,7 +7355,9 @@ number:
     unit_of_measurement: "L/min"
     lambda: "return id(zone7_flow_rate);"
     set_action:
-      - lambda: "id(zone7_flow_rate) = x;"
+      - lambda: |-
+          id(zone7_flow_rate) = x;
+          id(zone7_flow_rate_input).publish_state(x);
       
   - platform: template
     id: zone8_flow_rate_input
@@ -7356,7 +7370,9 @@ number:
     unit_of_measurement: "L/min"
     lambda: "return id(zone8_flow_rate);"
     set_action:
-      - lambda: "id(zone8_flow_rate) = x;"
+      - lambda: |-
+          id(zone8_flow_rate) = x;
+          id(zone8_flow_rate_input).publish_state(x);
 
 # Schedule start hour (12-hour format)
   - platform: template
@@ -7398,7 +7414,9 @@ number:
     unit_of_measurement: "min"
     lambda: "return id(cycle_duration_minutes);"
     set_action:
-      - lambda: "id(cycle_duration_minutes) = x;"
+      - lambda: |-
+          id(cycle_duration_minutes) = (int)x;
+          id(cycle_duration_input).publish_state(x);
 
   # Soak duration
   - platform: template
@@ -7412,7 +7430,9 @@ number:
     unit_of_measurement: "min"
     lambda: "return id(soak_duration_minutes);"
     set_action:
-      - lambda: "id(soak_duration_minutes) = x;"
+      - lambda: |-
+          id(soak_duration_minutes) = (int)x;
+          id(soak_duration_input).publish_state(x);
 
 # Station delay between zones
   - platform: template
@@ -7426,7 +7446,9 @@ number:
     unit_of_measurement: "sec"
     lambda: "return id(station_delay_seconds);"
     set_action:
-      - lambda: "id(station_delay_seconds) = x;"
+      - lambda: |-
+          id(station_delay_seconds) = (int)x;
+          id(station_delay_input).publish_state(x);
 
 
   # Time Restriction Window (12-hour format)
@@ -7441,7 +7463,9 @@ number:
     unit_of_measurement: "h"
     lambda: "return id(restrict_start_hour);"
     set_action:
-      - lambda: "id(restrict_start_hour) = (int)x;"
+      - lambda: |-
+          id(restrict_start_hour) = (int)x;
+          id(restrict_start_hour_input).publish_state(x);
 
   - platform: template
     id: restrict_start_minute_input
@@ -7454,7 +7478,9 @@ number:
     unit_of_measurement: "min"
     lambda: "return id(restrict_start_minute);"
     set_action:
-      - lambda: "id(restrict_start_minute) = (int)x;"
+      - lambda: |-
+          id(restrict_start_minute) = (int)x;
+          id(restrict_start_minute_input).publish_state(x);
 
   - platform: template
     id: restrict_end_hour_input
@@ -7467,7 +7493,9 @@ number:
     unit_of_measurement: "h"
     lambda: "return id(restrict_end_hour);"
     set_action:
-      - lambda: "id(restrict_end_hour) = (int)x;"
+      - lambda: |-
+          id(restrict_end_hour) = (int)x;
+          id(restrict_end_hour_input).publish_state(x);
 
   - platform: template
     id: restrict_end_minute_input
@@ -7480,7 +7508,9 @@ number:
     unit_of_measurement: "min"
     lambda: "return id(restrict_end_minute);"
     set_action:
-      - lambda: "id(restrict_end_minute) = (int)x;"
+      - lambda: |-
+          id(restrict_end_minute) = (int)x;
+          id(restrict_end_minute_input).publish_state(x);
 
 # Zone 1 Schedule Time
   - platform: template
@@ -7492,10 +7522,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone1_start_hour);"
     set_action:
-      - lambda: "id(zone1_start_hour) = x;"
+      - lambda: |-
+          id(zone1_start_hour) = (int)x;
+          id(zone1_schedule_hour).publish_state(x);
 
   - platform: template
     id: zone1_schedule_minute
@@ -7506,10 +7537,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone1_start_minute);"
     set_action:
-      - lambda: "id(zone1_start_minute) = x;"
+      - lambda: |-
+          id(zone1_start_minute) = (int)x;
+          id(zone1_schedule_minute).publish_state(x);
 
 # Zone 2 Schedule Time
   - platform: template
@@ -7521,10 +7553,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone2_start_hour);"
     set_action:
-      - lambda: "id(zone2_start_hour) = x;"
+      - lambda: |-
+          id(zone2_start_hour) = (int)x;
+          id(zone2_schedule_hour).publish_state(x);
 
   - platform: template
     id: zone2_schedule_minute
@@ -7535,10 +7568,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone2_start_minute);"
     set_action:
-      - lambda: "id(zone2_start_minute) = x;"
+      - lambda: |-
+          id(zone2_start_minute) = (int)x;
+          id(zone2_schedule_minute).publish_state(x);
 
   # Zone 3 Schedule Time
   - platform: template
@@ -7550,10 +7584,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone3_start_hour);"
     set_action:
-      - lambda: "id(zone3_start_hour) = x;"
+      - lambda: |-
+          id(zone3_start_hour) = (int)x;
+          id(zone3_schedule_hour).publish_state(x);
 
   - platform: template
     id: zone3_schedule_minute
@@ -7564,10 +7599,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone3_start_minute);"
     set_action:
-      - lambda: "id(zone3_start_minute) = x;"
+      - lambda: |-
+          id(zone3_start_minute) = (int)x;
+          id(zone3_schedule_minute).publish_state(x);
 
   # Zone 4 Schedule Time
   - platform: template
@@ -7579,10 +7615,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone4_start_hour);"
     set_action:
-      - lambda: "id(zone4_start_hour) = x;"
+      - lambda: |-
+          id(zone4_start_hour) = (int)x;
+          id(zone4_schedule_hour).publish_state(x);
 
   - platform: template
     id: zone4_schedule_minute
@@ -7593,10 +7630,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone4_start_minute);"
     set_action:
-      - lambda: "id(zone4_start_minute) = x;"
+      - lambda: |-
+          id(zone4_start_minute) = (int)x;
+          id(zone4_schedule_minute).publish_state(x);
 
   # Zone 5 Schedule Time
   - platform: template
@@ -7608,10 +7646,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone5_start_hour);"
     set_action:
-      - lambda: "id(zone5_start_hour) = x;"
+      - lambda: |-
+          id(zone5_start_hour) = (int)x;
+          id(zone5_schedule_hour).publish_state(x);
 
   - platform: template
     id: zone5_schedule_minute
@@ -7622,10 +7661,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone5_start_minute);"
     set_action:
-      - lambda: "id(zone5_start_minute) = x;"
+      - lambda: |-
+          id(zone5_start_minute) = (int)x;
+          id(zone5_schedule_minute).publish_state(x);
 
   # Zone 6 Schedule Time
   - platform: template
@@ -7637,10 +7677,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone6_start_hour);"
     set_action:
-      - lambda: "id(zone6_start_hour) = x;"
+      - lambda: |-
+          id(zone6_start_hour) = (int)x;
+          id(zone6_schedule_hour).publish_state(x);
 
   - platform: template
     id: zone6_schedule_minute
@@ -7651,10 +7692,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone6_start_minute);"
     set_action:
-      - lambda: "id(zone6_start_minute) = x;"
+      - lambda: |-
+          id(zone6_start_minute) = (int)x;
+          id(zone6_schedule_minute).publish_state(x);
 
   # Zone 7 Schedule Time
   - platform: template
@@ -7666,10 +7708,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone7_start_hour);"
     set_action:
-      - lambda: "id(zone7_start_hour) = x;"
+      - lambda: |-
+          id(zone7_start_hour) = (int)x;
+          id(zone7_schedule_hour).publish_state(x);
 
   - platform: template
     id: zone7_schedule_minute
@@ -7680,10 +7723,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone7_start_minute);"
     set_action:
-      - lambda: "id(zone7_start_minute) = x;"
+      - lambda: |-
+          id(zone7_start_minute) = (int)x;
+          id(zone7_schedule_minute).publish_state(x);
 
   # Zone 8 Schedule Time
   - platform: template
@@ -7695,10 +7739,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone8_start_hour);"
     set_action:
-      - lambda: "id(zone8_start_hour) = x;"
+      - lambda: |-
+          id(zone8_start_hour) = (int)x;
+          id(zone8_schedule_hour).publish_state(x);
 
   - platform: template
     id: zone8_schedule_minute
@@ -7709,10 +7754,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone8_start_minute);"
     set_action:
-      - lambda: "id(zone8_start_minute) = x;"
+      - lambda: |-
+          id(zone8_start_minute) = (int)x;
+          id(zone8_schedule_minute).publish_state(x);
 
 # Program 1 start time
   - platform: template
@@ -7724,10 +7770,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_a_start_hour);"
     set_action:
-      - lambda: "id(program_a_start_hour) = x;"
+      - lambda: |-
+          id(program_a_start_hour) = (int)x;
+          id(program_a_start_hour_input).publish_state(x);
 
   - platform: template
     id: program_a_start_minute_input
@@ -7738,10 +7785,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_a_start_minute);"
     set_action:
-      - lambda: "id(program_a_start_minute) = x;"
+      - lambda: |-
+          id(program_a_start_minute) = (int)x;
+          id(program_a_start_minute_input).publish_state(x);
 
   - platform: template
     id: program_a_interval_input
@@ -7752,10 +7800,11 @@ number:
     icon: "mdi:calendar-range"
     mode: box
     unit_of_measurement: "days"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_a_interval_days);"
     set_action:
-      - lambda: "id(program_a_interval_days) = x;"
+      - lambda: |-
+          id(program_a_interval_days) = (int)x;
+          id(program_a_interval_input).publish_state(x);
 
   # Program 2 start time
   - platform: template
@@ -7767,10 +7816,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_b_start_hour);"
     set_action:
-      - lambda: "id(program_b_start_hour) = x;"
+      - lambda: |-
+          id(program_b_start_hour) = (int)x;
+          id(program_b_start_hour_input).publish_state(x);
 
   - platform: template
     id: program_b_start_minute_input
@@ -7781,10 +7831,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_b_start_minute);"
     set_action:
-      - lambda: "id(program_b_start_minute) = x;"
+      - lambda: |-
+          id(program_b_start_minute) = (int)x;
+          id(program_b_start_minute_input).publish_state(x);
 
   - platform: template
     id: program_b_interval_input
@@ -7795,10 +7846,11 @@ number:
     icon: "mdi:calendar-range"
     mode: box
     unit_of_measurement: "days"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_b_interval_days);"
     set_action:
-      - lambda: "id(program_b_interval_days) = x;"
+      - lambda: |-
+          id(program_b_interval_days) = (int)x;
+          id(program_b_interval_input).publish_state(x);
 
   # Program 3 start time
   - platform: template
@@ -7810,10 +7862,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_c_start_hour);"
     set_action:
-      - lambda: "id(program_c_start_hour) = x;"
+      - lambda: |-
+          id(program_c_start_hour) = (int)x;
+          id(program_c_start_hour_input).publish_state(x);
 
   - platform: template
     id: program_c_start_minute_input
@@ -7824,10 +7877,11 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_c_start_minute);"
     set_action:
-      - lambda: "id(program_c_start_minute) = x;"
+      - lambda: |-
+          id(program_c_start_minute) = (int)x;
+          id(program_c_start_minute_input).publish_state(x);
 
   - platform: template
     id: program_c_interval_input
@@ -7838,10 +7892,11 @@ number:
     icon: "mdi:calendar-range"
     mode: box
     unit_of_measurement: "days"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_c_interval_days);"
     set_action:
-      - lambda: "id(program_c_interval_days) = x;"
+      - lambda: |-
+          id(program_c_interval_days) = (int)x;
+          id(program_c_interval_input).publish_state(x);
 # Insert this section after line 6156 (after program_c_interval_input)
 
   # ═══════════════════════════════════════════════════════════
@@ -7861,10 +7916,11 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_a_start_hour_2);"
     set_action:
-      - lambda: "id(program_a_start_hour_2) = x;"
+      - lambda: |-
+          id(program_a_start_hour_2) = (int)x;
+          id(program_a_start_hour_2_input).publish_state(x);
   
   - platform: template
     id: program_a_start_minute_2_input
@@ -7874,10 +7930,11 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_a_start_minute_2);"
     set_action:
-      - lambda: "id(program_a_start_minute_2) = x;"
+      - lambda: |-
+          id(program_a_start_minute_2) = (int)x;
+          id(program_a_start_minute_2_input).publish_state(x);
   
   - platform: template
     id: program_a_start_hour_3_input
@@ -7887,10 +7944,11 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_a_start_hour_3);"
     set_action:
-      - lambda: "id(program_a_start_hour_3) = x;"
+      - lambda: |-
+          id(program_a_start_hour_3) = (int)x;
+          id(program_a_start_hour_3_input).publish_state(x);
   
   - platform: template
     id: program_a_start_minute_3_input
@@ -7900,10 +7958,11 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_a_start_minute_3);"
     set_action:
-      - lambda: "id(program_a_start_minute_3) = x;"
+      - lambda: |-
+          id(program_a_start_minute_3) = (int)x;
+          id(program_a_start_minute_3_input).publish_state(x);
   
   - platform: template
     id: program_a_start_hour_4_input
@@ -7913,10 +7972,11 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_a_start_hour_4);"
     set_action:
-      - lambda: "id(program_a_start_hour_4) = x;"
+      - lambda: |-
+          id(program_a_start_hour_4) = (int)x;
+          id(program_a_start_hour_4_input).publish_state(x);
   
   - platform: template
     id: program_a_start_minute_4_input
@@ -7926,10 +7986,11 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_a_start_minute_4);"
     set_action:
-      - lambda: "id(program_a_start_minute_4) = x;"
+      - lambda: |-
+          id(program_a_start_minute_4) = (int)x;
+          id(program_a_start_minute_4_input).publish_state(x);
   
   # ─── PROGRAM B - ADDITIONAL START TIMES ───
   - platform: template
@@ -7940,10 +8001,11 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_b_start_hour_2);"
     set_action:
-      - lambda: "id(program_b_start_hour_2) = x;"
+      - lambda: |-
+          id(program_b_start_hour_2) = (int)x;
+          id(program_b_start_hour_2_input).publish_state(x);
   
   - platform: template
     id: program_b_start_minute_2_input
@@ -7953,10 +8015,11 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_b_start_minute_2);"
     set_action:
-      - lambda: "id(program_b_start_minute_2) = x;"
+      - lambda: |-
+          id(program_b_start_minute_2) = (int)x;
+          id(program_b_start_minute_2_input).publish_state(x);
   
   - platform: template
     id: program_b_start_hour_3_input
@@ -7966,10 +8029,11 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_b_start_hour_3);"
     set_action:
-      - lambda: "id(program_b_start_hour_3) = x;"
+      - lambda: |-
+          id(program_b_start_hour_3) = (int)x;
+          id(program_b_start_hour_3_input).publish_state(x);
   
   - platform: template
     id: program_b_start_minute_3_input
@@ -7979,10 +8043,11 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_b_start_minute_3);"
     set_action:
-      - lambda: "id(program_b_start_minute_3) = x;"
+      - lambda: |-
+          id(program_b_start_minute_3) = (int)x;
+          id(program_b_start_minute_3_input).publish_state(x);
   
   - platform: template
     id: program_b_start_hour_4_input
@@ -7992,10 +8057,11 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_b_start_hour_4);"
     set_action:
-      - lambda: "id(program_b_start_hour_4) = x;"
+      - lambda: |-
+          id(program_b_start_hour_4) = (int)x;
+          id(program_b_start_hour_4_input).publish_state(x);
   
   - platform: template
     id: program_b_start_minute_4_input
@@ -8005,10 +8071,11 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_b_start_minute_4);"
     set_action:
-      - lambda: "id(program_b_start_minute_4) = x;"
+      - lambda: |-
+          id(program_b_start_minute_4) = (int)x;
+          id(program_b_start_minute_4_input).publish_state(x);
   
   # ─── PROGRAM C - ADDITIONAL START TIMES ───
   - platform: template
@@ -8019,10 +8086,11 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_c_start_hour_2);"
     set_action:
-      - lambda: "id(program_c_start_hour_2) = x;"
+      - lambda: |-
+          id(program_c_start_hour_2) = (int)x;
+          id(program_c_start_hour_2_input).publish_state(x);
   
   - platform: template
     id: program_c_start_minute_2_input
@@ -8032,10 +8100,11 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_c_start_minute_2);"
     set_action:
-      - lambda: "id(program_c_start_minute_2) = x;"
+      - lambda: |-
+          id(program_c_start_minute_2) = (int)x;
+          id(program_c_start_minute_2_input).publish_state(x);
   
   - platform: template
     id: program_c_start_hour_3_input
@@ -8045,10 +8114,11 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_c_start_hour_3);"
     set_action:
-      - lambda: "id(program_c_start_hour_3) = x;"
+      - lambda: |-
+          id(program_c_start_hour_3) = (int)x;
+          id(program_c_start_hour_3_input).publish_state(x);
   
   - platform: template
     id: program_c_start_minute_3_input
@@ -8058,10 +8128,11 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_c_start_minute_3);"
     set_action:
-      - lambda: "id(program_c_start_minute_3) = x;"
+      - lambda: |-
+          id(program_c_start_minute_3) = (int)x;
+          id(program_c_start_minute_3_input).publish_state(x);
   
   - platform: template
     id: program_c_start_hour_4_input
@@ -8071,10 +8142,11 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_c_start_hour_4);"
     set_action:
-      - lambda: "id(program_c_start_hour_4) = x;"
+      - lambda: |-
+          id(program_c_start_hour_4) = (int)x;
+          id(program_c_start_hour_4_input).publish_state(x);
   
   - platform: template
     id: program_c_start_minute_4_input
@@ -8084,10 +8156,11 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    optimistic: true
-    update_interval: never
+    lambda: "return id(program_c_start_minute_4);"
     set_action:
-      - lambda: "id(program_c_start_minute_4) = x;"
+      - lambda: |-
+          id(program_c_start_minute_4) = (int)x;
+          id(program_c_start_minute_4_input).publish_state(x);
   
   # ───────────────────────────────────────────────────────────
   # OPTION 2: PER-PROGRAM ZONE DURATIONS (8 zones × 3 programs)
@@ -8104,10 +8177,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone1_program_a_duration);"
     set_action:
-      - lambda: "id(zone1_program_a_duration) = x;"
+      - lambda: |-
+          id(zone1_program_a_duration) = (int)x;
+          id(zone1_program_a_duration_input).publish_state(x);
   
   - platform: template
     id: zone1_program_b_duration_input
@@ -8118,10 +8192,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone1_program_b_duration);"
     set_action:
-      - lambda: "id(zone1_program_b_duration) = x;"
+      - lambda: |-
+          id(zone1_program_b_duration) = (int)x;
+          id(zone1_program_b_duration_input).publish_state(x);
   
   - platform: template
     id: zone1_program_c_duration_input
@@ -8132,10 +8207,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone1_program_c_duration);"
     set_action:
-      - lambda: "id(zone1_program_c_duration) = x;"
+      - lambda: |-
+          id(zone1_program_c_duration) = (int)x;
+          id(zone1_program_c_duration_input).publish_state(x);
   
   # ─── ZONE 2 PROGRAM DURATIONS ───
   - platform: template
@@ -8147,10 +8223,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone2_program_a_duration);"
     set_action:
-      - lambda: "id(zone2_program_a_duration) = x;"
+      - lambda: |-
+          id(zone2_program_a_duration) = (int)x;
+          id(zone2_program_a_duration_input).publish_state(x);
   
   - platform: template
     id: zone2_program_b_duration_input
@@ -8161,10 +8238,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone2_program_b_duration);"
     set_action:
-      - lambda: "id(zone2_program_b_duration) = x;"
+      - lambda: |-
+          id(zone2_program_b_duration) = (int)x;
+          id(zone2_program_b_duration_input).publish_state(x);
   
   - platform: template
     id: zone2_program_c_duration_input
@@ -8175,10 +8253,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone2_program_c_duration);"
     set_action:
-      - lambda: "id(zone2_program_c_duration) = x;"
+      - lambda: |-
+          id(zone2_program_c_duration) = (int)x;
+          id(zone2_program_c_duration_input).publish_state(x);
   
   # ─── ZONE 3 PROGRAM DURATIONS ───
   - platform: template
@@ -8190,10 +8269,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone3_program_a_duration);"
     set_action:
-      - lambda: "id(zone3_program_a_duration) = x;"
+      - lambda: |-
+          id(zone3_program_a_duration) = (int)x;
+          id(zone3_program_a_duration_input).publish_state(x);
   
   - platform: template
     id: zone3_program_b_duration_input
@@ -8204,10 +8284,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone3_program_b_duration);"
     set_action:
-      - lambda: "id(zone3_program_b_duration) = x;"
+      - lambda: |-
+          id(zone3_program_b_duration) = (int)x;
+          id(zone3_program_b_duration_input).publish_state(x);
   
   - platform: template
     id: zone3_program_c_duration_input
@@ -8218,10 +8299,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone3_program_c_duration);"
     set_action:
-      - lambda: "id(zone3_program_c_duration) = x;"
+      - lambda: |-
+          id(zone3_program_c_duration) = (int)x;
+          id(zone3_program_c_duration_input).publish_state(x);
   
   # ─── ZONE 4 PROGRAM DURATIONS ───
   - platform: template
@@ -8233,10 +8315,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone4_program_a_duration);"
     set_action:
-      - lambda: "id(zone4_program_a_duration) = x;"
+      - lambda: |-
+          id(zone4_program_a_duration) = (int)x;
+          id(zone4_program_a_duration_input).publish_state(x);
   
   - platform: template
     id: zone4_program_b_duration_input
@@ -8247,10 +8330,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone4_program_b_duration);"
     set_action:
-      - lambda: "id(zone4_program_b_duration) = x;"
+      - lambda: |-
+          id(zone4_program_b_duration) = (int)x;
+          id(zone4_program_b_duration_input).publish_state(x);
   
   - platform: template
     id: zone4_program_c_duration_input
@@ -8261,10 +8345,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone4_program_c_duration);"
     set_action:
-      - lambda: "id(zone4_program_c_duration) = x;"
+      - lambda: |-
+          id(zone4_program_c_duration) = (int)x;
+          id(zone4_program_c_duration_input).publish_state(x);
   
   # ─── ZONE 5 PROGRAM DURATIONS ───
   - platform: template
@@ -8276,10 +8361,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone5_program_a_duration);"
     set_action:
-      - lambda: "id(zone5_program_a_duration) = x;"
+      - lambda: |-
+          id(zone5_program_a_duration) = (int)x;
+          id(zone5_program_a_duration_input).publish_state(x);
   
   - platform: template
     id: zone5_program_b_duration_input
@@ -8290,10 +8376,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone5_program_b_duration);"
     set_action:
-      - lambda: "id(zone5_program_b_duration) = x;"
+      - lambda: |-
+          id(zone5_program_b_duration) = (int)x;
+          id(zone5_program_b_duration_input).publish_state(x);
   
   - platform: template
     id: zone5_program_c_duration_input
@@ -8304,10 +8391,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone5_program_c_duration);"
     set_action:
-      - lambda: "id(zone5_program_c_duration) = x;"
+      - lambda: |-
+          id(zone5_program_c_duration) = (int)x;
+          id(zone5_program_c_duration_input).publish_state(x);
   
   # ─── ZONE 6 PROGRAM DURATIONS ───
   - platform: template
@@ -8319,10 +8407,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone6_program_a_duration);"
     set_action:
-      - lambda: "id(zone6_program_a_duration) = x;"
+      - lambda: |-
+          id(zone6_program_a_duration) = (int)x;
+          id(zone6_program_a_duration_input).publish_state(x);
   
   - platform: template
     id: zone6_program_b_duration_input
@@ -8333,10 +8422,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone6_program_b_duration);"
     set_action:
-      - lambda: "id(zone6_program_b_duration) = x;"
+      - lambda: |-
+          id(zone6_program_b_duration) = (int)x;
+          id(zone6_program_b_duration_input).publish_state(x);
   
   - platform: template
     id: zone6_program_c_duration_input
@@ -8347,10 +8437,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone6_program_c_duration);"
     set_action:
-      - lambda: "id(zone6_program_c_duration) = x;"
+      - lambda: |-
+          id(zone6_program_c_duration) = (int)x;
+          id(zone6_program_c_duration_input).publish_state(x);
   
   # ─── ZONE 7 PROGRAM DURATIONS ───
   - platform: template
@@ -8362,10 +8453,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone7_program_a_duration);"
     set_action:
-      - lambda: "id(zone7_program_a_duration) = x;"
+      - lambda: |-
+          id(zone7_program_a_duration) = (int)x;
+          id(zone7_program_a_duration_input).publish_state(x);
   
   - platform: template
     id: zone7_program_b_duration_input
@@ -8376,10 +8468,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone7_program_b_duration);"
     set_action:
-      - lambda: "id(zone7_program_b_duration) = x;"
+      - lambda: |-
+          id(zone7_program_b_duration) = (int)x;
+          id(zone7_program_b_duration_input).publish_state(x);
   
   - platform: template
     id: zone7_program_c_duration_input
@@ -8390,10 +8483,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone7_program_c_duration);"
     set_action:
-      - lambda: "id(zone7_program_c_duration) = x;"
+      - lambda: |-
+          id(zone7_program_c_duration) = (int)x;
+          id(zone7_program_c_duration_input).publish_state(x);
   
   # ─── ZONE 8 PROGRAM DURATIONS ───
   - platform: template
@@ -8405,10 +8499,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone8_program_a_duration);"
     set_action:
-      - lambda: "id(zone8_program_a_duration) = x;"
+      - lambda: |-
+          id(zone8_program_a_duration) = (int)x;
+          id(zone8_program_a_duration_input).publish_state(x);
   
   - platform: template
     id: zone8_program_b_duration_input
@@ -8419,10 +8514,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone8_program_b_duration);"
     set_action:
-      - lambda: "id(zone8_program_b_duration) = x;"
+      - lambda: |-
+          id(zone8_program_b_duration) = (int)x;
+          id(zone8_program_b_duration_input).publish_state(x);
   
   - platform: template
     id: zone8_program_c_duration_input
@@ -8433,10 +8529,11 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(zone8_program_c_duration);"
     set_action:
-      - lambda: "id(zone8_program_c_duration) = x;"
+      - lambda: |-
+          id(zone8_program_c_duration) = (int)x;
+          id(zone8_program_c_duration_input).publish_state(x);
 
   # ═══════════════════════════════════════════════
   # SEASONAL ADJUSTMENT MULTIPLIERS (Whanganui - Southern Hemisphere)
@@ -8452,7 +8549,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_jan);"
     set_action:
-      - lambda: "id(seasonal_jan) = x;"
+      - lambda: |-
+          id(seasonal_jan) = x;
+          id(seasonal_jan_input).publish_state(x);
 
   - platform: template
     id: seasonal_feb_input
@@ -8464,7 +8563,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_feb);"
     set_action:
-      - lambda: "id(seasonal_feb) = x;"
+      - lambda: |-
+          id(seasonal_feb) = x;
+          id(seasonal_feb_input).publish_state(x);
 
   - platform: template
     id: seasonal_mar_input
@@ -8476,7 +8577,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_mar);"
     set_action:
-      - lambda: "id(seasonal_mar) = x;"
+      - lambda: |-
+          id(seasonal_mar) = x;
+          id(seasonal_mar_input).publish_state(x);
 
   - platform: template
     id: seasonal_apr_input
@@ -8488,7 +8591,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_apr);"
     set_action:
-      - lambda: "id(seasonal_apr) = x;"
+      - lambda: |-
+          id(seasonal_apr) = x;
+          id(seasonal_apr_input).publish_state(x);
 
   - platform: template
     id: seasonal_may_input
@@ -8500,7 +8605,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_may);"
     set_action:
-      - lambda: "id(seasonal_may) = x;"
+      - lambda: |-
+          id(seasonal_may) = x;
+          id(seasonal_may_input).publish_state(x);
 
   - platform: template
     id: seasonal_jun_input
@@ -8512,7 +8619,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_jun);"
     set_action:
-      - lambda: "id(seasonal_jun) = x;"
+      - lambda: |-
+          id(seasonal_jun) = x;
+          id(seasonal_jun_input).publish_state(x);
 
   - platform: template
     id: seasonal_jul_input
@@ -8524,7 +8633,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_jul);"
     set_action:
-      - lambda: "id(seasonal_jul) = x;"
+      - lambda: |-
+          id(seasonal_jul) = x;
+          id(seasonal_jul_input).publish_state(x);
 
   - platform: template
     id: seasonal_aug_input
@@ -8536,7 +8647,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_aug);"
     set_action:
-      - lambda: "id(seasonal_aug) = x;"
+      - lambda: |-
+          id(seasonal_aug) = x;
+          id(seasonal_aug_input).publish_state(x);
 
   - platform: template
     id: seasonal_sep_input
@@ -8548,7 +8661,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_sep);"
     set_action:
-      - lambda: "id(seasonal_sep) = x;"
+      - lambda: |-
+          id(seasonal_sep) = x;
+          id(seasonal_sep_input).publish_state(x);
 
   - platform: template
     id: seasonal_oct_input
@@ -8560,7 +8675,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_oct);"
     set_action:
-      - lambda: "id(seasonal_oct) = x;"
+      - lambda: |-
+          id(seasonal_oct) = x;
+          id(seasonal_oct_input).publish_state(x);
 
   - platform: template
     id: seasonal_nov_input
@@ -8572,7 +8689,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_nov);"
     set_action:
-      - lambda: "id(seasonal_nov) = x;"
+      - lambda: |-
+          id(seasonal_nov) = x;
+          id(seasonal_nov_input).publish_state(x);
 
   - platform: template
     id: seasonal_dec_input
@@ -8584,7 +8703,9 @@ number:
     mode: slider
     lambda: "return id(seasonal_dec);"
     set_action:
-      - lambda: "id(seasonal_dec) = x;"
+      - lambda: |-
+          id(seasonal_dec) = x;
+          id(seasonal_dec_input).publish_state(x);
 
   # ═══════════════════════════════════════════════
   # PRODUCTION FEATURES - UI CONTROLS
@@ -8605,6 +8726,7 @@ number:
       - lambda: |-
           id(freeze_threshold) = x;
           ESP_LOGI("irrigation", "❄️ Freeze threshold set to %.1f°C", x);
+          id(freeze_threshold_input).publish_state(x);
   
   # Monthly Water Budget
   - platform: template
@@ -8621,6 +8743,7 @@ number:
       - lambda: |-
           id(monthly_water_budget) = x;
           ESP_LOGI("irrigation", "💰 Monthly water budget set to %.0f L", x);
+          id(monthly_budget_input).publish_state(x);
   
   # Zone Daily Runtime Limit
   - platform: template
@@ -8632,13 +8755,12 @@ number:
     icon: "mdi:timer-sand"
     mode: slider
     unit_of_measurement: "min"
-    optimistic: true
-    update_interval: never
+    lambda: "return id(max_zone_runtime_daily);"
     set_action:
       - lambda: |-
-          id(max_zone_runtime_daily) = x;
-          id(zone_runtime_limit_input).publish_state(x);
+          id(max_zone_runtime_daily) = (int)x;
           ESP_LOGI("irrigation", "⏱️ Zone daily runtime limit set to %.0f minutes", x);
+          id(zone_runtime_limit_input).publish_state(x);
   
   # Watering Window 1 - Start Hour (12-hour format)
   - platform: template
@@ -8673,6 +8795,7 @@ number:
           const char* am_pm = id(window1_start_am_pm) == 0 ? "AM" : "PM";
           ESP_LOGI("irrigation", "🕐 Window 1 start set to %d:%02d %s (%d:%02d 24h)", 
                    hour_12, id(window1_start_minute), am_pm, hour_24, id(window1_start_minute));
+          id(window1_start_input).publish_state(x);
   
   # Watering Window 1 - Start Minute
   - platform: template
@@ -8689,6 +8812,7 @@ number:
       - lambda: |-
           id(window1_start_minute) = (int)x;
           ESP_LOGI("irrigation", "🕐 Window 1 start minute set to :%02d", (int)x);
+          id(window1_start_minute_input).publish_state(x);
   
   # Watering Window 1 - End Hour (12-hour format)
   - platform: template
@@ -8723,6 +8847,7 @@ number:
           const char* am_pm = id(window1_end_am_pm) == 0 ? "AM" : "PM";
           ESP_LOGI("irrigation", "🕐 Window 1 end set to %d:%02d %s (%d:%02d 24h)", 
                    hour_12, id(window1_end_minute), am_pm, hour_24, id(window1_end_minute));
+          id(window1_end_input).publish_state(x);
   
   # Watering Window 1 - End Minute
   - platform: template
@@ -8739,6 +8864,7 @@ number:
       - lambda: |-
           id(window1_end_minute) = (int)x;
           ESP_LOGI("irrigation", "🕐 Window 1 end minute set to :%02d", (int)x);
+          id(window1_end_minute_input).publish_state(x);
   
   # Watering Window 2 - Start Hour (12-hour format)
   - platform: template
@@ -8773,6 +8899,7 @@ number:
           const char* am_pm = id(window2_start_am_pm) == 0 ? "AM" : "PM";
           ESP_LOGI("irrigation", "🕐 Window 2 start set to %d:%02d %s (%d:%02d 24h)", 
                    hour_12, id(window2_start_minute), am_pm, hour_24, id(window2_start_minute));
+          id(window2_start_input).publish_state(x);
   
   # Watering Window 2 - Start Minute
   - platform: template
@@ -8789,6 +8916,7 @@ number:
       - lambda: |-
           id(window2_start_minute) = (int)x;
           ESP_LOGI("irrigation", "🕐 Window 2 start minute set to :%02d", (int)x);
+          id(window2_start_minute_input).publish_state(x);
   
   # Watering Window 2 - End Hour (12-hour format)
   - platform: template
@@ -8823,6 +8951,7 @@ number:
           const char* am_pm = id(window2_end_am_pm) == 0 ? "AM" : "PM";
           ESP_LOGI("irrigation", "🕐 Window 2 end set to %d:%02d %s (%d:%02d 24h)", 
                    hour_12, id(window2_end_minute), am_pm, hour_24, id(window2_end_minute));
+          id(window2_end_input).publish_state(x);
   
   # Watering Window 2 - End Minute
   - platform: template
@@ -8839,6 +8968,7 @@ number:
       - lambda: |-
           id(window2_end_minute) = (int)x;
           ESP_LOGI("irrigation", "🕐 Window 2 end minute set to :%02d", (int)x);
+          id(window2_end_minute_input).publish_state(x);
   
   # ═══════════════════════════════════════════════════════════
   # WATERING WINDOW 3 (Optional - for additional ET runs)
@@ -8877,6 +9007,7 @@ number:
           const char* am_pm = id(window3_start_am_pm) == 0 ? "AM" : "PM";
           ESP_LOGI("irrigation", "🕐 Window 3 start set to %d:%02d %s (%d:%02d 24h)", 
                    hour_12, id(window3_start_minute), am_pm, hour_24, id(window3_start_minute));
+          id(window3_start_input).publish_state(x);
   
   # Watering Window 3 - Start Minute
   - platform: template
@@ -8893,6 +9024,7 @@ number:
       - lambda: |-
           id(window3_start_minute) = (int)x;
           ESP_LOGI("irrigation", "🕐 Window 3 start minute set to :%02d", (int)x);
+          id(window3_start_minute_input).publish_state(x);
   
   # Watering Window 3 - End Hour (12-hour format)
   - platform: template
@@ -8927,6 +9059,7 @@ number:
           const char* am_pm = id(window3_end_am_pm) == 0 ? "AM" : "PM";
           ESP_LOGI("irrigation", "🕐 Window 3 end set to %d:%02d %s (%d:%02d 24h)", 
                    hour_12, id(window3_end_minute), am_pm, hour_24, id(window3_end_minute));
+          id(window3_end_input).publish_state(x);
   
   # Watering Window 3 - End Minute
   - platform: template
@@ -8943,6 +9076,7 @@ number:
       - lambda: |-
           id(window3_end_minute) = (int)x;
           ESP_LOGI("irrigation", "🕐 Window 3 end minute set to :%02d", (int)x);
+          id(window3_end_minute_input).publish_state(x);
 
   # ═══════════════════════════════════════════════
   # ADVANCED FORECAST SYSTEM THRESHOLDS
@@ -9797,13 +9931,6 @@ script:
             } else if (id(is_time_restricted)) {
               ESP_LOGW("irrigation", "   ⏰ Time restricted - will water when allowed");
               id(et_pending_irrigation) = true;
-              // BUG FIX: Restore PW multiplier while waiting — same as system_disabled and
-              // rain_delay paths above. Without this, the ET-boosted multiplier stays set
-              // until restore_pw_multiplier fires (up to 5 min), affecting any run that
-              // starts in that window. et_duration_multiplier is reset to 1.0 so the
-              // restore loop doesn't re-trigger unnecessarily.
-              id(et_duration_multiplier) = 1.0;
-              { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
             } else {
               // Check if current time matches Smart ET schedule
               auto now = id(homeassistant_time).now();
@@ -9843,34 +9970,33 @@ script:
               std::string active_window = "";
               
               // Check Window 1
-              // BUG FIX: Use midnight-safe ternary (same as check_time_restriction).
               if (id(window1_enabled)) {
                 int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
                 int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
-                bool hit = (start_min < end_min)
-                    ? (current_time_minutes >= start_min && current_time_minutes < end_min)
-                    : (current_time_minutes >= start_min || current_time_minutes < end_min);
-                if (hit) { in_window = true; active_window = "Window 1"; }
+                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                  in_window = true;
+                  active_window = "Window 1";
+                }
               }
               
               // Check Window 2
               if (!in_window && id(window2_enabled)) {
                 int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
                 int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
-                bool hit = (start_min < end_min)
-                    ? (current_time_minutes >= start_min && current_time_minutes < end_min)
-                    : (current_time_minutes >= start_min || current_time_minutes < end_min);
-                if (hit) { in_window = true; active_window = "Window 2"; }
+                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                  in_window = true;
+                  active_window = "Window 2";
+                }
               }
               
               // Check Window 3
               if (!in_window && id(window3_enabled)) {
                 int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
                 int end_min = (id(window3_end_hour) * 60) + id(window3_end_minute);
-                bool hit = (start_min < end_min)
-                    ? (current_time_minutes >= start_min && current_time_minutes < end_min)
-                    : (current_time_minutes >= start_min || current_time_minutes < end_min);
-                if (hit) { in_window = true; active_window = "Window 3"; }
+                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                  in_window = true;
+                  active_window = "Window 3";
+                }
               }
               
               if (in_window) {
@@ -9880,6 +10006,7 @@ script:
                 ESP_LOGI("irrigation", "");
                 ESP_LOGI("irrigation", "   ✅ Starting irrigation cycle NOW (%s is open)", active_window.c_str());
                 ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
+                id(et_pending_irrigation) = false;
                 
                 // Turn ON Cycle & Soak for Smart ET
                 id(cycle_soak_switch).turn_on();
@@ -9889,22 +10016,18 @@ script:
                 id(start_all_zones_cycle_soak).press();
                 
                 // BUG #33 FIX: Only clear deficit and record last_water_time when the
-                // run actually started. If the button press was blocked by a safety check,
-                // irrigation_busy stays false and we preserve the deficit so it can be
-                // retried in the next available window.
-                // irrigation_busy is set to true inside the button handler (BUG #47 FIX)
-                // BEFORE execute() is called, so it reflects the outcome synchronously.
+                // run actually started (system was idle). If the system is busy, the run
+                // was just queued — clearing the deficit now would lose the data if the
+                // queued run is later dropped (e.g. freeze kicks in before it executes).
+                // irrigation_busy was set inside run_all_zones_cycle_soak_script which
+                // was just execute()d; since it runs synchronously until its first yield
                 // we check the script directly.
-                // BUG FIX: Also only clear et_pending_irrigation if the run started.
-                // Clearing it when blocked stops the 5-min retry loop for the current window.
-                if (id(irrigation_busy)) {
-                  // Run started immediately — clear deficit and pending so it isn't re-triggered
-                  id(et_pending_irrigation) = false;
+                if (!id(irrigation_busy)) {
+                  // Was queued — preserve deficit data for when it eventually executes
+                  ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
+                } else {
                   id(et_soil_moisture_deficit) = 0;
                   { auto _t2b2 = id(homeassistant_time).now(); if (_t2b2.is_valid()) id(et_last_water_time) = _t2b2.timestamp; }
-                } else {
-                  // Run was BLOCKED by a safety check — preserve deficit AND pending for retry
-                  ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run BLOCKED by safety check — deficit and pending preserved for retry (%.1fmm)", id(et_soil_moisture_deficit));
                 }
               } else {
                 ESP_LOGI("irrigation", "");
@@ -10459,6 +10582,7 @@ script:
           // Blackout check (incl. NZ public holidays via is_blackout_date sensor)
           if (id(is_blackout_date).state) {
             ESP_LOGW("irrigation", "\U0001F6AB Blackout active - blocked");
+            { std::string _r = "🚫 Blackout date active"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
             return;
           }
           
@@ -10470,6 +10594,7 @@ script:
           if (now.is_valid() && id(rain_delay_end_time) > now.timestamp) {
             int64_t rd_days = (id(rain_delay_end_time) - now.timestamp) / ${seconds_per_day};
             ESP_LOGW("irrigation", "🌧️ Zone %d BLOCKED - Rain delay active (%lld day(s) remaining)", zone + 1, rd_days);
+            { char _rb[60]; snprintf(_rb, sizeof(_rb), "🌧️ Zone %d blocked - Rain delay (%lld day(s))", zone + 1, rd_days); std::string _r(_rb); id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
             return;
           }
           
@@ -10477,6 +10602,7 @@ script:
           if (id(freeze_protection_active)) {
             ESP_LOGW("irrigation", "❄️ Zone %d BLOCKED - Freeze protection active (temp: %.1f°C)", 
                      zone + 1, id(outside_temperature).state);
+            { std::string _r = "❄️ Freeze protection active"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
             return;
           }
           
@@ -10485,6 +10611,7 @@ script:
             ESP_LOGW("irrigation", "🚫 Zone %d BLOCKED - Monthly water budget exceeded (%.1fL / %.1fL)",
                      zone + 1, id(current_month_usage), id(monthly_water_budget));
             ESP_LOGW("irrigation", "   Activate budget override to force watering");
+            { std::string _r = "💧 Monthly water budget exceeded"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
             return;
           }
           
@@ -10513,6 +10640,7 @@ script:
               // Daily limit fully consumed — block entirely
               ESP_LOGW("irrigation", "⏱️ Zone %d BLOCKED - Daily runtime limit fully consumed (%.1f/%.1f min)",
                        zone + 1, zone_runtime / 60.0, id(max_zone_runtime_daily));
+              { char _rb[70]; snprintf(_rb, sizeof(_rb), "⏱️ Zone %d blocked - Daily runtime limit reached", zone + 1); std::string _r(_rb); id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
               return;
             } else {
               // Trim duration to remaining budget instead of blocking entirely
@@ -10532,34 +10660,30 @@ script:
               bool in_window = false;
               
               // Check window 1
-              // BUG FIX: Use midnight-safe ternary (same as check_time_restriction).
               if (id(window1_enabled)) {
                 int start_minutes = (id(window1_start_hour) * 60) + id(window1_start_minute);
                 int end_minutes = (id(window1_end_hour) * 60) + id(window1_end_minute);
-                bool hit = (start_minutes < end_minutes)
-                    ? (current_time_minutes >= start_minutes && current_time_minutes < end_minutes)
-                    : (current_time_minutes >= start_minutes || current_time_minutes < end_minutes);
-                if (hit) in_window = true;
+                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
+                  in_window = true;
+                }
               }
               
               // Check window 2
               if (id(window2_enabled)) {
                 int start_minutes = (id(window2_start_hour) * 60) + id(window2_start_minute);
                 int end_minutes = (id(window2_end_hour) * 60) + id(window2_end_minute);
-                bool hit = (start_minutes < end_minutes)
-                    ? (current_time_minutes >= start_minutes && current_time_minutes < end_minutes)
-                    : (current_time_minutes >= start_minutes || current_time_minutes < end_minutes);
-                if (hit) in_window = true;
+                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
+                  in_window = true;
+                }
               }
               
               // Check window 3
               if (id(window3_enabled)) {
                 int start_minutes = (id(window3_start_hour) * 60) + id(window3_start_minute);
                 int end_minutes = (id(window3_end_hour) * 60) + id(window3_end_minute);
-                bool hit = (start_minutes < end_minutes)
-                    ? (current_time_minutes >= start_minutes && current_time_minutes < end_minutes)
-                    : (current_time_minutes >= start_minutes || current_time_minutes < end_minutes);
-                if (hit) in_window = true;
+                if (start_minutes <= current_time_minutes && current_time_minutes < end_minutes) {
+                  in_window = true;
+                }
               }
               
               // If all windows disabled, allow anytime
@@ -10594,11 +10718,13 @@ script:
           // CRITICAL: Check if irrigation system is enabled
           if (!id(irrigation_system_enable).state) {
             ESP_LOGW("irrigation", "🚫 Zone %d BLOCKED - Irrigation system is DISABLED", zone + 1);
+            { std::string _r = "🚫 Irrigation system disabled"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
             return;
           }
           
           if (id(is_paused)) {
             ESP_LOGW("irrigation", "⏸ Paused - cannot start Zone %d", zone + 1);
+            { std::string _r = "⏸️ System is paused"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
             return;
           }
 
@@ -10616,6 +10742,7 @@ script:
           }
           if (!zone_enabled) {
             ESP_LOGW("irrigation", "🚫 Zone %d is DISABLED - will not run", zone + 1);
+            { char _rb[40]; snprintf(_rb, sizeof(_rb), "🚫 Zone %d is disabled", zone + 1); std::string _r(_rb); id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
             return;
           }
           ESP_LOGI("irrigation", "✓ Zone %d is ENABLED - proceeding", zone + 1);
@@ -10627,6 +10754,7 @@ script:
               if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
                 ESP_LOGW("irrigation", "⛈️ Zone %d BLOCKED - Bad weather: %s (Enable Weather Override to force)", 
                          zone + 1, weather.c_str());
+                { std::string _r = "⛈️ Bad weather blocked"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
                 return;
               }
             }
@@ -10639,6 +10767,7 @@ script:
           if (!allow_queue) {
             if (id(is_time_restricted)) {
               ESP_LOGW("irrigation", "⏰ Zone %d blocked - time restriction active", zone + 1);
+              { std::string _r = "⏰ Time restriction active"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
               return;
             }
             ESP_LOGI("irrigation", "✓ Time restriction check PASSED for Zone %d", zone + 1);
@@ -10688,11 +10817,14 @@ script:
             } else {
               ESP_LOGW("irrigation", "🚫 Busy - manual Zone %d start blocked", zone + 1);
             }
+            { std::string _r = "🔒 System busy"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
             return;
           }
 
           ESP_LOGI("irrigation", "▶️ Starting Zone %d immediately (system idle)", zone + 1);
           ESP_LOGI("irrigation", "   ✅ All safety checks passed");
+          id(last_zone_block_reason) = "";
+          id(zone_block_reason_sensor).publish_state("None");
           
           // Set trigger source from parameter
           id(watering_trigger_source) = trigger_source;
@@ -11836,9 +11968,6 @@ script:
                                                 : (now_min >= start_min || now_min < end_min);
           
           id(is_time_restricted) = blocked;
-      # Push updated state to HA immediately (sensors use update_interval: never)
-      - component.update: time_restriction_status
-      - component.update: time_restriction_next_allowed
 
 
 ###############################################
@@ -12275,7 +12404,9 @@ select:
       - "PM"
     lambda: "return (id(program_a_am_pm_2) == 0) ? std::string(\"AM\") : std::string(\"PM\");"
     set_action:
-      - lambda: "id(program_a_am_pm_2) = (x == \"AM\") ? 0 : 1;"
+      - lambda: |-
+          id(program_a_am_pm_2) = (x == "AM") ? 0 : 1;
+          id(program_a_am_pm_select_2).publish_state(x);
   
   - platform: template
     id: program_a_am_pm_select_3
@@ -12286,7 +12417,9 @@ select:
       - "PM"
     lambda: "return (id(program_a_am_pm_3) == 0) ? std::string(\"AM\") : std::string(\"PM\");"
     set_action:
-      - lambda: "id(program_a_am_pm_3) = (x == \"AM\") ? 0 : 1;"
+      - lambda: |-
+          id(program_a_am_pm_3) = (x == "AM") ? 0 : 1;
+          id(program_a_am_pm_select_3).publish_state(x);
   
   - platform: template
     id: program_a_am_pm_select_4
@@ -12297,7 +12430,9 @@ select:
       - "PM"
     lambda: "return (id(program_a_am_pm_4) == 0) ? std::string(\"AM\") : std::string(\"PM\");"
     set_action:
-      - lambda: "id(program_a_am_pm_4) = (x == \"AM\") ? 0 : 1;"
+      - lambda: |-
+          id(program_a_am_pm_4) = (x == "AM") ? 0 : 1;
+          id(program_a_am_pm_select_4).publish_state(x);
   
   - platform: template
     id: program_b_am_pm_select_2
@@ -12308,7 +12443,9 @@ select:
       - "PM"
     lambda: "return (id(program_b_am_pm_2) == 0) ? std::string(\"AM\") : std::string(\"PM\");"
     set_action:
-      - lambda: "id(program_b_am_pm_2) = (x == \"AM\") ? 0 : 1;"
+      - lambda: |-
+          id(program_b_am_pm_2) = (x == "AM") ? 0 : 1;
+          id(program_b_am_pm_select_2).publish_state(x);
   
   - platform: template
     id: program_b_am_pm_select_3
@@ -12319,7 +12456,9 @@ select:
       - "PM"
     lambda: "return (id(program_b_am_pm_3) == 0) ? std::string(\"AM\") : std::string(\"PM\");"
     set_action:
-      - lambda: "id(program_b_am_pm_3) = (x == \"AM\") ? 0 : 1;"
+      - lambda: |-
+          id(program_b_am_pm_3) = (x == "AM") ? 0 : 1;
+          id(program_b_am_pm_select_3).publish_state(x);
   
   - platform: template
     id: program_b_am_pm_select_4
@@ -12330,7 +12469,9 @@ select:
       - "PM"
     lambda: "return (id(program_b_am_pm_4) == 0) ? std::string(\"AM\") : std::string(\"PM\");"
     set_action:
-      - lambda: "id(program_b_am_pm_4) = (x == \"AM\") ? 0 : 1;"
+      - lambda: |-
+          id(program_b_am_pm_4) = (x == "AM") ? 0 : 1;
+          id(program_b_am_pm_select_4).publish_state(x);
   
   - platform: template
     id: program_c_am_pm_select_2
@@ -12341,7 +12482,9 @@ select:
       - "PM"
     lambda: "return (id(program_c_am_pm_2) == 0) ? std::string(\"AM\") : std::string(\"PM\");"
     set_action:
-      - lambda: "id(program_c_am_pm_2) = (x == \"AM\") ? 0 : 1;"
+      - lambda: |-
+          id(program_c_am_pm_2) = (x == "AM") ? 0 : 1;
+          id(program_c_am_pm_select_2).publish_state(x);
   
   - platform: template
     id: program_c_am_pm_select_3
@@ -12352,7 +12495,9 @@ select:
       - "PM"
     lambda: "return (id(program_c_am_pm_3) == 0) ? std::string(\"AM\") : std::string(\"PM\");"
     set_action:
-      - lambda: "id(program_c_am_pm_3) = (x == \"AM\") ? 0 : 1;"
+      - lambda: |-
+          id(program_c_am_pm_3) = (x == "AM") ? 0 : 1;
+          id(program_c_am_pm_select_3).publish_state(x);
   
   - platform: template
     id: program_c_am_pm_select_4
@@ -12363,7 +12508,9 @@ select:
       - "PM"
     lambda: "return (id(program_c_am_pm_4) == 0) ? std::string(\"AM\") : std::string(\"PM\");"
     set_action:
-      - lambda: "id(program_c_am_pm_4) = (x == \"AM\") ? 0 : 1;"
+      - lambda: |-
+          id(program_c_am_pm_4) = (x == "AM") ? 0 : 1;
+          id(program_c_am_pm_select_4).publish_state(x);
 
 
   # Zone Schedule AM-PM Selectors
@@ -12682,7 +12829,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "${dev1_zone1}"
+    initial_value: "$dev1_zone1"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12693,7 +12840,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "${dev1_zone2}"
+    initial_value: "$dev1_zone2"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12705,7 +12852,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "${dev1_zone3}"
+    initial_value: "$dev1_zone3"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12716,7 +12863,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "${dev1_zone4}"
+    initial_value: "$dev1_zone4"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12727,7 +12874,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "${dev1_zone5}"
+    initial_value: "$dev1_zone5"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12738,7 +12885,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "${dev1_zone6}"
+    initial_value: "$dev1_zone6"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12749,7 +12896,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "${dev1_zone7}"
+    initial_value: "$dev1_zone7"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -12760,7 +12907,7 @@ text:
     optimistic: true
     min_length: 1
     max_length: 20
-    initial_value: "${dev1_zone8}"
+    initial_value: "$dev1_zone8"
     mode: text
     restore_value: True  # USER SETTING - must persist across reboots
 
@@ -14203,6 +14350,19 @@ switch:
           id(cycle_soak_soak_end_time) = 0;
           id(resume_csa_blocked) = false;
           id(watering_trigger_source) = "Idle";
+          // BUG #49 FIX: Clear pause state variables — without this, if system is disabled
+          // while paused, paused_zone/paused_cycle/etc. remain non-zero. On re-enable the
+          // resume button sees is_paused=false so it shows "nothing to resume" (correct), but
+          // internal state is inconsistent. Clearing here matches Stop button cleanup pattern.
+          id(paused_zone) = -1;
+          id(paused_cycle) = 0;
+          id(time_remaining_when_paused) = 0;
+          id(paused_was_soaking) = false;
+          id(paused_soak_remaining_seconds) = 0;
+          id(paused_total_cycles) = 0;
+          id(paused_cycle_soak_total_duration) = 0;
+          id(paused_cycle_soak_elapsed_time) = 0;
+          id(soak_countdown_seconds) = 0;
           ESP_LOGI("irrigation", "Irrigation system DISABLED — all scripts stopped, state cleared");
       - text_sensor.template.publish:
           id: dev1_valve_status
@@ -15926,12 +16086,8 @@ button:
           ESP_LOGI("irrigation", "🔄 ═══════════════════════════════════════════════");
           
           // Get current day to check if we need to log
-          // BUG FIX: Use day_of_month (1-31) to match the watchdog's daily-reset check.
-          // Was day_of_year (1-366), which never matches the watchdog's day_of_month
-          // comparison — causing a false "New day detected" log within 30s of pressing
-          // this button, and a redundant (harmless) counter reset by the watchdog.
           auto now = id(homeassistant_time).now();
-          int current_day = now.day_of_month;
+          int current_day = now.day_of_year;
           
           ESP_LOGI("irrigation", "📊 Runtime before reset:");
           ESP_LOGI("irrigation", "   Zone 1: %d min (limit: %d min)", 
@@ -16023,11 +16179,14 @@ button:
         - if:
             condition:
               lambda: |-
-                // 🚫 BLACKOUT CHECK (incl. NZ public holidays via is_blackout_date sensor)
-                // BUG FIX: Previous inline check only scanned manual blackout slots 1-10,
-                // missing NZ public holidays (Good Friday, Easter Monday, etc.) which are
-                // checked via is_blackout_date binary sensor. Now matches Programs A/B/C.
-                return id(is_blackout_date).state;
+                // BUG #48 FIX: Use is_blackout_date sensor (covers BOTH manual slots AND
+                // NZ public holidays from HA). Previously only checked the 10 manual slots,
+                // silently ignoring Good Friday, Easter Monday, and other HA holiday sensors.
+                if (id(is_blackout_date).state) {
+                  ESP_LOGW("irrigation", "🚫 BLOCKED: Normal Mode - Blackout active (manual slot or NZ holiday)");
+                  return true;
+                }
+                return false;
             then:
               - logger.log:
                   format: "🚫 Normal Mode will NOT start - blackout date active"
@@ -16088,6 +16247,16 @@ button:
                                             ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather: %s", w.c_str());
                                           } else {
                                             ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
+                                          }
+                                          
+                                          // BUG #50 FIX: Check freeze and budget here (button had no early check)
+                                          if (id(freeze_protection_active)) {
+                                            ESP_LOGW("irrigation", "❄️ BLOCKED: Normal Mode — freeze protection active (%.1f°C)", id(outside_temperature).state);
+                                            return;
+                                          }
+                                          if (id(budget_exceeded) && !id(budget_override_active)) {
+                                            ESP_LOGW("irrigation", "🚫 BLOCKED: Normal Mode — monthly budget exceeded (%.0fL/%.0fL)", id(current_month_usage), id(monthly_water_budget));
+                                            return;
                                           }
                                           
                                           // Check if system is busy
