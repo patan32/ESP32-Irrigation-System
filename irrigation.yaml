@@ -5624,25 +5624,34 @@ text_sensor:
     update_interval: $sensor_update_frequency
     icon: "mdi:progress-clock"
     lambda: |-
-      // Check if a valve is active
+      // CYCLE & SOAK MODE: use the session-level elapsed/total which covers
+      // all cycles AND all soak periods, starting from 0% and running to 100%.
+      // This fixes two issues with the old valve-only approach:
+      //   1. Progress started partway through (e.g. 75%) because it tracked the
+      //      current cycle relative to the full valve duration, not the session.
+      //   2. Progress froze at 0% during soak because active_valve() has no value.
+      if (id(cycle_soak_total_duration) > 0) {
+        int elapsed = id(cycle_soak_elapsed_time);
+        int total   = id(cycle_soak_total_duration);
+        if (total <= 0) return {"0%"};
+        int progress = (int)((float)elapsed / (float)total * 100.0f);
+        if (progress < 0)   progress = 0;
+        if (progress > 100) progress = 100;
+        return {std::to_string(progress) + "%"};
+      }
+
+      // NORMAL MODE: use the current valve's remaining time.
       if (!id($devicename1).active_valve().has_value()) {
         return {"0%"};
       }
-      
       auto valve_num = id($devicename1).active_valve().value();
       auto remaining = id($devicename1).time_remaining_active_valve().value_or(0);
-      auto duration = id($devicename1).valve_run_duration_adjusted(valve_num);
-      
-      if (duration <= 0 || remaining < 0) {
-        return {"0%"};
-      }
-      
-      float elapsed = duration - remaining;
-      int progress = (int)((elapsed / duration) * 100.0);
-      
-      if (progress < 0) progress = 0;
+      auto duration  = id($devicename1).valve_run_duration_adjusted(valve_num);
+      if (duration <= 0 || remaining < 0) return {"0%"};
+      float elapsed_f = duration - remaining;
+      int progress = (int)(elapsed_f / duration * 100.0f);
+      if (progress < 0)   progress = 0;
       if (progress > 100) progress = 100;
-      
       return {std::to_string(progress) + "%"};
       
   # Expose Valve Status as a sensor
