@@ -19,7 +19,7 @@ substitutions:
   # Software version (bumped when NVS-affecting globals change)
   software_revision:     "V3.40-ALL-SETTINGS-PERSIST"
   # Integer version for NVS validation — increment when adding/removing restore_value globals
-  software_version_int:  "341"
+  software_version_int:  "340"
   # ═══════════════════════════════════════════════════════════
 
   dev1_what: Lawn
@@ -2714,11 +2714,6 @@ time:
         minutes: /5  # Every 5 minutes
         then:
           - lambda: |-
-              // Only restore if Smart ET is enabled and we're not currently watering
-              if (!id(smart_et_enabled)) {
-                return;
-              }
-              
               // BUG #46 FIX: Check irrigation_busy, not just active_valve().
               // During a Cycle & Soak soak period the valve is OFF (active_valve() = false)
               // but the system is still running (irrigation_busy=true). The old check fired
@@ -2726,9 +2721,16 @@ time:
               // losing the ET-boosted duration for remaining cycles.
               bool is_watering = id($devicename1).active_valve().has_value() || id(irrigation_busy);
               
-              // If not watering and ET multiplier is not 1.0, restore PW multiplier
-              if (!is_watering && id(et_duration_multiplier) != 1.0) {
+              // Always restore a stale ET multiplier boost even if Smart ET was just disabled.
+              // Checking smart_et_enabled first would leave an elevated multiplier active
+              // indefinitely if the user disables Smart ET while a boosted run is in progress.
+              if (!is_watering && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
                 id(restore_pw_multiplier).execute();
+              }
+              
+              // Only continue with ET scheduling logic if Smart ET is still enabled
+              if (!id(smart_et_enabled)) {
+                return;
               }
       
       # Check valve status and reset to Idle if no valves active
@@ -11949,6 +11951,11 @@ script:
             // Time not synced — default to RESTRICTED to prevent watering
             // outside the allowed window during the boot period
             id(is_time_restricted) = true;
+            // BUG FIX: update state tracker so this only logs once, not every 30s tick
+            if (id(last_time_restriction_state) != 4) {
+              ESP_LOGW("irrigation", "⏰ Time not synced — defaulting to RESTRICTED");
+              id(last_time_restriction_state) = 4;
+            }
             return;
           }
           
@@ -11968,6 +11975,12 @@ script:
                                                 : (now_min >= start_min || now_min < end_min);
           
           id(is_time_restricted) = blocked;
+          // BUG FIX: track normal blocked/allowed transitions so changes are logged exactly once
+          int new_state = blocked ? 0 : 1;
+          if (id(last_time_restriction_state) != new_state) {
+            ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
+            id(last_time_restriction_state) = new_state;
+          }
 
 
 ###############################################
@@ -16087,7 +16100,10 @@ button:
           
           // Get current day to check if we need to log
           auto now = id(homeassistant_time).now();
-          int current_day = now.day_of_year;
+          if (!now.is_valid()) {
+            ESP_LOGW("irrigation", "⚠️ Reset Daily Runtime Limits: time not synced — last_runtime_reset_day not updated (avoids spurious auto-reset on sync)");
+          }
+          int current_day = now.is_valid() ? now.day_of_year : id(last_runtime_reset_day);
           
           ESP_LOGI("irrigation", "📊 Runtime before reset:");
           ESP_LOGI("irrigation", "   Zone 1: %d min (limit: %d min)", 
@@ -16323,7 +16339,9 @@ button:
                         condition:
                           lambda: 'return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
                         then:
-                          - logger.log: "Rain delay active"
+                          - logger.log:
+                              format: "⛈️ BLOCKED: Rain delay is active"
+                              level: WARN
                         else:
                           - script.execute:
                               id: request_program_start
@@ -16362,7 +16380,9 @@ button:
                         condition:
                           lambda: 'return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
                         then:
-                          - logger.log: "Rain delay active"
+                          - logger.log:
+                              format: "⛈️ BLOCKED: Rain delay is active"
+                              level: WARN
                         else:
                           - script.execute:
                               id: request_program_start
@@ -16401,7 +16421,9 @@ button:
                         condition:
                           lambda: 'return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
                         then:
-                          - logger.log: "Rain delay active"
+                          - logger.log:
+                              format: "⛈️ BLOCKED: Rain delay is active"
+                              level: WARN
                         else:
                           - script.execute:
                               id: request_program_start
@@ -17091,8 +17113,15 @@ button:
           // Reset monthly usage counter
           id(current_month_usage) = 0;
           
-          // Set reset timestamp
-          id(water_reset_timestamp) = id(homeassistant_time).now().timestamp;
+          // Set reset timestamp — only if time is synced; 0 is handled downstream
+          // as "Never" so storing epoch 0 here is safe and avoids a 50-year "days since reset".
+          {
+            auto _rst_time = id(homeassistant_time).now();
+            id(water_reset_timestamp) = _rst_time.is_valid() ? _rst_time.timestamp : 0;
+            if (!_rst_time.is_valid()) {
+              ESP_LOGW("irrigation", "⚠️ Reset All Water Usage: time not synced — reset timestamp set to 0 (will show 'Never' until time syncs)");
+            }
+          }
           
           ESP_LOGI("irrigation", "✅ All water usage counters reset to 0 L");
           ESP_LOGI("irrigation", "✅ Monthly usage counter reset to 0 L");
