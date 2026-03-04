@@ -55,6 +55,13 @@ badges:
     show_icon: true
     entity: sensor.irrigation_test_controller_lawn_irrigation_controller_progress
     name: Irrigation Progress
+  - type: entity
+    show_name: true
+    show_state: true
+    show_icon: true
+    entity: >-
+      sensor.irrigation_test_controller_lawn_irrigation_controller_last_block_reason
+    name: Last Zone Block Reason
 sections:
   - type: grid
     column_span: 1
@@ -99,6 +106,12 @@ sections:
           ['none','unavailable','unknown','','idle','off','inactive'] %} {{
           'green' if t | lower not in idle else 'blue' }}
       - type: tile
+        entity: sensor.irrigation_test_controller_cycle_soak_detailed_status
+        name: Soak Cycle Status
+        icon: mdi:water-sync
+        color: indigo
+        vertical: false
+      - type: tile
         entity: >-
           sensor.irrigation_test_controller_lawn_irrigation_controller_time_remaining
         name: Time Remaining
@@ -110,18 +123,6 @@ sections:
         name: Progress
         icon: mdi:chart-arc
         color: cyan
-        vertical: false
-      - type: tile
-        entity: sensor.irrigation_test_controller_lawn_irrigation_controller_flow_rate
-        name: Flow Rate
-        icon: mdi:gauge
-        color: blue
-        vertical: false
-      - type: tile
-        entity: sensor.irrigation_test_controller_cycle_soak_detailed_status
-        name: Soak Cycle Status
-        icon: mdi:water-sync
-        color: indigo
         vertical: false
       - type: tile
         entity: >-
@@ -138,6 +139,12 @@ sections:
         color: blue
         vertical: false
         features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_lawn_irrigation_controller_flow_rate
+        name: Flow Rate
+        icon: mdi:gauge
+        color: blue
+        vertical: false
       - type: tile
         entity: binary_sensor.irrigation_test_controller_lawn_master_valve_status
         name: Master Valve
@@ -158,6 +165,16 @@ sections:
         icon: mdi:cancel
         color: amber
         vertical: false
+      - type: tile
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: >-
+          sensor.irrigation_test_controller_lawn_irrigation_controller_last_block_reason
+        name: Last Zone Block Reason
+        color: amber
+        vertical: false
+        features_position: bottom
   - type: grid
     column_span: 1
     columns: 5
@@ -612,6 +629,16 @@ sections:
           - style: slider
             type: numeric-input
         features_position: inline
+      - type: tile
+        entity: number.irrigation_test_controller_soak_duration
+        name:
+          type: entity
+        color: cyan
+        vertical: false
+        features:
+          - style: slider
+            type: numeric-input
+        features_position: inline
   - type: grid
     column_span: 2
     columns: 2
@@ -826,17 +853,6 @@ sections:
         vertical: false
         tap_action:
           action: toggle
-      - type: custom:mushroom-number-card
-        entity: number.irrigation_test_controller_soak_duration
-        name: Soak Duration
-        icon: mdi:timer-sand
-        icon_color: cyan
-        display_mode: slider
-        layout: horizontal
-        fill_container: true
-        grid_options:
-          columns: 12
-          rows: 1
   - type: grid
     column_span: 2
     columns: 4
@@ -2830,6 +2846,20 @@ sections:
         icon: mdi:clock-time-two-outline
       - type: tile
         grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_program_1_enable_start_2
+        name: Enable Start Time 2
+        icon: mdi:clock-time-two-outline
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
           columns: 2
           rows: 1
         entity: select.irrigation_test_controller_program_1_start_2_am_pm
@@ -2872,6 +2902,20 @@ sections:
         icon: mdi:clock-time-three-outline
       - type: tile
         grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_program_1_enable_start_3
+        name: Enable Start Time 3
+        icon: mdi:clock-time-three-outline
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
           columns: 2
           rows: 1
         entity: select.irrigation_test_controller_program_1_start_3_am_pm
@@ -2912,6 +2956,20 @@ sections:
         heading: Start Time 4
         heading_style: subtitle
         icon: mdi:clock-time-four-outline
+      - type: tile
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_program_1_enable_start_4
+        name: Enable Start Time 4
+        icon: mdi:clock-time-four-outline
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
       - type: tile
         grid_options:
           columns: 2
@@ -3153,6 +3211,20 @@ sections:
         icon: mdi:clock-time-two-outline
       - type: tile
         grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_program_2_enable_start_2
+        name: Enable Start Time 2
+        icon: mdi:clock-time-two-outline
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
           columns: 2
           rows: 1
         entity: select.irrigation_test_controller_program_2_start_2_am_pm
@@ -3195,6 +3267,20 @@ sections:
         icon: mdi:clock-time-three-outline
       - type: tile
         grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_program_2_enable_start_3
+        name: Enable Start Time 3
+        icon: mdi:clock-time-three-outline
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
           columns: 2
           rows: 1
         entity: select.irrigation_test_controller_program_2_start_3_am_pm
@@ -3235,6 +3321,20 @@ sections:
         heading: Start Time 4
         heading_style: subtitle
         icon: mdi:clock-time-four-outline
+      - type: tile
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_program_2_enable_start_4
+        name: Enable Start Time 4
+        icon: mdi:clock-time-four-outline
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
       - type: tile
         grid_options:
           columns: 2
@@ -3476,6 +3576,20 @@ sections:
         icon: mdi:clock-time-two-outline
       - type: tile
         grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_program_3_enable_start_2
+        name: Enable Start Time 2
+        icon: mdi:clock-time-two-outline
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
           columns: 2
           rows: 1
         entity: select.irrigation_test_controller_program_3_start_2_am_pm
@@ -3518,6 +3632,20 @@ sections:
         icon: mdi:clock-time-three-outline
       - type: tile
         grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_program_3_enable_start_3
+        name: Enable Start Time 3
+        icon: mdi:clock-time-three-outline
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
+      - type: tile
+        grid_options:
           columns: 2
           rows: 1
         entity: select.irrigation_test_controller_program_3_start_3_am_pm
@@ -3558,6 +3686,20 @@ sections:
         heading: Start Time 4
         heading_style: subtitle
         icon: mdi:clock-time-four-outline
+      - type: tile
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: switch.irrigation_test_controller_program_3_enable_start_4
+        name: Enable Start Time 4
+        icon: mdi:clock-time-four-outline
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features:
+          - type: toggle
+        features_position: inline
       - type: tile
         grid_options:
           columns: 2
@@ -3711,7 +3853,7 @@ sections:
           rows: 1
         entity: sensor.irrigation_test_controller_time_restriction_status
         name: Status
-        icon: mdi:shield-clock-outline
+        icon: ""
         color: cyan
         vertical: false
         features_position: inline
@@ -3751,3 +3893,4 @@ header:
     content: |-
       # 🌿 Irrigation Controller
       Irrigation Control System
+top_margin: false
