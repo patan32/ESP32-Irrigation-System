@@ -4780,8 +4780,8 @@ text_sensor:
             then:
               # Write to persistent HA input_text so automations survive HA restarts.
               # Create in HA: Settings → Helpers → Text → "Irrigation Latest Alert"
-              - homeassistant.service:
-                  service: input_text.set_value
+              - homeassistant.action:
+                  action: input_text.set_value
                   data:
                     entity_id: ${ha_alert_entity}
                     value: !lambda 'return x;'
@@ -7483,7 +7483,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(zone1_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone1_start_hour) = x;"
 
@@ -7496,7 +7497,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone1_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone1_start_minute) = x;"
 
@@ -7510,7 +7512,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(zone2_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone2_start_hour) = x;"
 
@@ -7523,7 +7526,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone2_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone2_start_minute) = x;"
 
@@ -7537,7 +7541,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(zone3_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone3_start_hour) = x;"
 
@@ -7550,7 +7555,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone3_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone3_start_minute) = x;"
 
@@ -7564,7 +7570,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(zone4_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone4_start_hour) = x;"
 
@@ -7577,7 +7584,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone4_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone4_start_minute) = x;"
 
@@ -7591,7 +7599,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(zone5_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone5_start_hour) = x;"
 
@@ -7604,7 +7613,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone5_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone5_start_minute) = x;"
 
@@ -7618,7 +7628,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(zone6_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone6_start_hour) = x;"
 
@@ -7631,7 +7642,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone6_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone6_start_minute) = x;"
 
@@ -7645,7 +7657,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(zone7_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone7_start_hour) = x;"
 
@@ -7658,7 +7671,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone7_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone7_start_minute) = x;"
 
@@ -7672,7 +7686,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(zone8_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone8_start_hour) = x;"
 
@@ -7685,7 +7700,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone8_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone8_start_minute) = x;"
 
@@ -7699,7 +7715,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(program_a_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_a_start_hour) = x;"
 
@@ -7712,7 +7729,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(program_a_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_a_start_minute) = x;"
 
@@ -7725,7 +7743,8 @@ number:
     icon: "mdi:calendar-range"
     mode: box
     unit_of_measurement: "days"
-    lambda: "return id(program_a_interval_days);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_a_interval_days) = x;"
 
@@ -7739,7 +7758,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(program_b_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_b_start_hour) = x;"
 
@@ -7752,7 +7772,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(program_b_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_b_start_minute) = x;"
 
@@ -7765,7 +7786,8 @@ number:
     icon: "mdi:calendar-range"
     mode: box
     unit_of_measurement: "days"
-    lambda: "return id(program_b_interval_days);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_b_interval_days) = x;"
 
@@ -7779,7 +7801,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "h"
-    lambda: "return id(program_c_start_hour);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_c_start_hour) = x;"
 
@@ -7792,7 +7815,8 @@ number:
     icon: "mdi:clock-start"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(program_c_start_minute);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_c_start_minute) = x;"
 
@@ -7805,7 +7829,8 @@ number:
     icon: "mdi:calendar-range"
     mode: box
     unit_of_measurement: "days"
-    lambda: "return id(program_c_interval_days);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_c_interval_days) = x;"
 # Insert this section after line 6156 (after program_c_interval_input)
@@ -7827,7 +7852,8 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_a_start_hour_2);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_a_start_hour_2) = x;"
   
@@ -7839,7 +7865,8 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_a_start_minute_2);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_a_start_minute_2) = x;"
   
@@ -7851,7 +7878,8 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_a_start_hour_3);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_a_start_hour_3) = x;"
   
@@ -7863,7 +7891,8 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_a_start_minute_3);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_a_start_minute_3) = x;"
   
@@ -7875,7 +7904,8 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_a_start_hour_4);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_a_start_hour_4) = x;"
   
@@ -7887,7 +7917,8 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_a_start_minute_4);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_a_start_minute_4) = x;"
   
@@ -7900,7 +7931,8 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_b_start_hour_2);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_b_start_hour_2) = x;"
   
@@ -7912,7 +7944,8 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_b_start_minute_2);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_b_start_minute_2) = x;"
   
@@ -7924,7 +7957,8 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_b_start_hour_3);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_b_start_hour_3) = x;"
   
@@ -7936,7 +7970,8 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_b_start_minute_3);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_b_start_minute_3) = x;"
   
@@ -7948,7 +7983,8 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_b_start_hour_4);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_b_start_hour_4) = x;"
   
@@ -7960,7 +7996,8 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_b_start_minute_4);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_b_start_minute_4) = x;"
   
@@ -7973,7 +8010,8 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_c_start_hour_2);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_c_start_hour_2) = x;"
   
@@ -7985,7 +8023,8 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_c_start_minute_2);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_c_start_minute_2) = x;"
   
@@ -7997,7 +8036,8 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_c_start_hour_3);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_c_start_hour_3) = x;"
   
@@ -8009,7 +8049,8 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_c_start_minute_3);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_c_start_minute_3) = x;"
   
@@ -8021,7 +8062,8 @@ number:
     step: 1
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_c_start_hour_4);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_c_start_hour_4) = x;"
   
@@ -8033,7 +8075,8 @@ number:
     step: 5
     icon: "mdi:clock-plus"
     mode: box
-    lambda: "return id(program_c_start_minute_4);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(program_c_start_minute_4) = x;"
   
@@ -8052,7 +8095,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone1_program_a_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone1_program_a_duration) = x;"
   
@@ -8065,7 +8109,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone1_program_b_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone1_program_b_duration) = x;"
   
@@ -8078,7 +8123,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone1_program_c_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone1_program_c_duration) = x;"
   
@@ -8092,7 +8138,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone2_program_a_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone2_program_a_duration) = x;"
   
@@ -8105,7 +8152,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone2_program_b_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone2_program_b_duration) = x;"
   
@@ -8118,7 +8166,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone2_program_c_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone2_program_c_duration) = x;"
   
@@ -8132,7 +8181,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone3_program_a_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone3_program_a_duration) = x;"
   
@@ -8145,7 +8195,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone3_program_b_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone3_program_b_duration) = x;"
   
@@ -8158,7 +8209,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone3_program_c_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone3_program_c_duration) = x;"
   
@@ -8172,7 +8224,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone4_program_a_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone4_program_a_duration) = x;"
   
@@ -8185,7 +8238,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone4_program_b_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone4_program_b_duration) = x;"
   
@@ -8198,7 +8252,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone4_program_c_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone4_program_c_duration) = x;"
   
@@ -8212,7 +8267,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone5_program_a_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone5_program_a_duration) = x;"
   
@@ -8225,7 +8281,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone5_program_b_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone5_program_b_duration) = x;"
   
@@ -8238,7 +8295,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone5_program_c_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone5_program_c_duration) = x;"
   
@@ -8252,7 +8310,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone6_program_a_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone6_program_a_duration) = x;"
   
@@ -8265,7 +8324,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone6_program_b_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone6_program_b_duration) = x;"
   
@@ -8278,7 +8338,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone6_program_c_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone6_program_c_duration) = x;"
   
@@ -8292,7 +8353,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone7_program_a_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone7_program_a_duration) = x;"
   
@@ -8305,7 +8367,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone7_program_b_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone7_program_b_duration) = x;"
   
@@ -8318,7 +8381,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone7_program_c_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone7_program_c_duration) = x;"
   
@@ -8332,7 +8396,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone8_program_a_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone8_program_a_duration) = x;"
   
@@ -8345,7 +8410,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone8_program_b_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone8_program_b_duration) = x;"
   
@@ -8358,7 +8424,8 @@ number:
     icon: "mdi:timer-sand"
     mode: box
     unit_of_measurement: "min"
-    lambda: "return id(zone8_program_c_duration);"
+    optimistic: true
+    update_interval: never
     set_action:
       - lambda: "id(zone8_program_c_duration) = x;"
 
@@ -15947,38 +16014,11 @@ button:
         - if:
             condition:
               lambda: |-
-                // 🚫 BLACKOUT CHECK — silent, no debug logging
-                auto now = id(homeassistant_time).now();
-                if (!now.is_valid()) return false;
-                
-                int today_day = now.day_of_year;
-                int today_year = now.year;
-                
-                for (int slot = 1; slot <= 10; slot++) {
-                  int64_t blackout_timestamp = 0;
-                  std::string blackout_desc = "";
-                  switch(slot) {
-                    case 1:  blackout_timestamp = id(blackout_date_1);  blackout_desc = id(blackout_desc_1);  break;
-                    case 2:  blackout_timestamp = id(blackout_date_2);  blackout_desc = id(blackout_desc_2);  break;
-                    case 3:  blackout_timestamp = id(blackout_date_3);  blackout_desc = id(blackout_desc_3);  break;
-                    case 4:  blackout_timestamp = id(blackout_date_4);  blackout_desc = id(blackout_desc_4);  break;
-                    case 5:  blackout_timestamp = id(blackout_date_5);  blackout_desc = id(blackout_desc_5);  break;
-                    case 6:  blackout_timestamp = id(blackout_date_6);  blackout_desc = id(blackout_desc_6);  break;
-                    case 7:  blackout_timestamp = id(blackout_date_7);  blackout_desc = id(blackout_desc_7);  break;
-                    case 8:  blackout_timestamp = id(blackout_date_8);  blackout_desc = id(blackout_desc_8);  break;
-                    case 9:  blackout_timestamp = id(blackout_date_9);  blackout_desc = id(blackout_desc_9);  break;
-                    case 10: blackout_timestamp = id(blackout_date_10); blackout_desc = id(blackout_desc_10); break;
-                  }
-                  if (blackout_timestamp > 0) {
-                    ESPTime blackout_time = ESPTime::from_epoch_local(blackout_timestamp);
-                    if (blackout_time.year == today_year && blackout_time.day_of_year == today_day) {
-                      std::string desc = blackout_desc.empty() ? "No description" : blackout_desc;
-                      ESP_LOGW("irrigation", "🚫 BLOCKED: Normal Mode - Blackout date %d active: %s", slot, desc.c_str());
-                      return true;
-                    }
-                  }
-                }
-                return false;
+                // 🚫 BLACKOUT CHECK (incl. NZ public holidays via is_blackout_date sensor)
+                // BUG FIX: Previous inline check only scanned manual blackout slots 1-10,
+                // missing NZ public holidays (Good Friday, Easter Monday, etc.) which are
+                // checked via is_blackout_date binary sensor. Now matches Programs A/B/C.
+                return id(is_blackout_date).state;
             then:
               - logger.log:
                   format: "🚫 Normal Mode will NOT start - blackout date active"
