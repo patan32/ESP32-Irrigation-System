@@ -643,6 +643,7 @@ esphome:
           float retry_final = id(vacation_mode_active) ? multiplier * 0.5f : multiplier;
           id($devicename1).set_multiplier(retry_final);
           if (id(vacation_mode_active)) id(normal_multiplier) = multiplier;
+          boot_multiplier_applied = true;  // BUG FIX: Mark applied so guard works correctly for 1.0x case
           ESP_LOGI("irrigation", "RETRY: Boot multiplier set to %.1f%s (temp: %.1f°C)",
                    retry_final, id(vacation_mode_active) ? " (×0.5 vacation)" : "", temp);
       
@@ -2625,21 +2626,27 @@ time:
                   bool in_window = false;
                   std::string active_window = "";
                   
-                  // Check Window 1
+                  // Check Window 1  // BUG FIX: Support midnight-crossing windows (e.g. 22:00-02:00)
                   if (id(window1_enabled)) {
                     int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
                     int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
-                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                    bool in_win1 = (start_min < end_min)
+                        ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                        : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                    if (in_win1) {
                       in_window = true;
                       active_window = "ET Watering Window 1";
                     }
                   }
                   
-                  // Check Window 2
+                  // Check Window 2  // BUG FIX: Support midnight-crossing windows
                   if (!in_window && id(window2_enabled)) {
                     int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
                     int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
-                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                    bool in_win2 = (start_min < end_min)
+                        ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                        : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                    if (in_win2) {
                       in_window = true;
                       active_window = "ET Watering Window 2";
                     }
@@ -2649,9 +2656,12 @@ time:
                   if (!in_window && id(window3_enabled)) {
                     int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
                     int end_min = (id(window3_end_hour) * 60) + id(window3_end_minute);
-                    if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                    bool in_win3 = (start_min < end_min)
+                        ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                        : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                    if (in_win3) {
                       in_window = true;
-                      active_window = "ET Watering Window 3";
+                      active_window = "ET Watering Window 3";  // BUG FIX: midnight-crossing
                     }
                   }
                   
@@ -2699,12 +2709,16 @@ time:
                     // BUG #33 FIX: Only clear deficit/last_water_time when run started immediately.
                     // If queued, preserve deficit — it may be dropped before executing.
                     if (!id(irrigation_busy)) {
-                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
+                      // BUG FIX: Run was blocked by safety check (blackout/disabled/rain-delay/weather).
+                      // Keep et_pending_irrigation=true so the 5-min interval can retry when conditions improve.
+                      // Deficit is also preserved since no water was applied.
+                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run blocked by safety check — deficit preserved (%.1fmm), will retry", id(et_soil_moisture_deficit));
+                      // Note: et_pending_irrigation intentionally NOT cleared here so retry fires
                     } else {
                       id(et_soil_moisture_deficit) = 0;
                       { auto _t2b = id(homeassistant_time).now(); if (_t2b.is_valid()) id(et_last_water_time) = _t2b.timestamp; }
+                      id(et_pending_irrigation) = false;  // BUG FIX: Only clear when run actually started
                     }
-                    id(et_pending_irrigation) = false;
                   }
                 }
               }
@@ -5306,6 +5320,7 @@ text_sensor:
       
       float deficit = id(et_soil_moisture_deficit);
       float threshold = id(et_water_threshold);
+      if (threshold <= 0.0f) threshold = 1.0f;  // BUG FIX: Guard against divide-by-zero if NVS corrupts et_water_threshold
       float pct = (deficit / threshold) * 100.0;
       float et_mult = id(et_duration_multiplier);
       
@@ -5820,7 +5835,7 @@ text_sensor:
       
       // Check next 7 days
       for (int i = 1; i <= 7; i++) {
-        int check_day = (current_day + i) % 7;
+        int check_day = ((current_day - 1 + i) % 7);  // BUG FIX: ESPHome day_of_week is 1-7, so subtract 1 for 0-based modulo before wrapping
         if ((check_day == 1 && id(schedule_monday).state) ||
             (check_day == 2 && id(schedule_tuesday).state) ||
             (check_day == 3 && id(schedule_wednesday).state) ||
@@ -9999,31 +10014,40 @@ script:
               bool in_window = false;
               std::string active_window = "";
               
-              // Check Window 1
+              // Check Window 1  // BUG FIX: Support midnight-crossing windows
               if (id(window1_enabled)) {
                 int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
                 int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
-                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                bool in_win1 = (start_min < end_min)
+                    ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                    : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                if (in_win1) {
                   in_window = true;
                   active_window = "Window 1";
                 }
               }
               
-              // Check Window 2
+              // Check Window 2  // BUG FIX: Support midnight-crossing windows
               if (!in_window && id(window2_enabled)) {
                 int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
                 int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
-                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                bool in_win2 = (start_min < end_min)
+                    ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                    : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                if (in_win2) {
                   in_window = true;
                   active_window = "Window 2";
                 }
               }
               
-              // Check Window 3
+              // Check Window 3  // BUG FIX: Support midnight-crossing windows
               if (!in_window && id(window3_enabled)) {
                 int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
                 int end_min = (id(window3_end_hour) * 60) + id(window3_end_minute);
-                if (start_min <= current_time_minutes && current_time_minutes < end_min) {
+                bool in_win3 = (start_min < end_min)
+                    ? (current_time_minutes >= start_min && current_time_minutes < end_min)
+                    : (current_time_minutes >= start_min || current_time_minutes < end_min);
+                if (in_win3) {
                   in_window = true;
                   active_window = "Window 3";
                 }
