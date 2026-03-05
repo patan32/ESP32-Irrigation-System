@@ -1801,6 +1801,10 @@ globals:
     type: int
     restore_value: False  # Runtime state — updated during cycle & soak
     initial_value: '0'
+  - id: normal_run_duration_seconds
+    type: int
+    restore_value: False  # Actual adjusted duration of the active normal-mode run
+    initial_value: '0'
   - id: is_paused
     type: bool
     restore_value: False  # Runtime state — watering resumes after reboot
@@ -4065,6 +4069,7 @@ interval:
               id(total_cycles) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
+              id(normal_run_duration_seconds) = 0;
               id(cycle_soak_is_soaking) = false;
               id(cycle_soak_soak_end_time) = 0;
               id(soak_countdown_seconds) = 0;
@@ -4283,43 +4288,49 @@ interval:
             id(soak_countdown_seconds) = 0;
           }
           
-          // Only increment if ALL conditions are met:
-          // 1. Cycle & soak is active (total_duration > 0)
-          // 2. Not finished yet (elapsed < total)
-          // 3. NOT paused
+          // Increment elapsed time whenever a C&S run is active and not paused.
+          // BUG FIX: Old logic only counted during valve_active OR is_soaking,
+          // causing the countdown to freeze during the brief transition gaps
+          // between cycle end and soak start (the +2s safety margin, plus the
+          // time for the safety-check lambda to run before setting is_soaking).
+          // The total_duration is pre-calculated to cover the full run time
+          // (all cycles + all soaks), so counting every second while
+          // irrigation_busy is true gives a smooth, uninterrupted countdown.
           if (id(cycle_soak_total_duration) > 0 &&
               id(cycle_soak_elapsed_time) < id(cycle_soak_total_duration) &&
-              !id(is_paused)) {
+              !id(is_paused) &&
+              id(irrigation_busy)) {
             
-            bool valve_active = id($devicename1).active_valve().has_value();
-            bool is_soaking = id(cycle_soak_is_soaking);
+            id(cycle_soak_elapsed_time) += 1;
             
-            // Increment if we're in an active cycle/soak session
-            // (either watering OR soaking, but not idle between operations)
-            if (valve_active || is_soaking) {
-              id(cycle_soak_elapsed_time) += 1;  // Increment by 1 (interval is 1s)
-              
-              // Cap at total duration
-              if (id(cycle_soak_elapsed_time) > id(cycle_soak_total_duration)) {
-                id(cycle_soak_elapsed_time) = id(cycle_soak_total_duration);
-              }
-              
-              // Debug logging every 10 seconds
-              static int log_counter = 0;
-              log_counter++;
-              if (log_counter >= 10) {  // Every 10 seconds (10 * 1s intervals)
-                ESP_LOGD("irrigation", "Progress: %d/%d sec (valve=%d, soaking=%d)",
-                         id(cycle_soak_elapsed_time), id(cycle_soak_total_duration),
-                         valve_active, is_soaking);
-                log_counter = 0;
-              }
+            // Cap at total duration
+            if (id(cycle_soak_elapsed_time) > id(cycle_soak_total_duration)) {
+              id(cycle_soak_elapsed_time) = id(cycle_soak_total_duration);
+            }
+            
+            // Debug logging every 10 seconds
+            static int log_counter = 0;
+            log_counter++;
+            if (log_counter >= 10) {
+              bool valve_active = id($devicename1).active_valve().has_value();
+              bool is_soaking = id(cycle_soak_is_soaking);
+              ESP_LOGD("irrigation", "C&S Progress: %d/%d sec (valve=%d, soaking=%d)",
+                       id(cycle_soak_elapsed_time), id(cycle_soak_total_duration),
+                       valve_active, is_soaking);
+              log_counter = 0;
             }
           }
 
           // Update remaining-time sensor so HA dashboard has a live countdown
+          // BUG FIX: In C&S mode, time_remaining_active_valve() only counts down
+          // within a single cycle, not the total run. Publish C&S total-remaining instead.
           {
             float rem = 0.0f;
-            if (id($devicename1).active_valve().has_value()) {
+            if (id(cycle_soak_switch).state && id(cycle_soak_total_duration) > 0
+                && (id(irrigation_busy) || id($devicename1).active_valve().has_value())) {
+              rem = (float)(id(cycle_soak_total_duration) - id(cycle_soak_elapsed_time));
+              if (rem < 0.0f) rem = 0.0f;
+            } else if (id($devicename1).active_valve().has_value()) {
               rem = (float)id($devicename1).time_remaining_active_valve().value_or(0);
             }
             id(valve_remaining_seconds).publish_state(rem);
@@ -4438,6 +4449,7 @@ interval:
               id(total_cycles) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
+              id(normal_run_duration_seconds) = 0;
               id(cycle_soak_is_soaking) = false;
               id(cycle_soak_soak_end_time) = 0;
               id(soak_countdown_seconds) = 0;
@@ -4556,6 +4568,7 @@ interval:
               id(total_cycles) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
+              id(normal_run_duration_seconds) = 0;
               id(cycle_soak_is_soaking) = false;
               id(cycle_soak_soak_end_time) = 0;
               id(soak_countdown_seconds) = 0;
@@ -4635,6 +4648,7 @@ interval:
               id(total_cycles) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
+              id(normal_run_duration_seconds) = 0;
 
               id(watering_trigger_source) = "Idle";  // Clear trigger after 24h pause timeout
               pause_start_time = 0;
@@ -4731,6 +4745,7 @@ interval:
               id(total_cycles) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
+              id(normal_run_duration_seconds) = 0;
               id(cycle_soak_is_soaking) = false;
               id(cycle_soak_soak_end_time) = 0;
               id(soak_countdown_seconds) = 0;
@@ -5654,7 +5669,19 @@ text_sensor:
     update_interval: $sensor_update_frequency
     icon: "mdi:timer-sand"
     lambda: |-
-      int seconds = round(id($devicename1).time_remaining_active_valve().value_or(0));
+      // BUG FIX: In C&S mode, time_remaining_active_valve() only returns the
+      // current cycle's remaining seconds, not the total remaining time across
+      // all remaining cycles and soaks. Use cycle_soak_total - elapsed instead.
+      int seconds = 0;
+      if (id(cycle_soak_switch).state && id(cycle_soak_total_duration) > 0
+          && (id(irrigation_busy) || id($devicename1).active_valve().has_value())) {
+        seconds = id(cycle_soak_total_duration) - id(cycle_soak_elapsed_time);
+        if (seconds < 0) seconds = 0;
+      } else {
+        // Normal mode: time_remaining_active_valve() is always correct here
+        // (C&S path above handled the case where remaining != total remaining)
+        seconds = (int)round(id($devicename1).time_remaining_active_valve().value_or(0));
+      }
       int days = seconds / (24 * ${seconds_per_hour});
       seconds = seconds % (24 * ${seconds_per_hour});
       int hours = seconds / ${seconds_per_hour};
@@ -5695,21 +5722,25 @@ text_sensor:
         return {std::to_string(progress) + "%"};
       }
       
-      // NORMAL MODE: use sprinkler component remaining/duration
+      // NORMAL MODE: use stored actual run duration (not the UI slider value)
       if (!id($devicename1).active_valve().has_value()) {
         return {"0%"};
       }
       
-      auto valve_num = id($devicename1).active_valve().value();
       auto remaining = id($devicename1).time_remaining_active_valve().value_or(0);
-      auto duration = id($devicename1).valve_run_duration_adjusted(valve_num);
+      // Use actual started duration; fall back to valve_run_duration_adjusted
+      // only if normal_run_duration_seconds was never set (edge case).
+      auto valve_num = id($devicename1).active_valve().value();
+      float duration = (id(normal_run_duration_seconds) > 0)
+          ? (float)id(normal_run_duration_seconds)
+          : (float)id($devicename1).valve_run_duration_adjusted(valve_num);
       
       if (duration <= 0 || remaining < 0) {
         return {"0%"};
       }
       
-      float elapsed_n = duration - remaining;
-      int progress = (int)((elapsed_n / duration) * 100.0);
+      float elapsed_n = duration - (float)remaining;
+      int progress = (int)((elapsed_n / duration) * 100.0f);
       
       if (progress < 0) progress = 0;
       if (progress > 100) progress = 100;
@@ -6528,7 +6559,7 @@ sensor:
 
   # ── Valve Remaining Time ──────────────────────────────────────────────────
   # Seconds remaining on the active valve. Updates via the 1s interval.
-  # Use in HA as a countdown timer or progress bar (divide by zone duration for %).
+  # In C&S mode: total remaining across all cycles+soaks. In normal mode: valve countdown.
   - platform: template
     id: valve_remaining_seconds
     name: "$upper_devicename1 Valve Remaining Seconds"
@@ -6538,6 +6569,12 @@ sensor:
     accuracy_decimals: 0
     update_interval: never      # Published every second from the 1s interval
     lambda: |-
+      // BUG FIX: In C&S mode use total-remaining, not per-cycle remaining.
+      if (id(cycle_soak_switch).state && id(cycle_soak_total_duration) > 0
+          && (id(irrigation_busy) || id($devicename1).active_valve().has_value())) {
+        float r = (float)(id(cycle_soak_total_duration) - id(cycle_soak_elapsed_time));
+        return (r > 0.0f) ? r : 0.0f;
+      }
       if (!id($devicename1).active_valve().has_value()) return 0.0f;
       return (float)id($devicename1).time_remaining_active_valve().value_or(0);
 
@@ -11050,6 +11087,11 @@ script:
             id(active_zone_number) = -1;
             id(total_cycles) = 0;
             id(current_cycle) = 0;
+            // BUG FIX: Store the ACTUAL adjusted duration so the progress sensor
+            // can compute elapsed/total correctly. valve_run_duration_adjusted()
+            // returns the UI slider value * multiplier, which differs from the
+            // actual run duration when a Quick Run button is used.
+            id(normal_run_duration_seconds) = adjusted_duration;
             
             // Start valve — relay fires here, all checks already passed above
             id($devicename1).start_single_valve(zone, adjusted_duration);
@@ -11080,6 +11122,7 @@ script:
               // Single-zone C&S run: own total
               id(cycle_soak_total_duration) = total_time;
               id(cycle_soak_elapsed_time) = 0;
+              id(normal_run_duration_seconds) = 0;  // Not a normal run
               id(active_zone_number) = zone;
               id(total_cycles) = cycles;
               id(current_cycle) = 1;
@@ -11109,6 +11152,7 @@ script:
                   id(irrigation_busy) = false;
                   id(drain_queue).execute();
                 }
+                id(normal_run_duration_seconds) = 0;  // Run complete
       
       # CYCLE & SOAK MODE EXECUTION — skipped if pre-flight blocked
       - if:
@@ -16279,6 +16323,7 @@ sprinkler:
               id(total_cycles) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
+              id(normal_run_duration_seconds) = 0;
 
               // In normal mode, main switch off = run finished: clear busy and drain queue.
               // In cycle/soak mode, the stop button manages irrigation_busy explicitly —
