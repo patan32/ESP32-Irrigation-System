@@ -5675,7 +5675,27 @@ text_sensor:
     update_interval: $sensor_update_frequency
     icon: "mdi:progress-clock"
     lambda: |-
-      // Check if a valve is active
+      // BUG FIX: Cycle & Soak progress was broken because valve_run_duration_adjusted
+      // returns the FULL zone duration (e.g. 12 min) while time_remaining counts down
+      // from only one CYCLE duration (e.g. 3 min), so elapsed = 12-3 = 9 min = 75%
+      // at the very start of every cycle. Fix: use the dedicated C&S elapsed/total
+      // counters which correctly track time including soaks across all zones.
+      
+      // CYCLE & SOAK MODE: use dedicated elapsed/total counters
+      // (covers both single-zone C&S and all-zones C&S runs)
+      if (id(cycle_soak_switch).state && id(cycle_soak_total_duration) > 0) {
+        // During a soak the valve is off but the run is still in progress
+        bool run_active = id(irrigation_busy) || id($devicename1).active_valve().has_value();
+        if (!run_active) return {"0%"};
+        int elapsed = id(cycle_soak_elapsed_time);
+        int total   = id(cycle_soak_total_duration);
+        int progress = (total > 0) ? (int)((elapsed / (float)total) * 100.0f) : 0;
+        if (progress < 0)   progress = 0;
+        if (progress > 100) progress = 100;
+        return {std::to_string(progress) + "%"};
+      }
+      
+      // NORMAL MODE: use sprinkler component remaining/duration
       if (!id($devicename1).active_valve().has_value()) {
         return {"0%"};
       }
@@ -5688,8 +5708,8 @@ text_sensor:
         return {"0%"};
       }
       
-      float elapsed = duration - remaining;
-      int progress = (int)((elapsed / duration) * 100.0);
+      float elapsed_n = duration - remaining;
+      int progress = (int)((elapsed_n / duration) * 100.0);
       
       if (progress < 0) progress = 0;
       if (progress > 100) progress = 100;
@@ -11045,11 +11065,25 @@ script:
             ESP_LOGI("irrigation", "==> CYCLE & SOAK MODE - %d cycles of %d sec (NO multiplier) + %d sec soak",
                      cycles, cycle_seconds, soak_seconds);
             
-            id(cycle_soak_total_duration) = total_time;
-            id(cycle_soak_elapsed_time) = 0;
-            id(active_zone_number) = zone;
-            id(total_cycles) = cycles;
-            id(current_cycle) = 1;
+            // BUG FIX: When called from run_all_zones_cycle_soak_script, the grand total
+            // and elapsed counter are already set to span ALL zones. Do NOT reset them
+            // per-zone or progress would restart at 0% for each zone instead of
+            // advancing continuously from 0% to 100% across the entire run.
+            if (id(run_all_zones_cycle_soak_script).is_running()) {
+              // Grand total already set; just update per-zone tracking
+              id(active_zone_number) = zone;
+              id(total_cycles) = cycles;
+              id(current_cycle) = 1;
+              ESP_LOGI("irrigation", "   Progress tracking: using grand total (%d sec, elapsed so far: %d sec)",
+                       id(cycle_soak_total_duration), id(cycle_soak_elapsed_time));
+            } else {
+              // Single-zone C&S run: own total
+              id(cycle_soak_total_duration) = total_time;
+              id(cycle_soak_elapsed_time) = 0;
+              id(active_zone_number) = zone;
+              id(total_cycles) = cycles;
+              id(current_cycle) = 1;
+            }
           }
       
       # NORMAL MODE EXECUTION — skipped if pre-flight blocked
@@ -11502,6 +11536,41 @@ script:
             - lambda: |-
                 id(irrigation_busy) = true;
                 id(in_program_run) = false;
+      
+      # Calculate grand total duration for ALL enabled zones (all cycles + all soaks)
+      # This gives accurate overall progress across the entire all-zones run.
+      - if:
+          condition:
+            lambda: 'return !id(cycle_soak_script_blocked);'
+          then:
+            - lambda: |-
+                int cycle_sec  = id(cycle_duration_minutes) * 60;
+                int soak_sec   = id(soak_duration_minutes) * 60;
+                int grand_total = 0;
+                // Sum total time for each ENABLED zone (valve_duration * all cycles+soaks)
+                auto zone_total = [&](float dur_sec) -> int {
+                  int dur = (int)dur_sec;
+                  if (dur <= 0 || cycle_sec <= 0) return 0;
+                  int n = (dur + cycle_sec - 1) / cycle_sec;
+                  return (n * cycle_sec) + ((n - 1) * soak_sec);
+                };
+                if (id(zone1_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_1_duration).state * 60);
+                if (id(zone2_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_2_duration).state * 60);
+                if (id(zone3_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_3_duration).state * 60);
+                if (id(zone4_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_4_duration).state * 60);
+                if (id(zone5_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_5_duration).state * 60);
+                if (id(zone6_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_6_duration).state * 60);
+                if (id(zone7_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_7_duration).state * 60);
+                if (id(zone8_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_8_duration).state * 60);
+                id(cycle_soak_total_duration) = grand_total;
+                id(cycle_soak_elapsed_time) = 0;
+                ESP_LOGI("irrigation", "\U0001F4CA All-Zones C&S grand total: %d sec (%d enabled zones, %d sec/cycle, %d sec/soak)",
+                         grand_total, 
+                         (int)id(zone1_enable).state + (int)id(zone2_enable).state +
+                         (int)id(zone3_enable).state + (int)id(zone4_enable).state +
+                         (int)id(zone5_enable).state + (int)id(zone6_enable).state +
+                         (int)id(zone7_enable).state + (int)id(zone8_enable).state,
+                         cycle_sec, soak_sec);
       
       # Zone 1
       - if:
