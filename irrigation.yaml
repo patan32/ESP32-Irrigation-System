@@ -914,6 +914,10 @@ globals:
     type: int
     restore_value: False  # Runtime state — reset when irrigation starts
     initial_value: '0'
+  - id: last_cycle_seconds
+    type: int
+    restore_value: False  # Runtime state — stores duration of final cycle in C&S mode
+    initial_value: '0'
   - id: active_zone_number
     type: int
     restore_value: False  # Runtime state — set during active watering
@@ -1019,6 +1023,57 @@ globals:
     type: float
     restore_value: False  # Bridge variable — recalculated each cycle
     initial_value: '1.0'
+
+  # ============================================================
+  # BASE DURATION C&S FEATURE
+  # ============================================================
+  - id: saved_multiplier_for_base_run
+    type: float
+    restore_value: False  # Runtime state — used during base duration C&S
+    initial_value: '1.0'
+    
+  - id: restore_multiplier_after_run
+    type: bool
+    restore_value: False  # Runtime state — set by base duration C&S button
+    initial_value: 'false'
+
+  # ─────────────────────────────────────────────────────────
+  # PER-ZONE QUICK RUN BASE DURATION (disable multiplier per zone)
+  # When true, the Quick Run for that zone ignores the multiplier
+  # and runs for exactly the duration set — no seasonal adjustment.
+  # ─────────────────────────────────────────────────────────
+  - id: zone1_quick_run_base
+    type: bool
+    restore_value: True
+    initial_value: 'false'
+  - id: zone2_quick_run_base
+    type: bool
+    restore_value: True
+    initial_value: 'false'
+  - id: zone3_quick_run_base
+    type: bool
+    restore_value: True
+    initial_value: 'false'
+  - id: zone4_quick_run_base
+    type: bool
+    restore_value: True
+    initial_value: 'false'
+  - id: zone5_quick_run_base
+    type: bool
+    restore_value: True
+    initial_value: 'false'
+  - id: zone6_quick_run_base
+    type: bool
+    restore_value: True
+    initial_value: 'false'
+  - id: zone7_quick_run_base
+    type: bool
+    restore_value: True
+    initial_value: 'false'
+  - id: zone8_quick_run_base
+    type: bool
+    restore_value: True
+    initial_value: 'false'
 
   # ============================================================
   # SMART ET WATERING GLOBALS
@@ -1156,6 +1211,14 @@ globals:
     type: int64_t
     restore_value: True
     initial_value: '0'
+  - id: daily_water_litres
+    type: float
+    restore_value: True
+    initial_value: '0.0'
+  - id: daily_water_reset_day
+    type: int
+    restore_value: True
+    initial_value: '-1'
 
   # ─────────────────────────────────────────────────────────
   # YF-B5 FLOW SENSOR GLOBALS
@@ -1693,35 +1756,59 @@ globals:
   # activates and restored when vacation mode deactivates.
   - id: vacation_saved_zone1_sched
     type: bool
-    restore_value: False  # Temporary backup — ok to lose on reboot
+    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    # If vacation mode is active and ESP reboots, these saved states are lost.
+    # When vacation mode is then turned off, all zone schedules restore to 'false'
+    # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone2_sched
     type: bool
-    restore_value: False  # Temporary backup — ok to lose on reboot
+    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    # If vacation mode is active and ESP reboots, these saved states are lost.
+    # When vacation mode is then turned off, all zone schedules restore to 'false'
+    # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone3_sched
     type: bool
-    restore_value: False  # Temporary backup — ok to lose on reboot
+    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    # If vacation mode is active and ESP reboots, these saved states are lost.
+    # When vacation mode is then turned off, all zone schedules restore to 'false'
+    # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone4_sched
     type: bool
-    restore_value: False  # Temporary backup — ok to lose on reboot
+    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    # If vacation mode is active and ESP reboots, these saved states are lost.
+    # When vacation mode is then turned off, all zone schedules restore to 'false'
+    # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone5_sched
     type: bool
-    restore_value: False  # Temporary backup — ok to lose on reboot
+    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    # If vacation mode is active and ESP reboots, these saved states are lost.
+    # When vacation mode is then turned off, all zone schedules restore to 'false'
+    # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone6_sched
     type: bool
-    restore_value: False  # Temporary backup — ok to lose on reboot
+    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    # If vacation mode is active and ESP reboots, these saved states are lost.
+    # When vacation mode is then turned off, all zone schedules restore to 'false'
+    # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone7_sched
     type: bool
-    restore_value: False  # Temporary backup — ok to lose on reboot
+    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    # If vacation mode is active and ESP reboots, these saved states are lost.
+    # When vacation mode is then turned off, all zone schedules restore to 'false'
+    # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone8_sched
     type: bool
-    restore_value: False  # Temporary backup — ok to lose on reboot
+    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    # If vacation mode is active and ESP reboots, these saved states are lost.
+    # When vacation mode is then turned off, all zone schedules restore to 'false'
+    # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: normal_multiplier
     type: float
@@ -2594,6 +2681,23 @@ time:
         minutes: 0
         then:
           - script.execute: calculate_smart_et
+      
+      # Reset daily water counter at midnight
+      - seconds: 0
+        minutes: 0
+        hours: 0
+        then:
+          - lambda: |-
+              ESP_LOGI("irrigation", "");
+              ESP_LOGI("irrigation", "🌙 MIDNIGHT — Resetting daily water counter (was %.1f L)", id(daily_water_litres));
+              id(daily_water_litres) = 0.0f;
+              // Update reset day tracking
+              auto _mn_time = id(homeassistant_time).now();
+              if (_mn_time.is_valid()) {
+                id(daily_water_reset_day) = _mn_time.day_of_year;
+              }
+              id(daily_water_sensor).publish_state(0.0f);
+              ESP_LOGI("irrigation", "✅ Daily water counter reset to 0 L");
       
       # Check for pending Smart ET irrigation - triggers when ANY window opens
       - seconds: 0
@@ -3909,6 +4013,15 @@ time:
                     return false;
                   }
                   
+                  // Blackout date check (incl. NZ public holidays via is_blackout_date sensor)
+                  // BUG FIX (Bug 29): Weekly schedule was missing this check. All other
+                  // schedule types (Programs A/B/C, Zone schedules) check is_blackout_date;
+                  // weekly schedule silently fired on public holidays and manual blackout days.
+                  if (id(is_blackout_date).state) {
+                    ESP_LOGD("irrigation", "Weekly schedule blocked - blackout date active");
+                    return false;
+                  }
+                  
                   // Check rain delay
                   if (id(rain_delay_end_time) > now.timestamp) {
                     ESP_LOGD("irrigation", "Weekly schedule blocked - rain delay active");
@@ -4088,6 +4201,7 @@ interval:
               id(active_zone_number) = -1;
               id(current_cycle) = 0;
               id(total_cycles) = 0;
+              id(last_cycle_seconds) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
               id(normal_run_duration_seconds) = 0;
@@ -4212,6 +4326,23 @@ interval:
                 
                 ESP_LOGI("irrigation", "✅ All safety checks passed — firing Normal mode relay");
                 id(irrigation_busy) = true;
+                // Set grand total for Time Remaining / Valve Remaining Seconds.
+                // (Computed fresh each attempt; elapsed stays 0 until valve fires.)
+                {
+                  float _m = id($devicename1).multiplier();
+                  int _t = 0, _n = 0;
+                  if (id(zone1_enable).state) { _t += (int)(id(${devicename1}_1_duration).state * 60 * _m); _n++; }
+                  if (id(zone2_enable).state) { _t += (int)(id(${devicename1}_2_duration).state * 60 * _m); _n++; }
+                  if (id(zone3_enable).state) { _t += (int)(id(${devicename1}_3_duration).state * 60 * _m); _n++; }
+                  if (id(zone4_enable).state) { _t += (int)(id(${devicename1}_4_duration).state * 60 * _m); _n++; }
+                  if (id(zone5_enable).state) { _t += (int)(id(${devicename1}_5_duration).state * 60 * _m); _n++; }
+                  if (id(zone6_enable).state) { _t += (int)(id(${devicename1}_6_duration).state * 60 * _m); _n++; }
+                  if (id(zone7_enable).state) { _t += (int)(id(${devicename1}_7_duration).state * 60 * _m); _n++; }
+                  if (id(zone8_enable).state) { _t += (int)(id(${devicename1}_8_duration).state * 60 * _m); _n++; }
+                  if (_n > 1) _t += (_n - 1) * ${default_valve_open_delay_sec};
+                  id(cycle_soak_total_duration) = _t;
+                  id(cycle_soak_elapsed_time) = 0;
+                }
 
             # Try to start full cycle; if it's still stopping, next interval will retry
             - sprinkler.start_full_cycle: $devicename1
@@ -4342,12 +4473,12 @@ interval:
             }
           }
 
-          // Update remaining-time sensor so HA dashboard has a live countdown
-          // BUG FIX: In C&S mode, time_remaining_active_valve() only counts down
-          // within a single cycle, not the total run. Publish C&S total-remaining instead.
+          // Publish remaining time to sensor every second.
+          // Use elapsed counter whenever a grand total is set (covers both C&S and normal all-zones).
+          // Fall back to per-valve time_remaining for single-zone normal runs (total=0).
           {
             float rem = 0.0f;
-            if (id(cycle_soak_switch).state && id(cycle_soak_total_duration) > 0
+            if (id(cycle_soak_total_duration) > 0
                 && (id(irrigation_busy) || id($devicename1).active_valve().has_value())) {
               rem = (float)(id(cycle_soak_total_duration) - id(cycle_soak_elapsed_time));
               if (rem < 0.0f) rem = 0.0f;
@@ -4471,6 +4602,7 @@ interval:
               id(active_zone_number) = -1;
               id(current_cycle) = 0;
               id(total_cycles) = 0;
+              id(last_cycle_seconds) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
               id(normal_run_duration_seconds) = 0;
@@ -4581,6 +4713,9 @@ interval:
               id(continue_cycle_soak_after_resume).stop();
               // BUG #35 FIX: Restore auto_advance — C&S turns it OFF at start.
               id(dev1_auto_advance).turn_on();
+              // BUG FIX: Turn off C&S switch — if a C&S run was active when budget was
+              // exceeded, the switch stays ON and confuses the next run (same fix as freeze path).
+              id(cycle_soak_switch).turn_off();
               // Full state reset — matches Stop button cleanup exactly
               id(pending_normal_start) = false;
               id(normal_start_attempts) = 0;
@@ -4590,6 +4725,7 @@ interval:
               id(active_zone_number) = -1;
               id(current_cycle) = 0;
               id(total_cycles) = 0;
+              id(last_cycle_seconds) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
               id(normal_run_duration_seconds) = 0;
@@ -4670,6 +4806,7 @@ interval:
               id(active_zone_number) = -1;
               id(current_cycle) = 0;
               id(total_cycles) = 0;
+              id(last_cycle_seconds) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
               id(normal_run_duration_seconds) = 0;
@@ -4741,6 +4878,7 @@ interval:
             id(active_zone_number) = -1;
             id(current_cycle) = 0;
             id(total_cycles) = 0;
+            id(last_cycle_seconds) = 0;
             id(cycle_soak_total_duration) = 0;
             id(cycle_soak_elapsed_time) = 0;
             id(normal_run_duration_seconds) = 0;
@@ -4792,6 +4930,7 @@ interval:
               id(active_zone_number) = -1;
               id(current_cycle) = 0;
               id(total_cycles) = 0;
+              id(last_cycle_seconds) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
               id(normal_run_duration_seconds) = 0;
@@ -5723,19 +5862,14 @@ text_sensor:
     update_interval: $sensor_update_frequency
     icon: "mdi:timer-sand"
     lambda: |-
-      // BUG FIX: In C&S mode, time_remaining_active_valve() only returns the
-      // current cycle's remaining seconds, not the total remaining time across
-      // all remaining cycles and soaks. Use cycle_soak_total - elapsed instead.
-      int seconds = 0;
-      if (id(cycle_soak_switch).state && id(cycle_soak_total_duration) > 0
-          && (id(irrigation_busy) || id($devicename1).active_valve().has_value())) {
-        seconds = id(cycle_soak_total_duration) - id(cycle_soak_elapsed_time);
-        if (seconds < 0) seconds = 0;
-      } else {
-        // Normal mode: time_remaining_active_valve() is always correct here
-        // (C&S path above handled the case where remaining != total remaining)
-        seconds = (int)round(id($devicename1).time_remaining_active_valve().value_or(0));
-      }
+      // Read directly from valve_remaining_seconds (single source of truth).
+      // valve_remaining_seconds is published every second from the 1s interval,
+      // using the elapsed counter when a grand total is set (C&S or normal all-zones),
+      // or time_remaining_active_valve() for single-zone normal runs.
+      // Reading the published state here guarantees this sensor is always in sync
+      // with valve_remaining_seconds — no independent recomputation, no timer skew.
+      int seconds = (int)round(id(valve_remaining_seconds).state);
+      if (seconds < 0) seconds = 0;
       int days = seconds / (24 * ${seconds_per_hour});
       seconds = seconds % (24 * ${seconds_per_hour});
       int hours = seconds / ${seconds_per_hour};
@@ -5762,10 +5896,10 @@ text_sensor:
       // at the very start of every cycle. Fix: use the dedicated C&S elapsed/total
       // counters which correctly track time including soaks across all zones.
       
-      // CYCLE & SOAK MODE: use dedicated elapsed/total counters
-      // (covers both single-zone C&S and all-zones C&S runs)
-      if (id(cycle_soak_switch).state && id(cycle_soak_total_duration) > 0) {
-        // During a soak the valve is off but the run is still in progress
+      // Elapsed-counter path: use when a grand total is set.
+      // Covers C&S mode (all cycles+soaks) AND normal all-zones runs.
+      // cycle_soak_total_duration > 0 is the single gate — no cycle_soak_switch check needed.
+      if (id(cycle_soak_total_duration) > 0) {
         bool run_active = id(irrigation_busy) || id($devicename1).active_valve().has_value();
         if (!run_active) return {"0%"};
         int elapsed = id(cycle_soak_elapsed_time);
@@ -6626,8 +6760,9 @@ sensor:
     accuracy_decimals: 0
     update_interval: never      # Published every second from the 1s interval
     lambda: |-
-      // BUG FIX: In C&S mode use total-remaining, not per-cycle remaining.
-      if (id(cycle_soak_switch).state && id(cycle_soak_total_duration) > 0
+      // Use elapsed counter when a grand total is set (covers C&S and normal all-zones).
+      // Fall back to per-valve time_remaining for single-zone normal runs (total=0).
+      if (id(cycle_soak_total_duration) > 0
           && (id(irrigation_busy) || id($devicename1).active_valve().has_value())) {
         float r = (float)(id(cycle_soak_total_duration) - id(cycle_soak_elapsed_time));
         return (r > 0.0f) ? r : 0.0f;
@@ -7141,6 +7276,29 @@ sensor:
     update_interval: 10s
     lambda: |-
       return id(total_water_litres);
+  
+  # Today's Water Used (resets at midnight)
+  - platform: template
+    name: "$dev1_what Today Water Used"
+    id: daily_water_sensor
+    icon: "mdi:water-circle"
+    unit_of_measurement: "L"
+    accuracy_decimals: 2
+    state_class: measurement
+    device_class: water
+    update_interval: 10s
+    lambda: |-
+      // Auto-reset if day has changed (handles missed midnight resets after reboot)
+      auto _dw_time = id(homeassistant_time).now();
+      if (_dw_time.is_valid()) {
+        int today = _dw_time.day_of_year;
+        if (id(daily_water_reset_day) != today) {
+          id(daily_water_litres) = 0.0f;
+          id(daily_water_reset_day) = today;
+          ESP_LOGI("irrigation", "🌙 New day detected — daily water counter reset (day %d)", today);
+        }
+      }
+      return id(daily_water_litres);
   
   # Days Into Current Water Budget Period
   - platform: template
@@ -10374,6 +10532,24 @@ script:
 
           ESP_LOGI("irrigation", "✅ All safety checks passed — Starting NORMAL immediately");
           id(irrigation_busy) = true;
+          // Compute grand total so Time Remaining / Valve Remaining Seconds show
+          // total run time across all enabled zones (not per-zone only).
+          float _rn_mult = id($devicename1).multiplier();
+          int _rn_total = 0;
+          int _rn_n = 0;
+          if (id(zone1_enable).state) { _rn_total += (int)(id(${devicename1}_1_duration).state * 60 * _rn_mult); _rn_n++; }
+          if (id(zone2_enable).state) { _rn_total += (int)(id(${devicename1}_2_duration).state * 60 * _rn_mult); _rn_n++; }
+          if (id(zone3_enable).state) { _rn_total += (int)(id(${devicename1}_3_duration).state * 60 * _rn_mult); _rn_n++; }
+          if (id(zone4_enable).state) { _rn_total += (int)(id(${devicename1}_4_duration).state * 60 * _rn_mult); _rn_n++; }
+          if (id(zone5_enable).state) { _rn_total += (int)(id(${devicename1}_5_duration).state * 60 * _rn_mult); _rn_n++; }
+          if (id(zone6_enable).state) { _rn_total += (int)(id(${devicename1}_6_duration).state * 60 * _rn_mult); _rn_n++; }
+          if (id(zone7_enable).state) { _rn_total += (int)(id(${devicename1}_7_duration).state * 60 * _rn_mult); _rn_n++; }
+          if (id(zone8_enable).state) { _rn_total += (int)(id(${devicename1}_8_duration).state * 60 * _rn_mult); _rn_n++; }
+          if (_rn_n > 1) _rn_total += (_rn_n - 1) * ${default_valve_open_delay_sec};
+          id(cycle_soak_total_duration) = _rn_total;
+          id(cycle_soak_elapsed_time) = 0;
+          ESP_LOGI("irrigation", "📊 Normal mode grand total: %d sec (%d zones enabled, mult=%.2f)",
+                   _rn_total, _rn_n, _rn_mult);
       - sprinkler.start_full_cycle: $devicename1
 
   # Wait until system is truly idle, then drain queue
@@ -10552,6 +10728,22 @@ script:
             // Set trigger source from queue
             id(watering_trigger_source) = trigger_source;
             ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
+            
+            // Check if this is a BASE DURATION run (multiplier should be 1.0)
+            if (trigger_source.find("Base 1.0x") != std::string::npos) {
+              float current_mult = id($devicename1).multiplier();
+              if (id(vacation_mode_active)) {
+                current_mult = current_mult * 2.0f;  // Reverse the 0.5x vacation discount
+              }
+              id(saved_multiplier_for_base_run) = current_mult;
+              id(restore_multiplier_after_run) = true;
+              ESP_LOGI("irrigation", "💾 SAVED multiplier: %.2fx (will restore after run)", current_mult);
+              float base_mult = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(base_mult);
+              ESP_LOGI("irrigation", "🎯 MULTIPLIER SET TO: %.2fx%s (queued normal base duration run)",
+                       base_mult, id(vacation_mode_active) ? " (1.0 × 0.5 vacation)" : "");
+            }
+            
             // BUG #26 FIX: Set irrigation_busy=true BEFORE pending_normal_start so that
             // request_zone_start and request_program_start see the system as busy during
             // the ~500ms window between here and the 500ms interval firing start_full_cycle.
@@ -10569,6 +10761,28 @@ script:
             // Set trigger source from queue
             id(watering_trigger_source) = trigger_source;
             ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
+            
+            // Check if this is a BASE DURATION run (multiplier should be 1.0)
+            std::string trigger_str = trigger_source;
+            if (trigger_str.find("Base 1.0x") != std::string::npos) {
+              // SAVE CURRENT MULTIPLIER and SET TO 1.0
+              float current_mult = id($devicename1).multiplier();
+              // Undo vacation discount if active to get the true base multiplier
+              if (id(vacation_mode_active)) {
+                current_mult = current_mult * 2.0f;  // Reverse the 0.5x vacation discount
+              }
+              id(saved_multiplier_for_base_run) = current_mult;
+              id(restore_multiplier_after_run) = true;
+              
+              ESP_LOGI("irrigation", "💾 SAVED multiplier: %.2fx (will restore after run)", current_mult);
+              
+              // SET MULTIPLIER TO 1.0 (accounting for vacation mode if active)
+              float base_mult = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(base_mult);
+              ESP_LOGI("irrigation", "🎯 MULTIPLIER SET TO: %.2fx%s (queued base duration run)",
+                       base_mult, id(vacation_mode_active) ? " (1.0 × 0.5 vacation)" : "");
+            }
+            
             // Bug #36 FIX: Set irrigation_busy=true before execute() for consistency with
             // types 1/2/3. Without it there is a scheduler gap between drain_queue returning
             // and run_all_zones_cycle_soak_script setting it. Bug #29 handles the blocked
@@ -10652,6 +10866,28 @@ script:
                   - lambda: |-
                       id(irrigation_busy) = true;
                       id(in_program_run) = false;
+
+                      // Compute grand total across all enabled zones so Time Remaining
+                      // and Valve Remaining Seconds show total run time remaining, not
+                      // per-zone only. valve_open_delay (${default_valve_open_delay_sec}s)
+                      // is the inter-zone gap used by start_full_cycle.
+                      float mult = id($devicename1).multiplier();
+                      int total_secs = 0;
+                      int n_enabled = 0;
+                      if (id(zone1_enable).state) { total_secs += (int)(id(${devicename1}_1_duration).state * 60 * mult); n_enabled++; }
+                      if (id(zone2_enable).state) { total_secs += (int)(id(${devicename1}_2_duration).state * 60 * mult); n_enabled++; }
+                      if (id(zone3_enable).state) { total_secs += (int)(id(${devicename1}_3_duration).state * 60 * mult); n_enabled++; }
+                      if (id(zone4_enable).state) { total_secs += (int)(id(${devicename1}_4_duration).state * 60 * mult); n_enabled++; }
+                      if (id(zone5_enable).state) { total_secs += (int)(id(${devicename1}_5_duration).state * 60 * mult); n_enabled++; }
+                      if (id(zone6_enable).state) { total_secs += (int)(id(${devicename1}_6_duration).state * 60 * mult); n_enabled++; }
+                      if (id(zone7_enable).state) { total_secs += (int)(id(${devicename1}_7_duration).state * 60 * mult); n_enabled++; }
+                      if (id(zone8_enable).state) { total_secs += (int)(id(${devicename1}_8_duration).state * 60 * mult); n_enabled++; }
+                      // Add valve_open_delay gaps between zones
+                      if (n_enabled > 1) total_secs += (n_enabled - 1) * ${default_valve_open_delay_sec};
+                      id(cycle_soak_total_duration) = total_secs;
+                      id(cycle_soak_elapsed_time) = 0;
+                      ESP_LOGI("irrigation", "📊 Normal mode grand total: %d sec (%d zones enabled, mult=%.2f)",
+                               total_secs, n_enabled, mult);
 
                   - sprinkler.start_full_cycle: $devicename1
 
@@ -10749,7 +10985,14 @@ script:
                 }
               }
             } else {
-              ESP_LOGW("irrigation", "🚫 BUSY - Manual Program %d blocked", program);
+              // BUG FIX: Distinguish "queue disabled" (allow_queue=true but queue off) from
+              // "manual blocked" (allow_queue=false). Previously both showed "BUSY - blocked"
+              // even when the real reason was that the queue system was disabled.
+              if (allow_queue && !id(queue_system_enabled)) {
+                ESP_LOGW("irrigation", "⚠️ QUEUE DISABLED - Program %d will NOT run (system busy)!", program);
+              } else {
+                ESP_LOGW("irrigation", "🚫 BUSY - Manual Program %d blocked", program);
+              }
             }
             return;
           }
@@ -10789,12 +11032,16 @@ script:
           // PRODUCTION FEATURE CHECKS
           // ═══════════════════════════════════════════════
           
-          // 1. RAIN DELAY CHECK
-          if (now.is_valid() && id(rain_delay_end_time) > now.timestamp) {
-            int64_t rd_days = (id(rain_delay_end_time) - now.timestamp) / ${seconds_per_day};
-            ESP_LOGW("irrigation", "🌧️ Zone %d BLOCKED - Rain delay active (%lld day(s) remaining)", zone + 1, rd_days);
-            { char _rb[60]; snprintf(_rb, sizeof(_rb), "🌧️ Zone %d blocked - Rain delay (%lld day(s))", zone + 1, rd_days); std::string _r(_rb); id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
-            return;
+          // 1. RAIN DELAY CHECK (respects manual_rain_delay_override — consistent with Normal/C&S buttons)
+          if (!id(manual_rain_delay_override)) {
+            if (now.is_valid() && id(rain_delay_end_time) > now.timestamp) {
+              int64_t rd_days = (id(rain_delay_end_time) - now.timestamp) / ${seconds_per_day};
+              ESP_LOGW("irrigation", "🌧️ Zone %d BLOCKED - Rain delay active (%lld day(s) remaining)", zone + 1, rd_days);
+              { char _rb[60]; snprintf(_rb, sizeof(_rb), "🌧️ Zone %d blocked - Rain delay (%lld day(s))", zone + 1, rd_days); std::string _r(_rb); id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
+              return;
+            }
+          } else {
+            ESP_LOGW("irrigation", "⚠️ Rain delay override ACTIVE - Skipping rain delay check for Zone %d", zone + 1);
           }
           
           // 2. FREEZE PROTECTION CHECK
@@ -10968,15 +11215,13 @@ script:
             ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Skipping weather check for Zone %d", zone + 1);
           }
 
-          // CRITICAL: Check time restriction (for manual runs only)
-          if (!allow_queue) {
-            if (id(is_time_restricted)) {
-              ESP_LOGW("irrigation", "⏰ Zone %d blocked - time restriction active", zone + 1);
-              { std::string _r = "⏰ Time restriction active"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
-              return;
-            }
-            ESP_LOGI("irrigation", "✓ Time restriction check PASSED for Zone %d", zone + 1);
+          // CRITICAL: Check time restriction — always enforced for manual runs (consistent with Normal/C&S buttons)
+          if (id(is_time_restricted)) {
+            ESP_LOGW("irrigation", "⏰ Zone %d blocked - time restriction active", zone + 1);
+            { std::string _r = "⏰ Time restriction active"; id(last_zone_block_reason) = _r; id(zone_block_reason_sensor).publish_state(_r); }
+            return;
           }
+          ESP_LOGI("irrigation", "✓ Time restriction check PASSED for Zone %d", zone + 1);
 
           // BUG #44 FIX: Only treat active_valve() as busy if it's a DIFFERENT zone.
           // When a user presses a zone switch directly in HA, the sprinkler component
@@ -11155,8 +11400,23 @@ script:
             case 7: zone_name = id(zone8_name).state; break;
           }
           
-          // Get multiplier first
-          float multiplier = id($devicename1).multiplier();
+          // Get multiplier first — check if this zone has Quick Run base duration enabled
+          bool _qr_base = false;
+          switch(zone) {
+            case 0: _qr_base = id(zone1_quick_run_base); break;
+            case 1: _qr_base = id(zone2_quick_run_base); break;
+            case 2: _qr_base = id(zone3_quick_run_base); break;
+            case 3: _qr_base = id(zone4_quick_run_base); break;
+            case 4: _qr_base = id(zone5_quick_run_base); break;
+            case 5: _qr_base = id(zone6_quick_run_base); break;
+            case 6: _qr_base = id(zone7_quick_run_base); break;
+            case 7: _qr_base = id(zone8_quick_run_base); break;
+          }
+          float multiplier = _qr_base ? 1.0f : id($devicename1).multiplier();
+          if (_qr_base) {
+            ESP_LOGI("irrigation", "💡 Zone %d: Quick Run BASE DURATION mode — using 1.0x (system multiplier %.2fx ignored)",
+                     zone + 1, id($devicename1).multiplier());
+          }
           
           ESP_LOGI("irrigation", "🌊 %s (Zone %d) START | Mode: %s | Duration: %ds | Multiplier: %.2f",
                    zone_name.c_str(), zone + 1,
@@ -11174,6 +11434,7 @@ script:
             id(cycle_soak_elapsed_time) = 0;
             id(active_zone_number) = -1;
             id(total_cycles) = 0;
+            id(last_cycle_seconds) = 0;
             id(current_cycle) = 0;
             // BUG FIX: Store the ACTUAL adjusted duration so the progress sensor
             // can compute elapsed/total correctly. valve_run_duration_adjusted()
@@ -11185,18 +11446,29 @@ script:
             id($devicename1).start_single_valve(zone, adjusted_duration);
             
           } else {
-            // CYCLE & SOAK MODE (no multiplier applied)
+            // CYCLE & SOAK MODE — apply multiplier to total duration (same as normal mode)
+            // multiplier > 1.0 means ET needs more water; add extra cycle(s) as needed.
+            // The LAST cycle is shortened to hit the exact adjusted duration instead of always
+            // running a full cycle_seconds. Without this, a 20min zone at 1.14x would run
+            // 3 × 10min = 30min instead of the correct 22.8min (up to 1 full cycle over).
             int cycle_seconds = id(cycle_duration_minutes) * 60;
             int soak_seconds = id(soak_duration_minutes) * 60;
-            int total_duration = duration;  // Use base duration without multiplier
-            int cycles = (total_duration + cycle_seconds - 1) / cycle_seconds;
-            int total_time = (cycles * cycle_seconds) + ((cycles - 1) * soak_seconds);
+            int total_duration = (int)(duration * multiplier);  // Apply multiplier
+            int cycles = (cycle_seconds > 0) ? ((total_duration + cycle_seconds - 1) / cycle_seconds) : 1;
+            // last_cycle_sec: final cycle may be shorter to deliver exactly total_duration.
+            int last_cycle_sec = (cycles > 0) ? (total_duration - (cycles - 1) * cycle_seconds) : total_duration;
+            if (last_cycle_sec <= 0) last_cycle_sec = cycle_seconds;  // Safety floor
+            // Store globally so continue_cycle_soak_after_resume uses correct final-cycle duration.
+            id(last_cycle_seconds) = last_cycle_sec;
+            // Total time = exact watering time + soaks between cycles + optional station delay.
+            // (actual watering = total_duration because last cycle is shortened)
+            int total_time = total_duration + ((cycles - 1) * soak_seconds);
             // BUG FIX: include station delay so the countdown does not hit 0
             // and freeze while the inter-zone gap elapses.
             if (add_delay) total_time += id(station_delay_seconds);
             
-            ESP_LOGI("irrigation", "==> CYCLE & SOAK MODE - %d cycles of %d sec (NO multiplier) + %d sec soak%s",
-                     cycles, cycle_seconds, soak_seconds, add_delay ? " + station delay" : "");
+            ESP_LOGI("irrigation", "==> CYCLE & SOAK MODE - %d cycles (last=%ds of %ds) mult=%.2f adj=%ds soak=%ds%s",
+                     cycles, last_cycle_sec, cycle_seconds, multiplier, total_duration, soak_seconds, add_delay ? " +delay" : "");
             
             // BUG FIX: When called from run_all_zones_cycle_soak_script, the grand total
             // and elapsed counter are already set to span ALL zones. Do NOT reset them
@@ -11250,12 +11522,20 @@ script:
           condition:
             lambda: 'return !id(zone_run_blocked) && !force_normal && id(cycle_soak_switch).state;'
           then:
-            # Run first cycle (no multiplier in soak mode)
+            # Run first cycle. If only 1 cycle total, use last_cycle_seconds (may be shorter than
+            # full cycle_duration_minutes * 60) to deliver exactly the adjusted duration.
             - sprinkler.start_single_valve:
                 id: $devicename1
                 valve_number: !lambda "return zone;"
-                run_duration: !lambda "return id(cycle_duration_minutes) * 60;"
-            - delay: !lambda "return (id(cycle_duration_minutes) * 60 + 2) * 1000;"
+                run_duration: !lambda |-
+                  int full = id(cycle_duration_minutes) * 60;
+                  int lcs  = (id(last_cycle_seconds) > 0) ? id(last_cycle_seconds) : full;
+                  return (id(total_cycles) <= 1) ? lcs : full;
+            - delay: !lambda |-
+                int full = id(cycle_duration_minutes) * 60;
+                int lcs  = (id(last_cycle_seconds) > 0) ? id(last_cycle_seconds) : full;
+                int dur  = (id(total_cycles) <= 1) ? lcs : full;
+                return (dur + 2) * 1000;
             
             # Repeat remaining cycles
             - repeat:
@@ -11306,12 +11586,20 @@ script:
                             ESP_LOGI("irrigation", "🚀 CYCLE %d of %d STARTING NOW",
                                      id(current_cycle), id(total_cycles));
                         
-                        # Next cycle (no multiplier in soak mode)
+                        # Next cycle. Use last_cycle_seconds when this is the final cycle
+                        # so the total watering matches the exact adjusted duration.
                         - sprinkler.start_single_valve:
                             id: $devicename1
                             valve_number: !lambda "return zone;"
-                            run_duration: !lambda "return id(cycle_duration_minutes) * 60;"
-                        - delay: !lambda "return (id(cycle_duration_minutes) * 60 + 2) * 1000;"
+                            run_duration: !lambda |-
+                              int full = id(cycle_duration_minutes) * 60;
+                              int lcs  = (id(last_cycle_seconds) > 0) ? id(last_cycle_seconds) : full;
+                              return (id(current_cycle) >= id(total_cycles)) ? lcs : full;
+                        - delay: !lambda |-
+                              int full = id(cycle_duration_minutes) * 60;
+                              int lcs  = (id(last_cycle_seconds) > 0) ? id(last_cycle_seconds) : full;
+                              int dur  = (id(current_cycle) >= id(total_cycles)) ? lcs : full;
+                              return (dur + 2) * 1000;
             
             # Cleanup
             - lambda: |-
@@ -11331,6 +11619,7 @@ script:
                 id(active_zone_number) = -1;
                 id(current_cycle) = 0;
                 id(total_cycles) = 0;
+                id(last_cycle_seconds) = 0;
                 // BUG FIX: When running inside run_all_zones_cycle_soak_script,
                 // do NOT clear cycle_soak_total_duration or cycle_soak_elapsed_time.
                 // The all-zones script set a grand total covering ALL zones; clearing
@@ -11375,6 +11664,7 @@ script:
                 id(active_zone_number) = -1;
                 id(current_cycle) = 0;
                 id(total_cycles) = 0;
+                id(last_cycle_seconds) = 0;
                 // BUG FIX: When running inside run_all_zones_cycle_soak_script,
                 // do NOT clear total_duration/elapsed here (station delay cleanup).
                 // Same reason as the C&S cleanup block above: grand total covers
@@ -11415,6 +11705,7 @@ script:
             id(active_zone_number) = -1;
             id(current_cycle) = 0;
             id(total_cycles) = 0;
+            id(last_cycle_seconds) = 0;
             id(cycle_soak_is_soaking) = false;
             id(cycle_soak_soak_end_time) = 0;
             // BUG FIX (Bug 24): _csa_block was missing full state cleanup.
@@ -11500,7 +11791,8 @@ script:
                 id(cycle_soak_is_soaking) = false;
                 id(cycle_soak_soak_end_time) = 0;
                 ESP_LOGI("irrigation", "Soak complete - watering cycle %d of %d", id(current_cycle) + 1, total);
-            # Water the cycle that follows the now-completed soak
+            # Water the cycle that follows the now-completed soak.
+            # Use last_cycle_seconds if this is the final cycle to avoid over-watering.
             - if:
                 condition:
                   lambda: 'return !id(resume_csa_blocked);'
@@ -11508,8 +11800,15 @@ script:
                   - sprinkler.start_single_valve:
                       id: $devicename1
                       valve_number: !lambda 'return zone;'
-                      run_duration: !lambda 'return id(cycle_duration_minutes) * 60;'
-                  - delay: !lambda 'return (id(cycle_duration_minutes) * 60 + 2) * 1000;'
+                      run_duration: !lambda |-
+                        int full = id(cycle_duration_minutes) * 60;
+                        int lcs  = (id(last_cycle_seconds) > 0) ? id(last_cycle_seconds) : full;
+                        return (id(current_cycle) + 1 >= total) ? lcs : full;
+                  - delay: !lambda |-
+                        int full = id(cycle_duration_minutes) * 60;
+                        int lcs  = (id(last_cycle_seconds) > 0) ? id(last_cycle_seconds) : full;
+                        int dur  = (id(current_cycle) + 1 >= total) ? lcs : full;
+                        return (dur + 2) * 1000;
                   - lambda: |-
                       if (id(resume_csa_blocked)) return;
                       id(current_cycle)++;
@@ -11541,6 +11840,7 @@ script:
                 ESP_LOGW("irrigation", "🚫 RESUME LOOP ABORTED — safety condition changed");
                 id(irrigation_busy) = false; id(in_program_run) = false;
                 id(active_zone_number) = -1; id(current_cycle) = 0; id(total_cycles) = 0;
+                id(last_cycle_seconds) = 0;
                 id(cycle_soak_is_soaking) = false; id(cycle_soak_soak_end_time) = 0;
                 // BUG FIX (Bug 26): loop abort was missing these cleanups.
                 // Without them, cycle_soak_switch stays ON and auto_advance stays OFF
@@ -11578,8 +11878,15 @@ script:
                   - sprinkler.start_single_valve:
                       id: $devicename1
                       valve_number: !lambda 'return zone;'
-                      run_duration: !lambda 'return id(cycle_duration_minutes) * 60;'
-                  - delay: !lambda 'return (id(cycle_duration_minutes) * 60 + 2) * 1000;'
+                      run_duration: !lambda |-
+                        int full = id(cycle_duration_minutes) * 60;
+                        int lcs  = (id(last_cycle_seconds) > 0) ? id(last_cycle_seconds) : full;
+                        return (id(current_cycle) >= total) ? lcs : full;
+                  - delay: !lambda |-
+                        int full = id(cycle_duration_minutes) * 60;
+                        int lcs  = (id(last_cycle_seconds) > 0) ? id(last_cycle_seconds) : full;
+                        int dur  = (id(current_cycle) >= total) ? lcs : full;
+                        return (dur + 2) * 1000;
 
       # ══════════════════════════════════════════════════════════════════════
       # CLEANUP — only runs on natural completion (not if blocked/stopped)
@@ -11592,6 +11899,7 @@ script:
           id(active_zone_number) = -1;
           id(current_cycle) = 0;
           id(total_cycles) = 0;
+          id(last_cycle_seconds) = 0;
           id(cycle_soak_total_duration) = 0;
           id(cycle_soak_elapsed_time) = 0;
           id(normal_run_duration_seconds) = 0;
@@ -11605,15 +11913,22 @@ script:
           id(paused_total_cycles) = 0;
           id(paused_cycle_soak_total_duration) = 0;
           id(paused_cycle_soak_elapsed_time) = 0;
-          if (!id(in_program_run)) {
-            id(irrigation_busy) = false;
-            id(drain_queue).execute();
-          }
+          // BUG FIX (Bug 31b): Clear in_program_run here.
+          // If paused mid-program (in_program_run=true) and resumed to natural completion,
+          // run_program is gone but in_program_run stays true → irrigation_busy never cleared
+          // → system stalls ~30-60s until watchdog's clean-completion path fires.
+          id(in_program_run) = false;
+          id(irrigation_busy) = false;
+          id(drain_queue).execute();
           // Restore Auto Advance and turn off C&S switch
           id(dev1_auto_advance).turn_on();
           // BUG FIX: Turn off C&S switch on resume completion so future runs
           // start in the correct mode (normal unless user turns C&S back on).
           id(cycle_soak_switch).turn_off();
+          // BUG FIX (Bug 31): watering_trigger_source was never reset to "Idle" here.
+          // All other cleanup paths reset it; missing here meant the "Last Trigger" sensor
+          // kept showing the resumed run's trigger indefinitely after completion.
+          id(watering_trigger_source) = "Idle";
           id(dev1_valve_status).publish_state("Idle");
           ESP_LOGI("irrigation", "Auto Advance restored — Cycle & Soak resume complete");
 
@@ -11686,6 +12001,18 @@ script:
             - switch.turn_off: cycle_soak_switch
             - lambda: |-
                 ESP_LOGW("irrigation", "🚫 Cycle & Soak pre-flight BLOCKED — clearing busy and draining queue");
+                
+                // BASE DURATION C&S: Restore multiplier if it was saved before blocking
+                if (id(restore_multiplier_after_run)) {
+                  float saved_mult = id(saved_multiplier_for_base_run);
+                  float vac_mult = id(vacation_mode_active) ? saved_mult * 0.5f : saved_mult;
+                  id($devicename1).set_multiplier(vac_mult);
+                  ESP_LOGI("irrigation", "🔄 MULTIPLIER RESTORED: %.2fx%s (run was blocked)",
+                           vac_mult, id(vacation_mode_active) ? " (×0.5 vacation)" : "");
+                  id(restore_multiplier_after_run) = false;
+                  id(saved_multiplier_for_base_run) = 1.0;
+                }
+                
                 id(irrigation_busy) = false;
                 id(in_program_run) = false;
                 id(watering_trigger_source) = "Idle";
@@ -11726,15 +12053,19 @@ script:
                 int cycle_sec  = id(cycle_duration_minutes) * 60;
                 int soak_sec   = id(soak_duration_minutes) * 60;
                 int delay_sec  = id(station_delay_seconds);
+                float mult     = id($devicename1).multiplier();
                 int grand_total = 0;
-                // Sum total time for each ENABLED zone (all cycles + all soaks)
+                // Sum total time for each ENABLED zone (all cycles + all soaks).
+                // Apply multiplier to zone duration — same as normal mode behaviour.
                 // BUG FIX: also add station_delay_seconds for zones 1-7 (add_delay=true)
                 // so the countdown does not hit 0 and freeze during station delays.
                 auto zone_total = [&](float dur_sec) -> int {
-                  int dur = (int)dur_sec;
+                  int dur = (int)(dur_sec * mult);  // Apply multiplier
                   if (dur <= 0 || cycle_sec <= 0) return 0;
                   int n = (dur + cycle_sec - 1) / cycle_sec;
-                  return (n * cycle_sec) + ((n - 1) * soak_sec);
+                  // Use exact adjusted duration (not n*cycle_sec) because the last cycle
+                  // is shortened to hit dur exactly. Soaks: (n-1) full soaks between cycles.
+                  return dur + ((n - 1) * soak_sec);
                 };
                 if (id(zone1_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_1_duration).state * 60) + delay_sec;
                 if (id(zone2_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_2_duration).state * 60) + delay_sec;
@@ -11746,13 +12077,13 @@ script:
                 if (id(zone8_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_8_duration).state * 60);  // Zone 8: no station delay (add_delay=false)
                 id(cycle_soak_total_duration) = grand_total;
                 id(cycle_soak_elapsed_time) = 0;
-                ESP_LOGI("irrigation", "\U0001F4CA All-Zones C&S grand total: %d sec (%d enabled zones, %d sec/cycle, %d sec/soak)",
+                ESP_LOGI("irrigation", "\U0001F4CA All-Zones C&S grand total: %d sec (%d enabled zones, %d sec/cycle, %d sec/soak, mult=%.2f)",
                          grand_total, 
                          (int)id(zone1_enable).state + (int)id(zone2_enable).state +
                          (int)id(zone3_enable).state + (int)id(zone4_enable).state +
                          (int)id(zone5_enable).state + (int)id(zone6_enable).state +
                          (int)id(zone7_enable).state + (int)id(zone8_enable).state,
-                         cycle_sec, soak_sec);
+                         cycle_sec, soak_sec, mult);
       
       # Zone 1
       - if:
@@ -11891,6 +12222,16 @@ script:
             - switch.turn_on: dev1_auto_advance
             - logger.log: "Auto Advance restored to ON"
             - lambda: |-
+                // BASE DURATION C&S: Restore multiplier if it was temporarily set to 1.0
+                if (id(restore_multiplier_after_run)) {
+                  float saved_mult = id(saved_multiplier_for_base_run);
+                  float vac_mult = id(vacation_mode_active) ? saved_mult * 0.5f : saved_mult;
+                  id($devicename1).set_multiplier(vac_mult);
+                  ESP_LOGI("irrigation", "🔄 MULTIPLIER RESTORED: %.2fx%s (was temporarily 1.0 for base duration run)",
+                           vac_mult, id(vacation_mode_active) ? " (×0.5 vacation)" : "");
+                  id(restore_multiplier_after_run) = false;
+                  id(saved_multiplier_for_base_run) = 1.0;
+                }
                 id(irrigation_busy) = false;
                 id(in_program_run) = false;
             - script.execute: drain_queue
@@ -14707,6 +15048,7 @@ switch:
           id(active_zone_number) = -1;
           id(current_cycle) = 0;
           id(total_cycles) = 0;
+          id(last_cycle_seconds) = 0;
           id(cycle_soak_total_duration) = 0;
           id(cycle_soak_elapsed_time) = 0;
           id(is_paused) = false;
@@ -14736,6 +15078,139 @@ switch:
       - text_sensor.template.publish:
           id: dev1_valve_status
           state: "System Disabled"
+
+ # ═══════════════════════════════════════════════════════════
+ # QUICK RUN BASE DURATION SWITCHES (disable multiplier per zone)
+ # When ON: Quick Run ignores the seasonal multiplier and runs
+ # for exactly the duration set — no PW/ET/seasonal adjustment.
+ # ═══════════════════════════════════════════════════════════
+  - platform: template
+    name: "${dev1_zone1} Quick Run Base Duration"
+    id: zone1_quick_run_base_switch
+    icon: "mdi:timer-off-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(zone1_quick_run_base);"
+    turn_on_action:
+      - lambda: |-
+          id(zone1_quick_run_base) = true;
+          ESP_LOGI("irrigation", "💡 Zone 1 Quick Run: BASE DURATION enabled (multiplier disabled)");
+    turn_off_action:
+      - lambda: |-
+          id(zone1_quick_run_base) = false;
+          ESP_LOGI("irrigation", "💡 Zone 1 Quick Run: multiplier RE-ENABLED");
+
+  - platform: template
+    name: "${dev1_zone2} Quick Run Base Duration"
+    id: zone2_quick_run_base_switch
+    icon: "mdi:timer-off-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(zone2_quick_run_base);"
+    turn_on_action:
+      - lambda: |-
+          id(zone2_quick_run_base) = true;
+          ESP_LOGI("irrigation", "💡 Zone 2 Quick Run: BASE DURATION enabled (multiplier disabled)");
+    turn_off_action:
+      - lambda: |-
+          id(zone2_quick_run_base) = false;
+          ESP_LOGI("irrigation", "💡 Zone 2 Quick Run: multiplier RE-ENABLED");
+
+  - platform: template
+    name: "${dev1_zone3} Quick Run Base Duration"
+    id: zone3_quick_run_base_switch
+    icon: "mdi:timer-off-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(zone3_quick_run_base);"
+    turn_on_action:
+      - lambda: |-
+          id(zone3_quick_run_base) = true;
+          ESP_LOGI("irrigation", "💡 Zone 3 Quick Run: BASE DURATION enabled (multiplier disabled)");
+    turn_off_action:
+      - lambda: |-
+          id(zone3_quick_run_base) = false;
+          ESP_LOGI("irrigation", "💡 Zone 3 Quick Run: multiplier RE-ENABLED");
+
+  - platform: template
+    name: "${dev1_zone4} Quick Run Base Duration"
+    id: zone4_quick_run_base_switch
+    icon: "mdi:timer-off-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(zone4_quick_run_base);"
+    turn_on_action:
+      - lambda: |-
+          id(zone4_quick_run_base) = true;
+          ESP_LOGI("irrigation", "💡 Zone 4 Quick Run: BASE DURATION enabled (multiplier disabled)");
+    turn_off_action:
+      - lambda: |-
+          id(zone4_quick_run_base) = false;
+          ESP_LOGI("irrigation", "💡 Zone 4 Quick Run: multiplier RE-ENABLED");
+
+  - platform: template
+    name: "${dev1_zone5} Quick Run Base Duration"
+    id: zone5_quick_run_base_switch
+    icon: "mdi:timer-off-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(zone5_quick_run_base);"
+    turn_on_action:
+      - lambda: |-
+          id(zone5_quick_run_base) = true;
+          ESP_LOGI("irrigation", "💡 Zone 5 Quick Run: BASE DURATION enabled (multiplier disabled)");
+    turn_off_action:
+      - lambda: |-
+          id(zone5_quick_run_base) = false;
+          ESP_LOGI("irrigation", "💡 Zone 5 Quick Run: multiplier RE-ENABLED");
+
+  - platform: template
+    name: "${dev1_zone6} Quick Run Base Duration"
+    id: zone6_quick_run_base_switch
+    icon: "mdi:timer-off-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(zone6_quick_run_base);"
+    turn_on_action:
+      - lambda: |-
+          id(zone6_quick_run_base) = true;
+          ESP_LOGI("irrigation", "💡 Zone 6 Quick Run: BASE DURATION enabled (multiplier disabled)");
+    turn_off_action:
+      - lambda: |-
+          id(zone6_quick_run_base) = false;
+          ESP_LOGI("irrigation", "💡 Zone 6 Quick Run: multiplier RE-ENABLED");
+
+  - platform: template
+    name: "${dev1_zone7} Quick Run Base Duration"
+    id: zone7_quick_run_base_switch
+    icon: "mdi:timer-off-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(zone7_quick_run_base);"
+    turn_on_action:
+      - lambda: |-
+          id(zone7_quick_run_base) = true;
+          ESP_LOGI("irrigation", "💡 Zone 7 Quick Run: BASE DURATION enabled (multiplier disabled)");
+    turn_off_action:
+      - lambda: |-
+          id(zone7_quick_run_base) = false;
+          ESP_LOGI("irrigation", "💡 Zone 7 Quick Run: multiplier RE-ENABLED");
+
+  - platform: template
+    name: "${dev1_zone8} Quick Run Base Duration"
+    id: zone8_quick_run_base_switch
+    icon: "mdi:timer-off-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(zone8_quick_run_base);"
+    turn_on_action:
+      - lambda: |-
+          id(zone8_quick_run_base) = true;
+          ESP_LOGI("irrigation", "💡 Zone 8 Quick Run: BASE DURATION enabled (multiplier disabled)");
+    turn_off_action:
+      - lambda: |-
+          id(zone8_quick_run_base) = false;
+          ESP_LOGI("irrigation", "💡 Zone 8 Quick Run: multiplier RE-ENABLED");
 
  # Zone Schedule Enable Switches
   - platform: template
@@ -15137,6 +15612,7 @@ switch:
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone1_water_litres) += water_used;
               id(total_water_litres) += water_used;
+              id(daily_water_litres) += water_used;
               if (isnan(id(current_month_usage)) || std::isinf(id(current_month_usage)) || id(current_month_usage) < 0.0f) {
                 ESP_LOGE("irrigation", "❌ Corrupted current_month_usage (%.1f) - resetting", id(current_month_usage));
                 id(current_month_usage) = 0.0f;
@@ -15311,6 +15787,7 @@ switch:
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone2_water_litres) += water_used;
               id(total_water_litres) += water_used;
+              id(daily_water_litres) += water_used;
               if (isnan(id(current_month_usage)) || std::isinf(id(current_month_usage)) || id(current_month_usage) < 0.0f) {
                 ESP_LOGE("irrigation", "❌ Corrupted current_month_usage (%.1f) - resetting", id(current_month_usage));
                 id(current_month_usage) = 0.0f;
@@ -15485,6 +15962,7 @@ switch:
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone3_water_litres) += water_used;
               id(total_water_litres) += water_used;
+              id(daily_water_litres) += water_used;
               if (isnan(id(current_month_usage)) || std::isinf(id(current_month_usage)) || id(current_month_usage) < 0.0f) {
                 ESP_LOGE("irrigation", "❌ Corrupted current_month_usage (%.1f) - resetting", id(current_month_usage));
                 id(current_month_usage) = 0.0f;
@@ -15659,6 +16137,7 @@ switch:
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone4_water_litres) += water_used;
               id(total_water_litres) += water_used;
+              id(daily_water_litres) += water_used;
               if (isnan(id(current_month_usage)) || std::isinf(id(current_month_usage)) || id(current_month_usage) < 0.0f) {
                 ESP_LOGE("irrigation", "❌ Corrupted current_month_usage (%.1f) - resetting", id(current_month_usage));
                 id(current_month_usage) = 0.0f;
@@ -15833,6 +16312,7 @@ switch:
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone5_water_litres) += water_used;
               id(total_water_litres) += water_used;
+              id(daily_water_litres) += water_used;
               if (isnan(id(current_month_usage)) || std::isinf(id(current_month_usage)) || id(current_month_usage) < 0.0f) {
                 ESP_LOGE("irrigation", "❌ Corrupted current_month_usage (%.1f) - resetting", id(current_month_usage));
                 id(current_month_usage) = 0.0f;
@@ -16007,6 +16487,7 @@ switch:
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone6_water_litres) += water_used;
               id(total_water_litres) += water_used;
+              id(daily_water_litres) += water_used;
               if (isnan(id(current_month_usage)) || std::isinf(id(current_month_usage)) || id(current_month_usage) < 0.0f) {
                 ESP_LOGE("irrigation", "❌ Corrupted current_month_usage (%.1f) - resetting", id(current_month_usage));
                 id(current_month_usage) = 0.0f;
@@ -16181,6 +16662,7 @@ switch:
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone7_water_litres) += water_used;
               id(total_water_litres) += water_used;
+              id(daily_water_litres) += water_used;
               if (isnan(id(current_month_usage)) || std::isinf(id(current_month_usage)) || id(current_month_usage) < 0.0f) {
                 ESP_LOGE("irrigation", "❌ Corrupted current_month_usage (%.1f) - resetting", id(current_month_usage));
                 id(current_month_usage) = 0.0f;
@@ -16355,6 +16837,7 @@ switch:
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone8_water_litres) += water_used;
               id(total_water_litres) += water_used;
+              id(daily_water_litres) += water_used;
               if (isnan(id(current_month_usage)) || std::isinf(id(current_month_usage)) || id(current_month_usage) < 0.0f) {
                 ESP_LOGE("irrigation", "❌ Corrupted current_month_usage (%.1f) - resetting", id(current_month_usage));
                 id(current_month_usage) = 0.0f;
@@ -16499,6 +16982,7 @@ sprinkler:
               id(active_zone_number) = -1;
               id(current_cycle) = 0;
               id(total_cycles) = 0;
+              id(last_cycle_seconds) = 0;
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
               id(normal_run_duration_seconds) = 0;
@@ -17024,7 +17508,140 @@ button:
                                             ESP_LOGI("irrigation", "▶️ STARTING Normal Mode immediately (system idle)");
                                           }
 
-# Manual program run buttons
+# Start All Zones - NORMAL MODE (BASE DURATION - 1.0x multiplier)
+  - platform: template
+    id: start_all_zones_normal_base
+    name: "$dev1_what Start All Zones (Normal - Base Duration)"
+    icon: "mdi:play-circle"
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "🟢 BUTTON PRESSED: Start All Zones (NORMAL - BASE DURATION)");
+            ESP_LOGI("irrigation", "💡 Base Duration mode: Will run at 1.0x multiplier regardless of current PW/ET settings");
+        - if:
+            condition:
+              lambda: |-
+                if (id(is_blackout_date).state) {
+                  ESP_LOGW("irrigation", "\U0001F6AB BLOCKED: Normal (Base) - Blackout date active");
+                  return true;
+                }
+                return false;
+            then:
+              - logger.log:
+                  format: "🚫 Normal (Base Duration) will NOT start - blackout date active"
+                  level: ERROR
+            else:
+              - if:
+                  condition:
+                    switch.is_off: irrigation_system_enable
+                  then:
+                    - logger.log:
+                        format: "❌ BLOCKED: Irrigation system is DISABLED"
+                        level: WARN
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            if (!id(manual_rain_delay_override)) {
+                              return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                            }
+                            return false;
+                        then:
+                          - logger.log:
+                              format: "⛈️ BLOCKED: Rain delay is active"
+                              level: WARN
+                        else:
+                          - if:
+                              condition:
+                                lambda: 'return id(is_time_restricted);'
+                              then:
+                                - logger.log:
+                                    format: "⏰ BLOCKED: Time restriction active (outside allowed hours)"
+                                    level: WARN
+                              else:
+                                - if:
+                                    condition:
+                                      lambda: |-
+                                        if (!id(manual_weather_override)) {
+                                          std::string w = id(weather_forecast_home).state;
+                                          if (!w.empty() && w != "unknown" && w != "unavailable") {
+                                            if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                                              return true;
+                                            }
+                                          }
+                                        }
+                                        return false;
+                                    then:
+                                      - logger.log:
+                                          format: "⛈️ BLOCKED: Bad weather (Enable Weather Override to force)"
+                                          level: WARN
+                                    else:
+                                      - lambda: |-
+                                          std::string w = id(weather_forecast_home).state;
+                                          if (id(manual_weather_override)) {
+                                            ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather: %s", w.c_str());
+                                          } else {
+                                            ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
+                                          }
+                                          
+                                          if (id(freeze_protection_active)) {
+                                            ESP_LOGW("irrigation", "❄️ BLOCKED: Normal (Base) — freeze protection active (%.1f°C)", id(outside_temperature).state);
+                                            return;
+                                          }
+                                          if (id(budget_exceeded) && !id(budget_override_active)) {
+                                            ESP_LOGW("irrigation", "🚫 BLOCKED: Normal (Base) — monthly budget exceeded (%.0fL/%.0fL)", id(current_month_usage), id(monthly_water_budget));
+                                            return;
+                                          }
+                                          
+                                          bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
+                                          
+                                          if (busy) {
+                                            if (id(queue_system_enabled) && id(queue_count) < 3) {
+                                              int pos = id(queue_count);
+                                              id(queue_types)[pos] = 3;  // 3 = Normal mode
+                                              id(queue_programs)[pos] = 0;
+                                              id(queue_zones)[pos] = 0;
+                                              id(queue_durations)[pos] = 0;
+                                              id(queue_add_delays)[pos] = false;
+                                              id(queue_trigger_sources)[pos] = "Manual: All Zones Normal (Base 1.0x)";
+                                              id(queue_count)++;
+                                              ESP_LOGI("irrigation", "📋 QUEUED Normal Base → Slot %d/3 | Queue now: %d items",
+                                                       pos + 1, id(queue_count));
+                                              ESP_LOGI("irrigation", "💡 Multiplier will be set to 1.0x when this runs");
+                                            } else {
+                                              if (!id(queue_system_enabled)) {
+                                                ESP_LOGW("irrigation", "⚠️ QUEUE DISABLED - Normal (Base) will NOT run (system busy)!");
+                                              } else {
+                                                ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Normal (Base) will NOT run!");
+                                              }
+                                            }
+                                          } else {
+                                            // System is idle - start immediately at base duration
+                                            id(watering_trigger_source) = "Manual: All Zones Normal (Base 1.0x)";
+                                            ESP_LOGI("irrigation", "📍 TRIGGER: Manual: All Zones Normal (Base 1.0x)");
+                                            
+                                            // SAVE CURRENT MULTIPLIER
+                                            float current_mult = id($devicename1).multiplier();
+                                            if (id(vacation_mode_active)) {
+                                              current_mult = current_mult * 2.0f;
+                                            }
+                                            id(saved_multiplier_for_base_run) = current_mult;
+                                            id(restore_multiplier_after_run) = true;
+                                            ESP_LOGI("irrigation", "💾 SAVED multiplier: %.2fx (will restore after run)", current_mult);
+                                            
+                                            // SET MULTIPLIER TO 1.0 (with vacation discount if active)
+                                            float base_mult = id(vacation_mode_active) ? 0.5f : 1.0f;
+                                            id($devicename1).set_multiplier(base_mult);
+                                            ESP_LOGI("irrigation", "🎯 MULTIPLIER SET TO: %.2fx%s (base duration)",
+                                                     base_mult, id(vacation_mode_active) ? " (1.0 × 0.5 vacation)" : "");
+                                            
+                                            id(irrigation_busy) = true;
+                                            id(pending_normal_start) = true;
+                                            id(normal_start_attempts) = 0;
+                                            id(normal_last_attempt_ms) = 0;
+                                            ESP_LOGI("irrigation", "▶️ STARTING Normal Base immediately (system idle)");
+                                          }
   - platform: template
     name: "Run ${program_a_name} Now"
     icon: "mdi:alpha-a-circle"
@@ -17054,7 +17671,11 @@ button:
                   else:
                     - if:
                         condition:
-                          lambda: 'return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
+                          lambda: |-
+                            if (!id(manual_rain_delay_override)) {
+                              return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                            }
+                            return false;  // Override active, don't block
                         then:
                           - logger.log:
                               format: "⛈️ BLOCKED: Rain delay is active"
@@ -17095,7 +17716,11 @@ button:
                   else:
                     - if:
                         condition:
-                          lambda: 'return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
+                          lambda: |-
+                            if (!id(manual_rain_delay_override)) {
+                              return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                            }
+                            return false;  // Override active, don't block
                         then:
                           - logger.log:
                               format: "⛈️ BLOCKED: Rain delay is active"
@@ -17136,7 +17761,11 @@ button:
                   else:
                     - if:
                         condition:
-                          lambda: 'return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
+                          lambda: |-
+                            if (!id(manual_rain_delay_override)) {
+                              return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                            }
+                            return false;  // Override active, don't block
                         then:
                           - logger.log:
                               format: "⛈️ BLOCKED: Rain delay is active"
@@ -17231,6 +17860,7 @@ button:
                 id(active_zone_number) = -1;
                 id(current_cycle) = 0;
                 id(total_cycles) = 0;
+                id(last_cycle_seconds) = 0;
                 id(cycle_soak_is_soaking) = false;
                 id(cycle_soak_soak_end_time) = 0;
                 id(watering_trigger_source) = "Idle";
@@ -17591,6 +18221,7 @@ button:
             id(active_zone_number) = -1;
             id(current_cycle) = 0;
             id(total_cycles) = 0;
+            id(last_cycle_seconds) = 0;
             id(cycle_soak_total_duration) = 0;
             id(cycle_soak_elapsed_time) = 0;
             id(cycle_soak_is_soaking) = false;
@@ -17700,7 +18331,12 @@ button:
                   else:
                     - if:
                         condition:
-                          lambda: 'return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;'
+                          lambda: |-
+                            // Rain delay check — respects manual_rain_delay_override (consistent with Normal button)
+                            if (!id(manual_rain_delay_override)) {
+                              return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                            }
+                            return false;  // Override active, don't block
                         then:
                           - logger.log:
                               format: "⛈️ BLOCKED: Rain delay is active"
@@ -17799,6 +18435,162 @@ button:
                                             // or concurrent press sees idle and starts a conflicting run.
                                             id(irrigation_busy) = true;
                                             // Turn ON cycle and soak mode
+                                            id(cycle_soak_switch).turn_on();
+                                            id(run_all_zones_cycle_soak_script).execute();
+                                          }
+
+# Start All Zones - CYCLE & SOAK MODE (BASE DURATION - 1.0x multiplier)
+  - platform: template
+    id: start_all_zones_cycle_soak_base
+    name: "$dev1_what Start All Zones (C&S - Base Duration)"
+    icon: "mdi:water-percent"
+    on_press:
+      then:
+        - lambda: |-
+            ESP_LOGI("irrigation", "");
+            ESP_LOGI("irrigation", "🔵 BUTTON PRESSED: Start All Zones (CYCLE & SOAK - BASE DURATION)");
+            ESP_LOGI("irrigation", "💡 Base Duration mode: Will run at 1.0x multiplier regardless of current PW/ET settings");
+        
+        - if:
+            condition:
+              lambda: |-
+                // ═══════════════════════════════════════════════
+                // 🚫 BLACKOUT CHECK - Direct check of all 10 slots
+                // ═══════════════════════════════════════════════
+                auto now = id(homeassistant_time).now();
+                // Blackout check (incl. NZ public holidays via is_blackout_date sensor)
+                if (id(is_blackout_date).state) {
+                  ESP_LOGW("irrigation", "\U0001F6AB BLOCKED: Cycle & Soak (Base) - Blackout date active");
+                  return true;
+                }
+                return false;
+            then:
+              - logger.log:
+                  format: "🚫 Cycle & Soak (Base) will NOT start - blackout date active"
+                  level: ERROR
+            else:
+              - if:
+                  condition:
+                    switch.is_off: irrigation_system_enable
+                  then:
+                    - logger.log:
+                        format: "❌ BLOCKED: Irrigation system is DISABLED"
+                        level: WARN
+                  else:
+                    - if:
+                        condition:
+                          lambda: |-
+                            // Rain delay check — respects manual_rain_delay_override (consistent with Normal button)
+                            if (!id(manual_rain_delay_override)) {
+                              return id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                            }
+                            return false;  // Override active, don't block
+                        then:
+                          - logger.log:
+                              format: "⛈️ BLOCKED: Rain delay is active"
+                              level: WARN
+                        else:
+                          - if:
+                              condition:
+                                lambda: |-
+                                  // Time restriction check
+                                  return id(is_time_restricted);
+                              then:
+                                - logger.log:
+                                    format: "⏰ BLOCKED: Time restriction active (outside allowed hours)"
+                                    level: WARN
+                              else:
+                                - if:
+                                    condition:
+                                      lambda: |-
+                                        // Weather check (unless override is active)
+                                        if (!id(manual_weather_override)) {
+                                          std::string w = id(weather_forecast_home).state;
+                                          if (!w.empty() && w != "unknown" && w != "unavailable") {
+                                            if (w == "rainy" || w == "pouring" || w == "snowy" || w == "snowy-rainy") {
+                                              return true;  // Bad weather - block
+                                            }
+                                          }
+                                        }
+                                        return false;  // Weather OK or override active
+                                    then:
+                                      - logger.log:
+                                          format: "⛈️ BLOCKED: Bad weather (Enable Weather Override to force)"
+                                          level: WARN
+                                    else:
+                                      - lambda: |-
+                                          std::string w = id(weather_forecast_home).state;
+                                          if (id(manual_weather_override)) {
+                                            ESP_LOGW("irrigation", "⚠️ Weather override ACTIVE - Starting despite weather: %s", w.c_str());
+                                          } else {
+                                            ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
+                                          }
+                                          
+                                          // Freeze and budget checks
+                                          if (id(freeze_protection_active)) {
+                                            ESP_LOGW("irrigation", "❄️ BLOCKED: Cycle & Soak (Base) — freeze protection active (%.1f°C)", id(outside_temperature).state);
+                                            return;
+                                          }
+                                          if (id(budget_exceeded) && !id(budget_override_active)) {
+                                            ESP_LOGW("irrigation", "🚫 BLOCKED: Cycle & Soak (Base) — monthly budget exceeded (%.0fL/%.0fL)", id(current_month_usage), id(monthly_water_budget));
+                                            return;
+                                          }
+                                          
+                                          // Check if system is busy
+                                          bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
+                                          
+                                          if (busy) {
+                                            // System is busy - queue if queue system is enabled
+                                            if (id(queue_system_enabled) && id(queue_count) < 3) {
+                                              // SAVE CURRENT MULTIPLIER & SET FLAG (queue path)
+                                              // The multiplier will be set to 1.0 when drain_queue executes this item
+                                              int pos = id(queue_count);
+                                              id(queue_types)[pos] = 4;  // 4 = Cycle & Soak mode
+                                              id(queue_programs)[pos] = 0;
+                                              id(queue_zones)[pos] = 0;
+                                              id(queue_durations)[pos] = 0;
+                                              id(queue_add_delays)[pos] = false;
+                                              id(queue_trigger_sources)[pos] = "Manual: C&S All Zones (Base 1.0x)";
+                                              id(queue_count)++;
+                                              
+                                              // NOTE: For queued runs, we save the multiplier just before drain_queue
+                                              // executes the item. This ensures we use the multiplier that's active
+                                              // when the run actually starts, not when it was queued.
+                                              
+                                              ESP_LOGI("irrigation", "📋 QUEUED C&S Base → Slot %d/3 | Queue now: %d items",
+                                                       pos + 1, id(queue_count));
+                                              ESP_LOGI("irrigation", "💡 Multiplier will be set to 1.0x when this runs");
+                                            } else {
+                                              if (!id(queue_system_enabled)) {
+                                                ESP_LOGW("irrigation", "⚠️ QUEUE DISABLED - C&S Base will NOT run (system busy)!");
+                                              } else {
+                                                ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - C&S Base will NOT run!");
+                                              }
+                                            }
+                                          } else {
+                                            // System is idle - start immediately with base duration
+                                            id(watering_trigger_source) = "Manual: C&S All Zones (Base 1.0x)";
+                                            ESP_LOGI("irrigation", "📍 TRIGGER: Manual: C&S All Zones (Base 1.0x)");
+                                            ESP_LOGI("irrigation", "▶️ STARTING C&S Base immediately (system idle)");
+                                            
+                                            // SAVE CURRENT MULTIPLIER
+                                            float current_mult = id($devicename1).multiplier();
+                                            // Undo vacation discount if active to get the true base multiplier
+                                            if (id(vacation_mode_active)) {
+                                              current_mult = current_mult * 2.0f;  // Reverse the 0.5x vacation discount
+                                            }
+                                            id(saved_multiplier_for_base_run) = current_mult;
+                                            id(restore_multiplier_after_run) = true;
+                                            
+                                            ESP_LOGI("irrigation", "💾 SAVED multiplier: %.2fx (will restore after run)", current_mult);
+                                            
+                                            // SET MULTIPLIER TO 1.0 (accounting for vacation mode if active)
+                                            float base_mult = id(vacation_mode_active) ? 0.5f : 1.0f;
+                                            id($devicename1).set_multiplier(base_mult);
+                                            ESP_LOGI("irrigation", "🎯 MULTIPLIER SET TO: %.2fx%s",
+                                                     base_mult, id(vacation_mode_active) ? " (1.0 × 0.5 vacation)" : " (base duration)");
+                                            
+                                            id(irrigation_busy) = true;
                                             id(cycle_soak_switch).turn_on();
                                             id(run_all_zones_cycle_soak_script).execute();
                                           }
@@ -17955,6 +18747,22 @@ button:
       - lambda: |-
           ESP_LOGI("irrigation", "✅ Reset complete - safe to reboot now");
           ESP_LOGI("irrigation", "");
+
+  - platform: template
+    name: "$dev1_what Reset Today Water"
+    icon: "mdi:water-sync"
+    on_press:
+      - lambda: |-
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "💧 Resetting TODAY water counter (was %.1f L)", id(daily_water_litres));
+          id(daily_water_litres) = 0.0f;
+          // Update reset day so the sensor lambda doesn't fire again today
+          auto _rdt_time = id(homeassistant_time).now();
+          if (_rdt_time.is_valid()) {
+            id(daily_water_reset_day) = _rdt_time.day_of_year;
+          }
+          id(daily_water_sensor).publish_state(0.0f);
+          ESP_LOGI("irrigation", "✅ Today's water counter reset to 0 L");
 
   - platform: template
     name: "$dev1_zone1 Reset Water Usage"
