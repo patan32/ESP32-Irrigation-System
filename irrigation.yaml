@@ -1965,6 +1965,11 @@ globals:
   - id: queue_trigger_sources
     type: std::string[3]
     restore_value: False  # Runtime queue — cleared on reboot
+  - id: queue_system_enabled
+    type: bool
+    restore_value: True   # USER SETTING - must persist across reboots
+    initial_value: 'false'  # Default OFF - queue disabled
+
   - id: queue_count
     type: int
     restore_value: False  # Runtime queue — cleared on reboot
@@ -2698,27 +2703,36 @@ time:
                     id(watering_trigger_source) = "Smart ET (" + active_window + ")";
                     ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
                     
-                    // Turn ON Cycle & Soak for Smart ET
-                    id(cycle_soak_switch).turn_on();
-                    ESP_LOGI("irrigation", "🔄 Cycle & Soak Mode: ON (Smart ET)");
+                    // BUG FIX (Bug 21): Do NOT turn on cycle_soak_switch before press().
+                    // The button/script handles it in the correct path. Turning it on
+                    // prematurely leaves it ON if the button blocks any safety check.
                     
-                    // BUG #33 FIX (part 2): Set multiplier only when idle.
-                    // Bug #32 prevents calculate_smart_et running when busy, so this
-                    // path only fires when the system is idle — multiplier change is safe.
-                    // Still guard explicitly in case future code changes this invariant.
-                    if (!id(irrigation_busy)) {
-                      id($devicename1).set_multiplier(combined_final);
-                    }
+                    // BUG FIX (Bug 28): Do NOT call set_multiplier before press().
+                    // If the button blocks (blackout/weather/etc.), the multiplier would
+                    // stay at the ET-boosted value for up to 5 min until the restore loop
+                    // corrects it. Any program/zone scheduled in that window runs at the
+                    // wrong multiplier. Move set_multiplier to after press(), inside the
+                    // "run started" branch where we know irrigation_busy=true.
+                    //
+                    // BUG FIX: Capture busy state BEFORE calling press() so we can distinguish
+                    // between "run started" vs "run queued" vs "run blocked".
+                    bool _et_was_idle = !id(irrigation_busy);
                     id(start_all_zones_cycle_soak).press();
-                    // BUG #33 FIX: Only clear deficit/last_water_time when run started immediately.
-                    // If queued, preserve deficit — it may be dropped before executing.
-                    if (!id(irrigation_busy)) {
-                      // BUG FIX: Run was blocked by safety check (blackout/disabled/rain-delay/weather).
-                      // Keep et_pending_irrigation=true so the 5-min interval can retry when conditions improve.
-                      // Deficit is also preserved since no water was applied.
-                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run blocked by safety check — deficit preserved (%.1fmm), will retry", id(et_soil_moisture_deficit));
+                    // Only clear deficit/last_water_time when run started immediately (was idle).
+                    // If system was already busy, the run was queued; preserve deficit so it
+                    // is not lost if the queued item is dropped (freeze/budget/stop).
+                    if (!_et_was_idle) {
+                      // System was already busy — run was queued, deficit preserved.
+                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued (system busy) — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
                       // Note: et_pending_irrigation intentionally NOT cleared here so retry fires
+                    } else if (!id(irrigation_busy)) {
+                      // Was idle but run was blocked by safety check — preserve and retry.
+                      ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run blocked by safety check — deficit preserved (%.1fmm), will retry", id(et_soil_moisture_deficit));
                     } else {
+                      // Run started successfully — NOW apply multiplier (run is confirmed active)
+                      // BUG FIX (Bug 28): Moved here from before press() so multiplier is only
+                      // elevated when a run is actually in progress, not during a blocked attempt.
+                      id($devicename1).set_multiplier(combined_final);
                       id(et_soil_moisture_deficit) = 0;
                       { auto _t2b = id(homeassistant_time).now(); if (_t2b.is_valid()) id(et_last_water_time) = _t2b.timestamp; }
                       id(et_pending_irrigation) = false;  // BUG FIX: Only clear when run actually started
@@ -4001,8 +4015,8 @@ time:
                     bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
                     
                     if (busy) {
-                      // Queue as type 3 (full cycle)
-                      if (id(queue_count) < 3) {
+                      // Queue as type 3 (full cycle) if queue system is enabled
+                      if (id(queue_system_enabled) && id(queue_count) < 3) {
                         int pos = id(queue_count);
                         id(queue_types)[pos] = 3;  // 3 = Full Cycle (Weekly Schedule)
                         id(queue_programs)[pos] = 0;
@@ -4015,7 +4029,11 @@ time:
                         ESP_LOGI("irrigation", "📋 QUEUED Weekly Schedule → Slot %d/3 (%d zones will run when idle)",
                                  pos + 1, enabled_count);
                       } else {
-                        ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Weekly Schedule will NOT run!");
+                        if (!id(queue_system_enabled)) {
+                          ESP_LOGW("irrigation", "⚠️ QUEUE DISABLED - Weekly Schedule will NOT run (system busy)!");
+                        } else {
+                          ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Weekly Schedule will NOT run!");
+                        }
                       }
                     } else {
                       ESP_LOGI("irrigation", "▶️ STARTING Weekly Schedule immediately (system idle)");
@@ -4058,6 +4076,9 @@ interval:
               id(continue_cycle_soak_after_resume).stop();
               // BUG #35 FIX: Restore auto_advance — C&S turns it OFF at start.
               id(dev1_auto_advance).turn_on();
+              // BUG FIX: Turn off C&S switch — if a C&S run was active when budget
+              // was exceeded, the switch stays ON and confuses the next run.
+              id(cycle_soak_switch).turn_off();
               // Full state reset — matches Stop button cleanup exactly
               id(pending_normal_start) = false;
               id(normal_start_attempts) = 0;
@@ -4438,6 +4459,9 @@ interval:
               // BUG #35 FIX: Restore auto_advance — C&S turns it OFF at start.
               // Without this, all future normal-mode runs won't advance through zones.
               id(dev1_auto_advance).turn_on();
+              // BUG FIX: Turn off C&S switch — if a C&S run was active when this abort
+              // fired, the switch stays ON and confuses the next run.
+              id(cycle_soak_switch).turn_off();
               // Full state reset — matches Stop button cleanup exactly
               id(pending_normal_start) = false;
               id(normal_start_attempts) = 0;
@@ -4649,6 +4673,13 @@ interval:
               id(cycle_soak_total_duration) = 0;
               id(cycle_soak_elapsed_time) = 0;
               id(normal_run_duration_seconds) = 0;
+              id(cycle_soak_is_soaking) = false;  // BUG FIX: was missing
+              id(cycle_soak_soak_end_time) = 0;  // BUG FIX: was missing
+              id(soak_countdown_seconds) = 0;  // BUG FIX: was missing
+              id(resume_csa_blocked) = false;  // BUG FIX: was missing
+              id(dev1_auto_advance).turn_on();  // BUG FIX: C&S turns it off; restore on 24h timeout
+              id(cycle_soak_switch).turn_off();  // BUG FIX: turn off C&S switch left on by aborted run
+              id(dev1_valve_status).publish_state("Idle");  // BUG FIX: was missing
 
               id(watering_trigger_source) = "Idle";  // Clear trigger after 24h pause timeout
               pause_start_time = 0;
@@ -4712,11 +4743,29 @@ interval:
             id(total_cycles) = 0;
             id(cycle_soak_total_duration) = 0;
             id(cycle_soak_elapsed_time) = 0;
+            id(normal_run_duration_seconds) = 0;
             id(cycle_soak_is_soaking) = false;
             id(cycle_soak_soak_end_time) = 0;
             id(soak_countdown_seconds) = 0;
+            id(resume_csa_blocked) = false;
             id(watering_trigger_source) = "Idle";
             id(dev1_valve_status).publish_state("Idle");
+            // Ensure C&S switch and auto-advance are restored
+            id(cycle_soak_switch).turn_off();
+            id(dev1_auto_advance).turn_on();
+            // BUG FIX (Bug 23): Clear paused/pending state that prior buggy paths may
+            // have left behind. The watchdog escalation (60s) had these; clean-completion
+            // did not. If a paused run completed cleanly these would persist.
+            id(pending_normal_start) = false;
+            id(normal_start_attempts) = 0;
+            id(paused_zone) = -1;
+            id(paused_cycle) = 0;
+            id(time_remaining_when_paused) = 0;
+            id(paused_was_soaking) = false;
+            id(paused_soak_remaining_seconds) = 0;
+            id(paused_total_cycles) = 0;
+            id(paused_cycle_soak_total_duration) = 0;
+            id(paused_cycle_soak_elapsed_time) = 0;
 
             id(drain_queue).execute();
             return;
@@ -4762,7 +4811,12 @@ interval:
               // Restore Auto Advance — C&S turns it OFF; must be restored so future
               // normal-mode runs can step through zones correctly.
               id(dev1_auto_advance).turn_on();
-              id(watering_trigger_source) = "Idle";  // Clear trigger after watchdog reset
+              id(cycle_soak_switch).turn_off();
+              // BUG FIX: Also clear pending_normal_start in watchdog escalation.
+              // If a normal-mode start timed out, this flag stays set until Stop.
+              id(pending_normal_start) = false;
+              id(normal_start_attempts) = 0;
+              id(watering_trigger_source) = "Idle";
               id(dev1_valve_status).publish_state("Idle");
 
               id(drain_queue).execute();
@@ -6268,6 +6322,9 @@ text_sensor:
     icon: "mdi:format-list-numbered"
     update_interval: 2s
     lambda: |-
+      if (!id(queue_system_enabled)) {
+        return {"Disabled"};
+      }
       if (id(queue_count) == 0) {
         return {"Empty (0/3)"};
       }
@@ -10033,6 +10090,12 @@ script:
             } else if (id(is_time_restricted)) {
               ESP_LOGW("irrigation", "   ⏰ Time restricted - will water when allowed");
               id(et_pending_irrigation) = true;
+              // BUG FIX (Bug 28b): Restore multiplier immediately so any program/zone
+              // that fires during the time-restriction window uses the correct multiplier.
+              // Previously the sprinkler multiplier stayed at ET-boosted for up to 5 min
+              // until the restore loop corrected it.
+              id(et_duration_multiplier) = 1.0;
+              { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
             } else {
               // Check if current time matches Smart ET schedule
               auto now = id(homeassistant_time).now();
@@ -10119,11 +10182,17 @@ script:
                 ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
                 id(et_pending_irrigation) = false;
                 
-                // Turn ON Cycle & Soak for Smart ET
-                id(cycle_soak_switch).turn_on();
-                ESP_LOGI("irrigation", "🔄 Cycle & Soak Mode: ON (Smart ET)");
+                // BUG FIX (Bug 22): Do NOT turn on cycle_soak_switch before press().
+                // The button handles this in its idle path; premature turn_on here
+                // leaves it ON if the button is blocked by any safety check.
                 
                 // Start all enabled zones (vacation-adjusted multiplier already applied)
+                // BUG FIX (Bug 27): Capture busy state BEFORE press() so we can
+                // distinguish "queued" (system already busy) from "blocked" (was idle
+                // but button/safety check rejected run). Without this, a blocked run
+                // falls into the "was queued" branch below and et_pending_irrigation
+                // stays false, silently dropping the retry until the next hourly calc.
+                bool _main_et_was_idle = !id(irrigation_busy);
                 id(start_all_zones_cycle_soak).press();
                 
                 // BUG #33 FIX: Only clear deficit and record last_water_time when the
@@ -10133,9 +10202,15 @@ script:
                 // irrigation_busy was set inside run_all_zones_cycle_soak_script which
                 // was just execute()d; since it runs synchronously until its first yield
                 // we check the script directly.
-                if (!id(irrigation_busy)) {
-                  // Was queued — preserve deficit data for when it eventually executes
+                if (!id(irrigation_busy) && !_main_et_was_idle) {
+                  // Was queued (system was already busy) — preserve deficit data for when it eventually executes
                   ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
+                } else if (!id(irrigation_busy) && _main_et_was_idle) {
+                  // Was idle but button/safety-check blocked the run — restore pending flag so retry fires in 5 min.
+                  // BUG FIX (Bug 27): Previously fell into "Was queued" branch above,
+                  // leaving et_pending_irrigation=false and silently dropping the retry.
+                  id(et_pending_irrigation) = true;
+                  ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run blocked by safety check — deficit preserved (%.1fmm), retrying in 5 min", id(et_soil_moisture_deficit));
                 } else {
                   id(et_soil_moisture_deficit) = 0;
                   { auto _t2b2 = id(homeassistant_time).now(); if (_t2b2.is_valid()) id(et_last_water_time) = _t2b2.timestamp; }
@@ -10216,9 +10291,14 @@ script:
                          current_minute,
                          current_hour >= 12 ? "PM" : "AM");
                 id(et_pending_irrigation) = true;
+                // BUG FIX (Bug 28c): Restore multiplier immediately (window not open yet).
+                // Watering is deferred to when the window opens, so the multiplier must not
+                // stay elevated. The retry path (5-min) will re-apply it when the window opens
+                // and the run actually starts.
+                id(et_duration_multiplier) = 1.0;
+                { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
               }
-              
-              // Note: Multiplier will be restored after watering completes
+              // (Multiplier will be re-applied by retry path when window opens and run starts)
             }
           } else {
             ESP_LOGI("irrigation", "   ✅ Deficit below threshold - no watering needed");
@@ -10242,9 +10322,13 @@ script:
           bool soaking = id(cycle_soak_is_soaking);
 
           if (id(irrigation_busy) || valve_active || script_running || soaking) {
-            // one-slot queue: 0=none, 1=program, 2=zone, 3=normal mode
-            id(queued_type) = 3;  // queue/overwrite a pending normal run
-            ESP_LOGI("irrigation", "Queued NORMAL start (will run when system is idle)");
+            if (id(queue_system_enabled)) {
+              // one-slot queue: 0=none, 1=program, 2=zone, 3=normal mode
+              id(queued_type) = 3;  // queue/overwrite a pending normal run
+              ESP_LOGI("irrigation", "Queued NORMAL start (will run when system is idle)");
+            } else {
+              ESP_LOGW("irrigation", "\xf0\x9f\x9a\xab BUSY - Normal start blocked (queue disabled)");
+            }
             return;
           }
           
@@ -10632,7 +10716,7 @@ script:
           bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
           
           if (busy) {
-            if (allow_queue) {
+            if (allow_queue && id(queue_system_enabled)) {
               // === 3-ITEM QUEUE SYSTEM ===
               if (id(queue_count) < 3) {
                 int pos = id(queue_count);
@@ -10658,7 +10742,11 @@ script:
                 ESP_LOGI("irrigation", "📋 QUEUED Program %d → Slot %d/3 | Queue: [%s]",
                          program, pos + 1, q_status.c_str());
               } else {
-                ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Program %d will NOT run!", program);
+                if (!id(queue_system_enabled)) {
+                  ESP_LOGW("irrigation", "⚠️ QUEUE DISABLED - Program %d will NOT run (system busy)!", program);
+                } else {
+                  ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Program %d will NOT run!", program);
+                }
               }
             } else {
               ESP_LOGW("irrigation", "🚫 BUSY - Manual Program %d blocked", program);
@@ -10898,7 +10986,7 @@ script:
           bool _active_other = id($devicename1).active_valve().has_value() &&
               id($devicename1).active_valve().value() != (uint8_t)zone;
           if (id(irrigation_busy) || _active_other) {
-            if (allow_queue) {
+            if (allow_queue && id(queue_system_enabled)) {
               // 3-item queue
               if (id(queue_count) < 3) {
                 int pos = id(queue_count);
@@ -11103,9 +11191,12 @@ script:
             int total_duration = duration;  // Use base duration without multiplier
             int cycles = (total_duration + cycle_seconds - 1) / cycle_seconds;
             int total_time = (cycles * cycle_seconds) + ((cycles - 1) * soak_seconds);
+            // BUG FIX: include station delay so the countdown does not hit 0
+            // and freeze while the inter-zone gap elapses.
+            if (add_delay) total_time += id(station_delay_seconds);
             
-            ESP_LOGI("irrigation", "==> CYCLE & SOAK MODE - %d cycles of %d sec (NO multiplier) + %d sec soak",
-                     cycles, cycle_seconds, soak_seconds);
+            ESP_LOGI("irrigation", "==> CYCLE & SOAK MODE - %d cycles of %d sec (NO multiplier) + %d sec soak%s",
+                     cycles, cycle_seconds, soak_seconds, add_delay ? " + station delay" : "");
             
             // BUG FIX: When called from run_all_zones_cycle_soak_script, the grand total
             // and elapsed counter are already set to span ALL zones. Do NOT reset them
@@ -11240,8 +11331,15 @@ script:
                 id(active_zone_number) = -1;
                 id(current_cycle) = 0;
                 id(total_cycles) = 0;
-                id(cycle_soak_total_duration) = 0;
-                id(cycle_soak_elapsed_time) = 0;
+                // BUG FIX: When running inside run_all_zones_cycle_soak_script,
+                // do NOT clear cycle_soak_total_duration or cycle_soak_elapsed_time.
+                // The all-zones script set a grand total covering ALL zones; clearing
+                // it here after zone 1 completes would leave total_duration=0 when
+                // zone 2 starts, breaking the progress/time-remaining display.
+                if (!_from_all_zones) {
+                  id(cycle_soak_total_duration) = 0;
+                  id(cycle_soak_elapsed_time) = 0;
+                }
       
       # Station delay — skipped if pre-flight blocked
       - if:
@@ -11277,8 +11375,14 @@ script:
                 id(active_zone_number) = -1;
                 id(current_cycle) = 0;
                 id(total_cycles) = 0;
-                id(cycle_soak_total_duration) = 0;
-                id(cycle_soak_elapsed_time) = 0;
+                // BUG FIX: When running inside run_all_zones_cycle_soak_script,
+                // do NOT clear total_duration/elapsed here (station delay cleanup).
+                // Same reason as the C&S cleanup block above: grand total covers
+                // ALL zones; zeroing it after zone N's delay would break zone N+1.
+                if (!_from_all_zones_sd) {
+                  id(cycle_soak_total_duration) = 0;
+                  id(cycle_soak_elapsed_time) = 0;
+                }
       
   # Continue cycle & soak after a Pause/Resume
   - id: continue_cycle_soak_after_resume
@@ -11313,6 +11417,22 @@ script:
             id(total_cycles) = 0;
             id(cycle_soak_is_soaking) = false;
             id(cycle_soak_soak_end_time) = 0;
+            // BUG FIX (Bug 24): _csa_block was missing full state cleanup.
+            // Without these, a blocked resume left stale C&S/paused variables
+            // that confused the next run or the watchdog.
+            id(cycle_soak_total_duration) = 0;
+            id(cycle_soak_elapsed_time) = 0;
+            id(normal_run_duration_seconds) = 0;
+            id(paused_zone) = -1;
+            id(paused_cycle) = 0;
+            id(time_remaining_when_paused) = 0;
+            id(paused_was_soaking) = false;
+            id(paused_soak_remaining_seconds) = 0;
+            id(paused_total_cycles) = 0;
+            id(paused_cycle_soak_total_duration) = 0;
+            id(paused_cycle_soak_elapsed_time) = 0;
+            id(cycle_soak_switch).turn_off();
+            id(dev1_auto_advance).turn_on();
             id(watering_trigger_source) = "Idle";
             id(dev1_valve_status).publish_state("Idle");
             id(drain_queue).execute();
@@ -11422,9 +11542,17 @@ script:
                 id(irrigation_busy) = false; id(in_program_run) = false;
                 id(active_zone_number) = -1; id(current_cycle) = 0; id(total_cycles) = 0;
                 id(cycle_soak_is_soaking) = false; id(cycle_soak_soak_end_time) = 0;
+                // BUG FIX (Bug 26): loop abort was missing these cleanups.
+                // Without them, cycle_soak_switch stays ON and auto_advance stays OFF
+                // after a mid-resume freeze/budget abort, breaking all future runs.
+                id(cycle_soak_total_duration) = 0;
+                id(cycle_soak_elapsed_time) = 0;
+                id(normal_run_duration_seconds) = 0;
+                id(cycle_soak_switch).turn_off();
+                id(dev1_auto_advance).turn_on();
                 id(watering_trigger_source) = "Idle";
                 id(dev1_valve_status).publish_state("Idle");
-                id(drain_queue).execute();  // BUG #39 FIX: drain queue now, don't wait for watchdog
+                id(drain_queue).execute();
                 return false;
               }
               return id(current_cycle) < total;
@@ -11466,6 +11594,7 @@ script:
           id(total_cycles) = 0;
           id(cycle_soak_total_duration) = 0;
           id(cycle_soak_elapsed_time) = 0;
+          id(normal_run_duration_seconds) = 0;
           id(cycle_soak_is_soaking) = false;
           id(cycle_soak_soak_end_time) = 0;
           id(paused_zone) = -1;
@@ -11480,8 +11609,11 @@ script:
             id(irrigation_busy) = false;
             id(drain_queue).execute();
           }
-          // Restore Auto Advance
+          // Restore Auto Advance and turn off C&S switch
           id(dev1_auto_advance).turn_on();
+          // BUG FIX: Turn off C&S switch on resume completion so future runs
+          // start in the correct mode (normal unless user turns C&S back on).
+          id(cycle_soak_switch).turn_off();
           id(dev1_valve_status).publish_state("Idle");
           ESP_LOGI("irrigation", "Auto Advance restored — Cycle & Soak resume complete");
 
@@ -11549,6 +11681,9 @@ script:
           condition:
             lambda: 'return id(cycle_soak_script_blocked);'
           then:
+            # BUG FIX: turn off cycle_soak_switch which caller already turned on;
+            # without this, the switch stays ON and confuses subsequent runs.
+            - switch.turn_off: cycle_soak_switch
             - lambda: |-
                 ESP_LOGW("irrigation", "🚫 Cycle & Soak pre-flight BLOCKED — clearing busy and draining queue");
                 id(irrigation_busy) = false;
@@ -11590,22 +11725,25 @@ script:
             - lambda: |-
                 int cycle_sec  = id(cycle_duration_minutes) * 60;
                 int soak_sec   = id(soak_duration_minutes) * 60;
+                int delay_sec  = id(station_delay_seconds);
                 int grand_total = 0;
-                // Sum total time for each ENABLED zone (valve_duration * all cycles+soaks)
+                // Sum total time for each ENABLED zone (all cycles + all soaks)
+                // BUG FIX: also add station_delay_seconds for zones 1-7 (add_delay=true)
+                // so the countdown does not hit 0 and freeze during station delays.
                 auto zone_total = [&](float dur_sec) -> int {
                   int dur = (int)dur_sec;
                   if (dur <= 0 || cycle_sec <= 0) return 0;
                   int n = (dur + cycle_sec - 1) / cycle_sec;
                   return (n * cycle_sec) + ((n - 1) * soak_sec);
                 };
-                if (id(zone1_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_1_duration).state * 60);
-                if (id(zone2_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_2_duration).state * 60);
-                if (id(zone3_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_3_duration).state * 60);
-                if (id(zone4_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_4_duration).state * 60);
-                if (id(zone5_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_5_duration).state * 60);
-                if (id(zone6_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_6_duration).state * 60);
-                if (id(zone7_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_7_duration).state * 60);
-                if (id(zone8_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_8_duration).state * 60);
+                if (id(zone1_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_1_duration).state * 60) + delay_sec;
+                if (id(zone2_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_2_duration).state * 60) + delay_sec;
+                if (id(zone3_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_3_duration).state * 60) + delay_sec;
+                if (id(zone4_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_4_duration).state * 60) + delay_sec;
+                if (id(zone5_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_5_duration).state * 60) + delay_sec;
+                if (id(zone6_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_6_duration).state * 60) + delay_sec;
+                if (id(zone7_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_7_duration).state * 60) + delay_sec;
+                if (id(zone8_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_8_duration).state * 60);  // Zone 8: no station delay (add_delay=false)
                 id(cycle_soak_total_duration) = grand_total;
                 id(cycle_soak_elapsed_time) = 0;
                 ESP_LOGI("irrigation", "\U0001F4CA All-Zones C&S grand total: %d sec (%d enabled zones, %d sec/cycle, %d sec/soak)",
@@ -14298,6 +14436,42 @@ switch:
     turn_off_action:
       - lambda: "id(cycle_soak_enabled) = false;"
 
+  # Queue System Enable/Disable
+  # When OFF (default): system busy = request is blocked/dropped, no queuing.
+  # When ON:  system busy = request is held in up to 3 queue slots and runs
+  #           automatically when the current run finishes.
+  - platform: template
+    name: "Queue System Enable"
+    id: queue_system_enable_switch
+    icon: "mdi:format-list-numbered"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF  # Default OFF
+    lambda: "return id(queue_system_enabled);"
+    turn_on_action:
+      - lambda: |-
+          id(queue_system_enabled) = true;
+          ESP_LOGI("irrigation", "\xf0\x9f\x93\x8b Queue system ENABLED - busy requests will be queued (up to 3 slots)");
+    turn_off_action:
+      - lambda: |-
+          id(queue_system_enabled) = false;
+          // Clear any pending queue items (3-slot queue AND legacy queued_type)
+          int cleared = id(queue_count) + (id(queued_type) != 0 ? 1 : 0);
+          if (cleared > 0) {
+            ESP_LOGW("irrigation", "\xf0\x9f\x9a\xab Queue system DISABLED - clearing %d queued item(s)", cleared);
+            id(queue_count) = 0;
+            id(queued_type) = 0;
+            for (int i = 0; i < 3; i++) {
+              id(queue_types)[i] = 0;
+              id(queue_programs)[i] = 0;
+              id(queue_zones)[i] = 0;
+              id(queue_durations)[i] = 0;
+              id(queue_add_delays)[i] = false;
+              id(queue_trigger_sources)[i] = "";
+            }
+          } else {
+            ESP_LOGI("irrigation", "\xf0\x9f\x9a\xab Queue system DISABLED - busy requests will be blocked/dropped");
+          }
+
   # ═══════════════════════════════════════════════════════════
   # WATERING WINDOW ENABLE SWITCHES
   # ═══════════════════════════════════════════════════════════
@@ -14526,6 +14700,9 @@ switch:
       - script.stop: continue_cycle_soak_after_resume
       - script.stop: wait_until_idle_then_drain
       - switch.turn_on: dev1_auto_advance
+      # BUG FIX: Turn off C&S switch when system is disabled so it
+      # does not confuse subsequent runs after re-enable.
+      - switch.turn_off: cycle_soak_switch
       - lambda: |-
           id(active_zone_number) = -1;
           id(current_cycle) = 0;
@@ -14554,6 +14731,7 @@ switch:
           id(paused_cycle_soak_total_duration) = 0;
           id(paused_cycle_soak_elapsed_time) = 0;
           id(soak_countdown_seconds) = 0;
+          id(normal_run_duration_seconds) = 0;  // BUG FIX: was missing from system disable cleanup
           ESP_LOGI("irrigation", "Irrigation system DISABLED — all scripts stopped, state cleared");
       - text_sensor.template.publish:
           id: dev1_valve_status
@@ -16814,8 +16992,8 @@ button:
                                           bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
                                           
                                           if (busy) {
-                                            // System is busy - queue the request
-                                            if (id(queue_count) < 3) {
+                                            // System is busy - queue if queue system is enabled
+                                            if (id(queue_system_enabled) && id(queue_count) < 3) {
                                               int pos = id(queue_count);
                                               id(queue_types)[pos] = 3;  // 3 = Normal mode
                                               id(queue_programs)[pos] = 0;
@@ -16828,7 +17006,11 @@ button:
                                               ESP_LOGI("irrigation", "📋 QUEUED Normal Mode → Slot %d/3 | Queue now: %d items",
                                                        pos + 1, id(queue_count));
                                             } else {
-                                              ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Normal Mode will NOT run!");
+                                              if (!id(queue_system_enabled)) {
+                                                ESP_LOGW("irrigation", "⚠️ QUEUE DISABLED - Normal Mode will NOT run (system busy)!");
+                                              } else {
+                                                ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Normal Mode will NOT run!");
+                                              }
                                             }
                                           } else {
                                             // System is idle - start immediately
@@ -17105,10 +17287,21 @@ button:
                     id(in_program_run) = false;
                     id(active_zone_number) = -1;
                     id(watering_trigger_source) = "Idle";
-                    // Clear paused state so downstream if-blocks cannot fire the valve
+                    // BUG FIX: Full paused-state clear (previously left stale values)
                     id(paused_zone) = -1;
+                    id(paused_cycle) = 0;
                     id(time_remaining_when_paused) = 0;
                     id(paused_was_soaking) = false;
+                    id(paused_soak_remaining_seconds) = 0;
+                    id(paused_total_cycles) = 0;
+                    id(paused_cycle_soak_total_duration) = 0;
+                    id(paused_cycle_soak_elapsed_time) = 0;
+                    id(cycle_soak_total_duration) = 0;
+                    id(cycle_soak_elapsed_time) = 0;
+                    id(normal_run_duration_seconds) = 0;
+                    // BUG FIX: Restore switches left in wrong state by paused C&S run
+                    id(cycle_soak_switch).turn_off();
+                    id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
                     id(dev1_valve_status).publish_state("Idle");
                     return;
@@ -17120,10 +17313,21 @@ button:
                     id(in_program_run) = false;
                     id(active_zone_number) = -1;
                     id(watering_trigger_source) = "Idle";
-                    // Clear paused state so downstream if-blocks cannot fire the valve
+                    // BUG FIX: Full paused-state clear (previously left stale values)
                     id(paused_zone) = -1;
+                    id(paused_cycle) = 0;
                     id(time_remaining_when_paused) = 0;
                     id(paused_was_soaking) = false;
+                    id(paused_soak_remaining_seconds) = 0;
+                    id(paused_total_cycles) = 0;
+                    id(paused_cycle_soak_total_duration) = 0;
+                    id(paused_cycle_soak_elapsed_time) = 0;
+                    id(cycle_soak_total_duration) = 0;
+                    id(cycle_soak_elapsed_time) = 0;
+                    id(normal_run_duration_seconds) = 0;
+                    // BUG FIX: Restore switches left in wrong state by paused C&S run
+                    id(cycle_soak_switch).turn_off();
+                    id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
                     id(dev1_valve_status).publish_state("Idle");
                     return;
@@ -17135,10 +17339,21 @@ button:
                     id(in_program_run) = false;
                     id(active_zone_number) = -1;
                     id(watering_trigger_source) = "Idle";
-                    // Clear paused state so downstream if-blocks cannot fire the valve
+                    // BUG FIX: Full paused-state clear (previously left stale values)
                     id(paused_zone) = -1;
+                    id(paused_cycle) = 0;
                     id(time_remaining_when_paused) = 0;
                     id(paused_was_soaking) = false;
+                    id(paused_soak_remaining_seconds) = 0;
+                    id(paused_total_cycles) = 0;
+                    id(paused_cycle_soak_total_duration) = 0;
+                    id(paused_cycle_soak_elapsed_time) = 0;
+                    id(cycle_soak_total_duration) = 0;
+                    id(cycle_soak_elapsed_time) = 0;
+                    id(normal_run_duration_seconds) = 0;
+                    // BUG FIX: Restore switches left in wrong state by paused C&S run
+                    id(cycle_soak_switch).turn_off();
+                    id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
                     id(dev1_valve_status).publish_state("Idle");
                     return;
@@ -17154,10 +17369,21 @@ button:
                       id(in_program_run) = false;
                       id(active_zone_number) = -1;
                       id(watering_trigger_source) = "Idle";
-                        // Clear paused state so downstream if-blocks cannot fire the valve
+                      // BUG FIX: Full paused-state clear (previously left stale values)
                       id(paused_zone) = -1;
+                      id(paused_cycle) = 0;
                       id(time_remaining_when_paused) = 0;
                       id(paused_was_soaking) = false;
+                      id(paused_soak_remaining_seconds) = 0;
+                      id(paused_total_cycles) = 0;
+                      id(paused_cycle_soak_total_duration) = 0;
+                      id(paused_cycle_soak_elapsed_time) = 0;
+                      id(cycle_soak_total_duration) = 0;
+                      id(cycle_soak_elapsed_time) = 0;
+                      id(normal_run_duration_seconds) = 0;
+                      // BUG FIX: Restore switches left in wrong state by paused C&S run
+                      id(cycle_soak_switch).turn_off();
+                      id(dev1_auto_advance).turn_on();
                       id(drain_queue).execute();
                       id(dev1_valve_status).publish_state("Idle");
                       return;
@@ -17170,10 +17396,21 @@ button:
                       id(in_program_run) = false;
                       id(active_zone_number) = -1;
                       id(watering_trigger_source) = "Idle";
-                      // Clear paused state so downstream if-blocks cannot fire the valve
+                      // BUG FIX: Full paused-state clear (previously left stale values)
                       id(paused_zone) = -1;
+                      id(paused_cycle) = 0;
                       id(time_remaining_when_paused) = 0;
                       id(paused_was_soaking) = false;
+                      id(paused_soak_remaining_seconds) = 0;
+                      id(paused_total_cycles) = 0;
+                      id(paused_cycle_soak_total_duration) = 0;
+                      id(paused_cycle_soak_elapsed_time) = 0;
+                      id(cycle_soak_total_duration) = 0;
+                      id(cycle_soak_elapsed_time) = 0;
+                      id(normal_run_duration_seconds) = 0;
+                      // BUG FIX: Restore switches left in wrong state by paused C&S run
+                      id(cycle_soak_switch).turn_off();
+                      id(dev1_auto_advance).turn_on();
                       id(drain_queue).execute();
                       id(dev1_valve_status).publish_state("Idle");
                       return;
@@ -17190,10 +17427,21 @@ button:
                         id(in_program_run) = false;
                         id(active_zone_number) = -1;
                         id(watering_trigger_source) = "Idle";
-                            // Clear paused state so downstream if-blocks cannot fire the valve
+                        // BUG FIX: Full paused-state clear (previously left stale values)
                         id(paused_zone) = -1;
+                        id(paused_cycle) = 0;
                         id(time_remaining_when_paused) = 0;
                         id(paused_was_soaking) = false;
+                        id(paused_soak_remaining_seconds) = 0;
+                        id(paused_total_cycles) = 0;
+                        id(paused_cycle_soak_total_duration) = 0;
+                        id(paused_cycle_soak_elapsed_time) = 0;
+                        id(cycle_soak_total_duration) = 0;
+                        id(cycle_soak_elapsed_time) = 0;
+                        id(normal_run_duration_seconds) = 0;
+                        // BUG FIX: Restore switches left in wrong state by paused C&S run
+                        id(cycle_soak_switch).turn_off();
+                        id(dev1_auto_advance).turn_on();
                         id(drain_queue).execute();
                         id(dev1_valve_status).publish_state("Idle");
                         return;
@@ -17359,6 +17607,7 @@ button:
             id(paused_cycle_soak_elapsed_time) = 0;
             id(in_program_run) = false;
             id(resume_csa_blocked) = false;
+            id(normal_run_duration_seconds) = 0;  // BUG FIX: was missing from stop cleanup
 
         # Turn OFF Cycle & Soak when stopping
         - switch.turn_off: cycle_soak_switch
@@ -17493,12 +17742,24 @@ button:
                                             ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
                                           }
                                           
+                                          // BUG FIX (Bug 25): Check freeze and budget before queue/start.
+                                          // Normal button has these; C&S button did not, causing a brief
+                                          // irrigation_busy=true window before the script pre-flight blocked.
+                                          if (id(freeze_protection_active)) {
+                                            ESP_LOGW("irrigation", "❄️ BLOCKED: Cycle & Soak — freeze protection active (%.1f°C)", id(outside_temperature).state);
+                                            return;
+                                          }
+                                          if (id(budget_exceeded) && !id(budget_override_active)) {
+                                            ESP_LOGW("irrigation", "🚫 BLOCKED: Cycle & Soak — monthly budget exceeded (%.0fL/%.0fL)", id(current_month_usage), id(monthly_water_budget));
+                                            return;
+                                          }
+                                          
                                           // Check if system is busy
                                           bool busy = id(irrigation_busy) || id($devicename1).active_valve().has_value();
                                           
                                           if (busy) {
-                                            // System is busy - queue the request
-                                            if (id(queue_count) < 3) {
+                                            // System is busy - queue if queue system is enabled
+                                            if (id(queue_system_enabled) && id(queue_count) < 3) {
                                               int pos = id(queue_count);
                                               id(queue_types)[pos] = 4;  // 4 = Cycle & Soak mode
                                               id(queue_programs)[pos] = 0;
@@ -17516,7 +17777,11 @@ button:
                                               ESP_LOGI("irrigation", "📋 QUEUED Cycle & Soak → Slot %d/3 | Queue now: %d items",
                                                        pos + 1, id(queue_count));
                                             } else {
-                                              ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Cycle & Soak will NOT run!");
+                                              if (!id(queue_system_enabled)) {
+                                                ESP_LOGW("irrigation", "⚠️ QUEUE DISABLED - Cycle & Soak will NOT run (system busy)!");
+                                              } else {
+                                                ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Cycle & Soak will NOT run!");
+                                              }
                                             }
                                           } else {
                                             // System is idle - start immediately
