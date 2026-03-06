@@ -375,6 +375,24 @@ sections:
         color: cyan
         vertical: false
         features_position: inline
+      - type: tile
+        entity: sensor.irrigation_test_controller_lawn_days_into_budget_period
+        name: Budget Period Days
+        color: teal
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_lawn_et_deficit_percentage
+        name: ET Deficit %
+        color: teal
+        vertical: false
+        features_position: bottom
+      - type: tile
+        entity: sensor.irrigation_test_controller_rain_delay_days_remaining
+        name: Rain Delay Days
+        color: cyan
+        vertical: false
+        features_position: bottom
   - type: grid
     column_span: 1
     columns: 1
@@ -443,6 +461,15 @@ sections:
           service: button.press
           target:
             entity_id: button.irrigation_test_controller_lawn_stop
+      - type: tile
+        entity: switch.irrigation_test_controller_queue_system_enable
+        name:
+          type: entity
+        color: green
+        vertical: false
+        tap_action:
+          action: toggle
+        features_position: bottom
   - type: grid
     column_span: 2
     columns: 4
@@ -638,6 +665,25 @@ sections:
         features:
           - style: slider
             type: numeric-input
+        features_position: inline
+      - type: tile
+        entity: number.irrigation_test_controller_cycle_duration
+        name:
+          type: entity
+        color: cyan
+        vertical: false
+        features:
+          - style: slider
+            type: numeric-input
+        features_position: inline
+      - type: tile
+        entity: select.irrigation_test_controller_lawn_soil_type
+        name:
+          type: entity
+        color: cyan
+        vertical: false
+        features:
+          - type: select-options
         features_position: inline
   - type: grid
     column_span: 2
@@ -853,6 +899,16 @@ sections:
         vertical: false
         tap_action:
           action: toggle
+      - type: tile
+        entity: number.irrigation_test_controller_lawn_monthly_water_budget
+        name:
+          type: entity
+        color: teal
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
   - type: grid
     column_span: 2
     columns: 4
@@ -1220,8 +1276,25 @@ sections:
     columns: 1
     cards:
       - type: heading
-        heading: ⚠️ Danger Zone
+        icon: ""
         heading_style: title
+      - type: heading
+        icon: mdi:weather-pouring
+        heading: Rain Delays
+        heading_style: subtitle
+      - type: tile
+        entity: number.irrigation_test_controller_rain_delay_days
+        name:
+          type: entity
+        color: light-blue
+        vertical: false
+        features:
+          - type: numeric-input
+            style: buttons
+        features_position: inline
+      - type: heading
+        heading: ⚠️ Danger Zone
+        heading_style: subtitle
       - type: tile
         entity: button.irrigation_test_controller_restart_irrigation_control_system
         name: Restart Controller
