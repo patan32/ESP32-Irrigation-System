@@ -227,7 +227,6 @@ substitutions:
   # LIVE SENSOR UPDATE RATES
   # ═══════════════════════════════════════════════════════════
   # Best-practice tiered refresh strategy:
-  #   Push model   — update_interval: never; sensor pushed from 1s interval ONLY when active
   #   Status (30s) — UI status strings that change only when user acts or run starts/stops
   #   Counter (60s) + delta filter — numeric counters; HA only logs when value actually changes
   #   Slow (300s)  — config/diagnostic values that change only on user input
@@ -293,9 +292,6 @@ substitutions:
   default_zone7_program_c_duration: "0"
   default_zone8_program_c_duration: "0"
 
-  
-  
-
 esphome:
   name: ${esphome_name}
   comment: ${esphome_comment}
@@ -357,6 +353,9 @@ esphome:
           id(et_effective_deficit).update();
           // Humidity — also push immediately; ha_humidity.on_value won't fire until HA sends an update
           id(outside_humidity).update();
+          // Time Restriction — push at boot so HA shows correct state immediately (update_interval: never)
+          id(time_restriction_status).update();
+          id(time_restriction_next_allowed).update();
           // Time Remaining and Progress % — show 0 instead of NA when system is idle at boot
           id(valve_remaining_seconds).publish_state(0);
           id(dev1_time_remaining).publish_state("0:00:00");
@@ -595,10 +594,6 @@ esphome:
             id(last_boot_nvs_action) = std::string(_nvs_buf);
             ESP_LOGI("irrigation", "");
 
-      # Previously this was hard-coded to 1 (resetting the component to 1.0x on every reboot),
-      # Any zone that fired before HA time synced (~30s) would run at 1.0x instead of the
-      # correct seasonal rate. Now the NVS value is applied directly; the seasonal lambda
-      # below will recalculate and update it once time is available.
       - lambda: |-
           float boot_mult = id(pw_current_multiplier);
           float boot_vac  = id(vacation_mode_active) ? boot_mult * 0.5f : boot_mult;
@@ -2725,20 +2720,22 @@ globals:
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
     initial_value: '${default_forecast_high_mm}'  # mm - Auto rain delay if this much forecast
-  
 
-  
   - id: forecast_rain_detected
     type: bool
     restore_value: False  # Derived from live weather sensor
     initial_value: 'false'
-  
 
-  
   - id: forecast_enabled
     type: bool
     restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'true'  # Enable/disable forecast integration
+
+  # Rate-limit the "Smart ET pending skipped - not an ET schedule day" log to once per 2 hours
+  - id: last_et_skip_log_time
+    type: int64_t
+    restore_value: false
+    initial_value: '0'
 
 # Sync time with Home Assistant
 time:
@@ -2859,7 +2856,13 @@ time:
                                 (dow == 1 && id(et_schedule_sunday).state);
                   if (!day_ok) {
                     const char* days[] = {"", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-                    ESP_LOGW("irrigation", "📅 Smart ET pending skipped - today (%s) is not an ET schedule day", days[dow]);
+                    // Rate-limit this log to once every 2 hours (7200s) — it fires every 5 min otherwise
+                    auto _et_skip_now = id(homeassistant_time).now();
+                    int64_t _et_skip_ts = _et_skip_now.is_valid() ? (int64_t)_et_skip_now.timestamp : 0;
+                    if (_et_skip_ts == 0 || (_et_skip_ts - id(last_et_skip_log_time)) >= 7200) {
+                      ESP_LOGW("irrigation", "📅 Smart ET pending skipped - today (%s) is not an ET schedule day (next log in 2h)", days[dow]);
+                      id(last_et_skip_log_time) = _et_skip_ts;
+                    }
                     return;
                   }
                   auto now = id(homeassistant_time).now();
@@ -4327,7 +4330,6 @@ interval:
               id(continue_cycle_soak_after_resume).stop();
               id(deferred_zone_restart).stop();
               id(dev1_auto_advance).turn_on();
-              // was exceeded, the switch stays ON and confuses the next run.
               id(cycle_soak_switch).turn_off();
               // Full state reset — matches Stop button cleanup exactly
               id(pending_normal_start) = false;
@@ -5009,8 +5011,6 @@ interval:
           // PAUSE STATE WATCHDOG (24h safety)
           // --------------------------------------------------
           // Static is declared here (outside if/else) so BOTH branches share the same variable.
-          // Previously it was declared inside each branch separately, making the else-branch
-          // reset completely ineffective (two different C++ static locals).
           static int64_t pause_start_time = 0;
           if (id(is_paused)) {
             if (pause_start_time == 0) {
@@ -5597,7 +5597,6 @@ text_sensor:
     id: current_time_display
     name: "Current Time"
     icon: "mdi:clock-digital"
-    # PUSH MODEL: pushed from the 60s interval block below.
     # Only sends to HA when minute rolls over — no sub-minute traffic.
     update_interval: never
     lambda: |-
@@ -5621,7 +5620,6 @@ text_sensor:
     id: current_day_display
     name: "Current Day"
     icon: "mdi:calendar-today"
-    # PUSH MODEL: pushed from 60s interval block.
     update_interval: never
     lambda: |-
       auto now = id(homeassistant_time).now();
@@ -5638,7 +5636,6 @@ text_sensor:
     id: current_datetime_display
     name: "Current Date & Time"
     icon: "mdi:calendar-clock"
-    # PUSH MODEL: pushed from 60s interval block.
     update_interval: never
     lambda: |-
       auto now = id(homeassistant_time).now();
@@ -5737,7 +5734,6 @@ text_sensor:
     id: dev1_predictive_watering_status
     name: "$dev1_what Predictive Watering Status"
     icon: "mdi:water-check"
-    # PUSH MODEL: fully event-driven. Pushed from calculate_predictive_watering
     # completion and from the PW enable/disable switch.
     update_interval: never
     lambda: |-
@@ -5791,7 +5787,6 @@ text_sensor:
     id: dev1_smart_et_status
     name: "$dev1_what Smart ET Status"
     icon: "mdi:sprinkler-variant"
-    # PUSH MODEL: fully event-driven. Pushed from calculate_smart_et completion.
     update_interval: never
     lambda: |-
       if (!id(smart_et_enabled)) {
@@ -6021,10 +6016,7 @@ text_sensor:
     id: weekly_schedule_status
     name: "Weekly Schedule Status"
     icon: "mdi:calendar-clock"
-    # PUSH MODEL: update_interval: never.
-    # Pushed immediately via .update() from every schedule setting that affects this string:
     # weekly_schedule_switch, schedule day toggles (Mon-Sun), schedule_start_hour/minute/am_pm.
-    # Also refreshed at midnight from the time cron (day rollover changes Next Watering Day).
     update_interval: never
     lambda: |-
       if (!id(weekly_schedule_switch).state) {
@@ -6063,8 +6055,6 @@ text_sensor:
     id: program_a_status
     name: "${program_a_name} Status"
     icon: "mdi:information"
-    # PUSH MODEL: update_interval: never.
-    # Pushed from: program_a_enable_switch (on/off), program_a_schedule_type select,
     # program_a_start_hour/minute/am_pm number/select, program_a_interval_days.
     update_interval: never
     lambda: |-
@@ -6086,8 +6076,6 @@ text_sensor:
     id: program_b_status
     name: "${program_b_name} Status"
     icon: "mdi:information"
-    # PUSH MODEL: update_interval: never.
-    # Pushed from: program_b_enable_switch (on/off), program_b_schedule_type select,
     # program_b_start_hour/minute/am_pm number/select, program_b_interval_days.
     update_interval: never
     lambda: |-
@@ -6109,8 +6097,6 @@ text_sensor:
     id: program_c_status
     name: "${program_c_name} Status"
     icon: "mdi:information"
-    # PUSH MODEL: update_interval: never.
-    # Pushed from: program_c_enable_switch (on/off), program_c_schedule_type select,
     # program_c_start_hour/minute/am_pm number/select, program_c_interval_days.
     update_interval: never
     lambda: |-
@@ -6235,7 +6221,6 @@ text_sensor:
     id: espboard_type
     icon: "mdi:developer-board"
     name: $esphome_name ESPBoard
-    # PUSH MODEL: board type is a compile-time constant — never changes at runtime.
     # ESPHome still calls the lambda once at boot; update_interval: never suppresses
     # all subsequent polls.
     update_interval: never
@@ -6285,8 +6270,8 @@ text_sensor:
     id: time_restriction_status
     name: "Time Restriction Status"
     icon: "mdi:clock-alert"
-    # 60s: transitions at restriction boundary (once/day). Functional blocking uses watchdog.
-    update_interval: $sensor_counter_update
+    # time_restriction_switch toggle, and manual_time_restriction_override toggle.
+    update_interval: never
     lambda: |-
       auto t = id(homeassistant_time).now();
       int sh = id(restrict_start_hour);
@@ -6317,8 +6302,7 @@ text_sensor:
     id: time_restriction_next_allowed
     name: "Time Restriction Next Allowed"
     icon: "mdi:calendar-clock"
-    # 60s: returns Now or a fixed time; transitions once/day. Matches time_restriction_status.
-    update_interval: $sensor_counter_update
+    update_interval: never
     lambda: |-
       auto t = id(homeassistant_time).now();
       int sh = id(restrict_start_hour);
@@ -6360,8 +6344,6 @@ text_sensor:
     id: next_watering_day
     name: "Next Watering Day"
     icon: "mdi:calendar-clock"
-    # PUSH MODEL: update_interval: never.
-    # Pushed from: schedule day toggles (Mon-Sun), and midnight time cron (day rollover).
     update_interval: never
     lambda: |-
       auto now = id(homeassistant_time).now();
@@ -6392,8 +6374,6 @@ text_sensor:
     id: window1_display
     name: "ET Watering Window 1"
     icon: "mdi:clock-time-four"
-    # PUSH MODEL: update_interval: never.
-    # Pushed from window1_enabled switch, window1_start_input, window1_start_minute_input,
     # window1_start_am_pm_select, and matching end-time inputs.
     update_interval: never
     lambda: |-
@@ -6424,8 +6404,6 @@ text_sensor:
     id: window2_display
     name: "ET Watering Window 2"
     icon: "mdi:clock-time-eight"
-    # PUSH MODEL: update_interval: never.
-    # Pushed from window2_enabled switch, window2_start_input, window2_start_minute_input,
     # window2_start_am_pm_select, and matching end-time inputs.
     update_interval: never
     lambda: |-
@@ -6456,8 +6434,6 @@ text_sensor:
     id: window3_display
     name: "ET Watering Window 3"
     icon: "mdi:clock-time-two"
-    # PUSH MODEL: update_interval: never.
-    # Pushed from window3_enabled switch, window3_start_input, window3_start_minute_input,
     # window3_start_am_pm_select, and matching end-time inputs.
     update_interval: never
     lambda: |-
@@ -6488,11 +6464,9 @@ text_sensor:
     id: cycle_soak_detailed_status
     name: "Cycle & Soak Detailed Status"
     icon: "mdi:water-sync"
-    # PUSH MODEL: update_interval: never — pushed from the 1s interval only while
     # cycle/soak is active. Eliminates 86,400 daily HA state writes when idle.
     update_interval: never
     lambda: |-
-      // Previously, soaking was inside the cs_running block which required cycle_soak_switch.state
       // AND cycle_soak_total_duration > 0. If either was stale/false the sensor fell through to
       // "Idle" even when cycle_soak_is_soaking was correctly true. Checking soaking first ensures
       // the soaking state always displays regardless of switch/duration state.
@@ -6544,8 +6518,6 @@ text_sensor:
     id: zone1_last_watered_text
     name: "${dev1_zone1} Last Watered"
     icon: "mdi:clock-outline"
-    # PUSH MODEL: pushed from zone 1 on_turn_off immediately after watering completes.
-    # No background polling — only updates when a zone actually finishes.
     update_interval: never
     lambda: |-
       if (id(zone1_last_watered) == 0) {
@@ -6571,8 +6543,6 @@ text_sensor:
     id: zone2_last_watered_text
     name: "${dev1_zone2} Last Watered"
     icon: "mdi:clock-outline"
-    # PUSH MODEL: pushed from zone 2 on_turn_off immediately after watering completes.
-    # No background polling — only updates when a zone actually finishes.
     update_interval: never
     lambda: |-
       if (id(zone2_last_watered) == 0) {
@@ -6598,8 +6568,6 @@ text_sensor:
     id: zone3_last_watered_text
     name: "${dev1_zone3} Last Watered"
     icon: "mdi:clock-outline"
-    # PUSH MODEL: pushed from zone 3 on_turn_off immediately after watering completes.
-    # No background polling — only updates when a zone actually finishes.
     update_interval: never
     lambda: |-
       if (id(zone3_last_watered) == 0) {
@@ -6625,8 +6593,6 @@ text_sensor:
     id: zone4_last_watered_text
     name: "${dev1_zone4} Last Watered"
     icon: "mdi:clock-outline"
-    # PUSH MODEL: pushed from zone 4 on_turn_off immediately after watering completes.
-    # No background polling — only updates when a zone actually finishes.
     update_interval: never
     lambda: |-
       if (id(zone4_last_watered) == 0) {
@@ -6652,8 +6618,6 @@ text_sensor:
     id: zone5_last_watered_text
     name: "${dev1_zone5} Last Watered"
     icon: "mdi:clock-outline"
-    # PUSH MODEL: pushed from zone 5 on_turn_off immediately after watering completes.
-    # No background polling — only updates when a zone actually finishes.
     update_interval: never
     lambda: |-
       if (id(zone5_last_watered) == 0) {
@@ -6679,8 +6643,6 @@ text_sensor:
     id: zone6_last_watered_text
     name: "${dev1_zone6} Last Watered"
     icon: "mdi:clock-outline"
-    # PUSH MODEL: pushed from zone 6 on_turn_off immediately after watering completes.
-    # No background polling — only updates when a zone actually finishes.
     update_interval: never
     lambda: |-
       if (id(zone6_last_watered) == 0) {
@@ -6706,8 +6668,6 @@ text_sensor:
     id: zone7_last_watered_text
     name: "${dev1_zone7} Last Watered"
     icon: "mdi:clock-outline"
-    # PUSH MODEL: pushed from zone 7 on_turn_off immediately after watering completes.
-    # No background polling — only updates when a zone actually finishes.
     update_interval: never
     lambda: |-
       if (id(zone7_last_watered) == 0) {
@@ -6733,8 +6693,6 @@ text_sensor:
     id: zone8_last_watered_text
     name: "${dev1_zone8} Last Watered"
     icon: "mdi:clock-outline"
-    # PUSH MODEL: pushed from zone 8 on_turn_off immediately after watering completes.
-    # No background polling — only updates when a zone actually finishes.
     update_interval: never
     lambda: |-
       if (id(zone8_last_watered) == 0) {
@@ -6766,7 +6724,6 @@ text_sensor:
     name: "$upper_devicename1 Last Watering Trigger"
     icon: "mdi:water-check"
     # update_interval: 30s — auto-refreshes the "X ago" elapsed time every 30s.
-    # Also pushed immediately via publish_state from each zone on_turn_off,
     # and via the 1s interval when a run is active.
     update_interval: 30s
     lambda: |-
@@ -6798,7 +6755,6 @@ text_sensor:
     id: queue_status_display
     name: "Queue Status"
     icon: "mdi:format-list-numbered"
-    # PUSH MODEL: pushed from every queue add (queue_count++) and remove (queue_count--)
     # site, plus the stop button and boot init. Zero background polling.
     update_interval: never
     lambda: |-
@@ -6808,7 +6764,6 @@ text_sensor:
       if (id(queue_count) == 0) {
         return {"Empty (0/3)"};
       }
-      // silently ignored — queues containing these showed "X/3: " with no description.
       std::string result = std::to_string(id(queue_count)) + "/3: ";
       for (int i = 0; i < id(queue_count) && i < 3; i++) {
         if (i > 0) result += ", ";
@@ -6950,7 +6905,6 @@ text_sensor:
     name: "$dev1_what Forecast Watering Recommendation"
     id: lawn_forecast_watering_recommendation
     icon: "mdi:lightbulb-on"
-    # PUSH MODEL: pushed from rain_probability.on_value and rain_forecast_1h.on_value
     # (both already fire check_forecast_rain_delay). Also pushed at boot.
     update_interval: never
     lambda: |-
@@ -7192,7 +7146,6 @@ sensor:
     icon: "mdi:thermometer"
     unit_of_measurement: "°C"
     accuracy_decimals: 1
-    # PUSH MODEL: pushed from ha_temperature.on_value — zero polling overhead.
     update_interval: never
     lambda: |-
       if (isnan(id(ha_temperature).state)) {
@@ -7206,7 +7159,6 @@ sensor:
     icon: "mdi:water-percent"
     unit_of_measurement: "%"
     accuracy_decimals: 0
-    # PUSH MODEL: pushed from ha_humidity.on_value.
     update_interval: never
     lambda: |-
       if (isnan(id(ha_humidity).state)) {
@@ -7309,7 +7261,6 @@ sensor:
     icon: "mdi:water-percent"
     unit_of_measurement: "x"
     accuracy_decimals: 2
-    # PUSH MODEL: pushed from calculate_predictive_watering end.
     update_interval: never
     lambda: |-
       if (id(predictive_watering_enabled)) {
@@ -7324,7 +7275,6 @@ sensor:
     icon: "mdi:thermometer"
     unit_of_measurement: "x"
     accuracy_decimals: 2
-    # PUSH MODEL: pushed from calculate_predictive_watering on completion.
     update_interval: never
     lambda: |-
       if (id(predictive_watering_enabled)) {
@@ -7338,7 +7288,6 @@ sensor:
     icon: "mdi:water-percent"
     unit_of_measurement: "x"
     accuracy_decimals: 2
-    # PUSH MODEL: pushed from calculate_predictive_watering on completion.
     update_interval: never
     lambda: |-
       if (id(predictive_watering_enabled)) {
@@ -7352,7 +7301,6 @@ sensor:
     icon: "mdi:weather-windy"
     unit_of_measurement: "x"
     accuracy_decimals: 2
-    # PUSH MODEL: pushed from calculate_predictive_watering on completion.
     update_interval: never
     lambda: |-
       if (id(predictive_watering_enabled)) {
@@ -7366,7 +7314,6 @@ sensor:
     icon: "mdi:weather-rainy"
     unit_of_measurement: "x"
     accuracy_decimals: 2
-    # PUSH MODEL: pushed from calculate_predictive_watering on completion.
     update_interval: never
     lambda: |-
       if (id(predictive_watering_enabled)) {
@@ -7383,7 +7330,6 @@ sensor:
     icon: "mdi:water-minus"
     unit_of_measurement: "mm"
     accuracy_decimals: 1
-    # PUSH MODEL: pushed from calculate_smart_et end.
     update_interval: never
     lambda: |-
       if (id(smart_et_enabled)) {
@@ -7397,7 +7343,6 @@ sensor:
     icon: "mdi:water-outline"
     unit_of_measurement: "mm/day"
     accuracy_decimals: 1
-    # PUSH MODEL: pushed from calculate_smart_et end.
     update_interval: never
     lambda: |-
       if (id(smart_et_enabled)) {
@@ -7411,7 +7356,6 @@ sensor:
     unit_of_measurement: "%"
     accuracy_decimals: 0
     id: et_deficit_pct_display
-    # PUSH MODEL: pushed from calculate_smart_et end.
     update_interval: never
     lambda: |-
       if (id(smart_et_enabled)) {
@@ -7431,7 +7375,6 @@ sensor:
     unit_of_measurement: "x"
     accuracy_decimals: 2
     id: et_duration_mult_display
-    # PUSH MODEL: pushed from calculate_smart_et end.
     update_interval: never
     lambda: |-
       if (id(smart_et_enabled)) {
@@ -7446,13 +7389,12 @@ sensor:
     icon: "mdi:timer-sand"
     unit_of_measurement: "days"
     accuracy_decimals: 1
-    # 60s + delta: displayed in days (1 decimal), so sub-minute updates are invisible
-    # on the dashboard. Delta filter avoids logging tiny floating-point drift.
-    update_interval: $sensor_counter_update
+    # 30s + delta: pushed immediately on every rain delay set/clear event;
+    # background 30s poll keeps the days-remaining countdown live.
+    update_interval: 30s
     filters:
       - delta: 0.01
     lambda: |-
-      // Previously this set rain_delay_end_time=0 and rain_delay_days=0 inline, which:
       //   (a) mutated globals from a read-only sensor lambda (unsafe — ESPHome may
       //       call this more than once), and
       //   (b) did NOT call rain_delay_days_input.publish_state(0), leaving the HA
@@ -7471,7 +7413,6 @@ sensor:
     icon: "mdi:calendar-month"
     unit_of_measurement: "x"
     accuracy_decimals: 1
-    # the seasonal multiplier. Previously polled at 1h and read the wrong source.
     # PW or ET override when those features are active. normal_multiplier is the correct
     # source: it stores the seasonal baseline (undiscounted, without PW adjustment).
     update_interval: never
@@ -7489,7 +7430,6 @@ sensor:
     icon: "mdi:water-minus-outline"
     unit_of_measurement: "mm"
     accuracy_decimals: 1
-    # PUSH MODEL: pushed from calculate_smart_et end.
     update_interval: never
     lambda: |-
       if (!id(smart_et_enabled)) {
@@ -7525,7 +7465,6 @@ sensor:
     icon: "mdi:water-percent"
     unit_of_measurement: "x"
     accuracy_decimals: 2
-    # PUSH MODEL: pushed from rain_probability.on_value and rain_forecast_1h.on_value.
     update_interval: never
     lambda: |-
       if (!id(forecast_enabled) || !id(predictive_watering_enabled)) {
@@ -7571,7 +7510,6 @@ sensor:
     accuracy_decimals: 2
     state_class: total_increasing
     device_class: water
-    # PUSH MODEL: pushed from zone 1 on_turn_off water accounting and reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7586,7 +7524,6 @@ sensor:
     accuracy_decimals: 2
     state_class: total_increasing
     device_class: water
-    # PUSH MODEL: pushed from zone 2 on_turn_off water accounting and reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7601,7 +7538,6 @@ sensor:
     accuracy_decimals: 2
     state_class: total_increasing
     device_class: water
-    # PUSH MODEL: pushed from zone 3 on_turn_off water accounting and reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7616,7 +7552,6 @@ sensor:
     accuracy_decimals: 2
     state_class: total_increasing
     device_class: water
-    # PUSH MODEL: pushed from zone 4 on_turn_off water accounting and reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7631,7 +7566,6 @@ sensor:
     accuracy_decimals: 2
     state_class: total_increasing
     device_class: water
-    # PUSH MODEL: pushed from zone 5 on_turn_off water accounting and reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7646,7 +7580,6 @@ sensor:
     accuracy_decimals: 2
     state_class: total_increasing
     device_class: water
-    # PUSH MODEL: pushed from zone 6 on_turn_off water accounting and reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7661,7 +7594,6 @@ sensor:
     accuracy_decimals: 2
     state_class: total_increasing
     device_class: water
-    # PUSH MODEL: pushed from zone 7 on_turn_off water accounting and reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7676,7 +7608,6 @@ sensor:
     accuracy_decimals: 2
     state_class: total_increasing
     device_class: water
-    # PUSH MODEL: pushed from zone 8 on_turn_off water accounting and reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7692,7 +7623,6 @@ sensor:
     state_class: total_increasing
     device_class: water
     # 60s + delta: total is a monotonically increasing lifetime counter.
-    # PUSH MODEL: pushed from all zone on_turn_off calls and reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7709,7 +7639,6 @@ sensor:
     state_class: measurement
     device_class: water
     # 60s + delta: only changes while a zone is running. Idle polling at 10s was
-    # PUSH MODEL: pushed from zone on_turn_off calls and midnight/reset paths.
     update_interval: never
     filters:
       - delta: 0.01
@@ -7725,8 +7654,6 @@ sensor:
     icon: "mdi:calendar-clock"
     unit_of_measurement: "days"
     accuracy_decimals: 1
-    # PUSH MODEL: only changes at midnight (day rollover) and at monthly budget reset.
-    # Pushed from midnight cron and budget reset watchdog logic.
     update_interval: never
     lambda: |-
       if (id(water_reset_timestamp) == 0) {
@@ -7747,7 +7674,6 @@ sensor:
     icon: "mdi:calendar-check"
     unit_of_measurement: "dates"
     accuracy_decimals: 0
-    # PUSH MODEL: pushed after every blackout slot write (NZ holiday sync + user edits).
     # Count only ever changes when the user adds/removes a blackout date.
     update_interval: never
     lambda: |-
@@ -8211,8 +8137,46 @@ number:
       - lambda: |-
           id(restrict_start_hour) = (int)x;
           id(restrict_start_hour_input).publish_state(x);
-          id(time_restriction_status).update();
-          id(time_restriction_next_allowed).update();
+          // ── Inline time restriction eval (instant — no script scheduling) ──
+          auto _tr_eval = [&]() {
+            if (!id(time_restriction_switch).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 3;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            if (id(manual_time_restriction_override).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 2;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            auto _now = id(homeassistant_time).now();
+            if (!_now.is_valid()) {
+              id(is_time_restricted) = true;
+              id(last_time_restriction_state) = 4;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            int sh = id(restrict_start_hour);
+            int eh = id(restrict_end_hour);
+            int s24 = (id(restrict_start_am_pm) == 1) ? ((sh == 12) ? 12 : sh + 12) : ((sh == 12) ? 0 : sh);
+            int e24 = (id(restrict_end_am_pm) == 1) ? ((eh == 12) ? 12 : eh + 12) : ((eh == 12) ? 0 : eh);
+            int now_min   = _now.hour * 60 + _now.minute;
+            int start_min = s24 * 60 + id(restrict_start_minute);
+            int end_min   = e24 * 60 + id(restrict_end_minute);
+            bool blocked  = (start_min < end_min) ? (now_min >= start_min && now_min < end_min)
+                                                   : (now_min >= start_min || now_min < end_min);
+            id(is_time_restricted) = blocked;
+            id(last_time_restriction_state) = blocked ? 0 : 1;
+            ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
+          };
+          _tr_eval();
 
   - platform: template
     id: restrict_start_minute_input
@@ -8228,8 +8192,46 @@ number:
       - lambda: |-
           id(restrict_start_minute) = (int)x;
           id(restrict_start_minute_input).publish_state(x);
-          id(time_restriction_status).update();
-          id(time_restriction_next_allowed).update();
+          // ── Inline time restriction eval (instant — no script scheduling) ──
+          auto _tr_eval = [&]() {
+            if (!id(time_restriction_switch).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 3;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            if (id(manual_time_restriction_override).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 2;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            auto _now = id(homeassistant_time).now();
+            if (!_now.is_valid()) {
+              id(is_time_restricted) = true;
+              id(last_time_restriction_state) = 4;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            int sh = id(restrict_start_hour);
+            int eh = id(restrict_end_hour);
+            int s24 = (id(restrict_start_am_pm) == 1) ? ((sh == 12) ? 12 : sh + 12) : ((sh == 12) ? 0 : sh);
+            int e24 = (id(restrict_end_am_pm) == 1) ? ((eh == 12) ? 12 : eh + 12) : ((eh == 12) ? 0 : eh);
+            int now_min   = _now.hour * 60 + _now.minute;
+            int start_min = s24 * 60 + id(restrict_start_minute);
+            int end_min   = e24 * 60 + id(restrict_end_minute);
+            bool blocked  = (start_min < end_min) ? (now_min >= start_min && now_min < end_min)
+                                                   : (now_min >= start_min || now_min < end_min);
+            id(is_time_restricted) = blocked;
+            id(last_time_restriction_state) = blocked ? 0 : 1;
+            ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
+          };
+          _tr_eval();
 
   - platform: template
     id: restrict_end_hour_input
@@ -8245,8 +8247,46 @@ number:
       - lambda: |-
           id(restrict_end_hour) = (int)x;
           id(restrict_end_hour_input).publish_state(x);
-          id(time_restriction_status).update();
-          id(time_restriction_next_allowed).update();
+          // ── Inline time restriction eval (instant — no script scheduling) ──
+          auto _tr_eval = [&]() {
+            if (!id(time_restriction_switch).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 3;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            if (id(manual_time_restriction_override).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 2;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            auto _now = id(homeassistant_time).now();
+            if (!_now.is_valid()) {
+              id(is_time_restricted) = true;
+              id(last_time_restriction_state) = 4;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            int sh = id(restrict_start_hour);
+            int eh = id(restrict_end_hour);
+            int s24 = (id(restrict_start_am_pm) == 1) ? ((sh == 12) ? 12 : sh + 12) : ((sh == 12) ? 0 : sh);
+            int e24 = (id(restrict_end_am_pm) == 1) ? ((eh == 12) ? 12 : eh + 12) : ((eh == 12) ? 0 : eh);
+            int now_min   = _now.hour * 60 + _now.minute;
+            int start_min = s24 * 60 + id(restrict_start_minute);
+            int end_min   = e24 * 60 + id(restrict_end_minute);
+            bool blocked  = (start_min < end_min) ? (now_min >= start_min && now_min < end_min)
+                                                   : (now_min >= start_min || now_min < end_min);
+            id(is_time_restricted) = blocked;
+            id(last_time_restriction_state) = blocked ? 0 : 1;
+            ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
+          };
+          _tr_eval();
 
   - platform: template
     id: restrict_end_minute_input
@@ -8262,8 +8302,46 @@ number:
       - lambda: |-
           id(restrict_end_minute) = (int)x;
           id(restrict_end_minute_input).publish_state(x);
-          id(time_restriction_status).update();
-          id(time_restriction_next_allowed).update();
+          // ── Inline time restriction eval (instant — no script scheduling) ──
+          auto _tr_eval = [&]() {
+            if (!id(time_restriction_switch).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 3;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            if (id(manual_time_restriction_override).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 2;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            auto _now = id(homeassistant_time).now();
+            if (!_now.is_valid()) {
+              id(is_time_restricted) = true;
+              id(last_time_restriction_state) = 4;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            int sh = id(restrict_start_hour);
+            int eh = id(restrict_end_hour);
+            int s24 = (id(restrict_start_am_pm) == 1) ? ((sh == 12) ? 12 : sh + 12) : ((sh == 12) ? 0 : sh);
+            int e24 = (id(restrict_end_am_pm) == 1) ? ((eh == 12) ? 12 : eh + 12) : ((eh == 12) ? 0 : eh);
+            int now_min   = _now.hour * 60 + _now.minute;
+            int start_min = s24 * 60 + id(restrict_start_minute);
+            int end_min   = e24 * 60 + id(restrict_end_minute);
+            bool blocked  = (start_min < end_min) ? (now_min >= start_min && now_min < end_min)
+                                                   : (now_min >= start_min || now_min < end_min);
+            id(is_time_restricted) = blocked;
+            id(last_time_restriction_state) = blocked ? 0 : 1;
+            ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
+          };
+          _tr_eval();
 
 # Zone 1 Schedule Time
   - platform: template
@@ -10706,9 +10784,6 @@ script:
             } else if (id(is_time_restricted)) {
               ESP_LOGW("irrigation", "   ⏰ Time restricted - will water when allowed");
               id(et_pending_irrigation) = true;
-              // that fires during the time-restriction window uses the correct multiplier.
-              // Previously the sprinkler multiplier stayed at ET-boosted for up to 5 min
-              // until the restore loop corrected it.
               id(et_duration_multiplier) = 1.0;
               { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
             } else {
@@ -11456,8 +11531,6 @@ script:
                 }
               }
             } else {
-              // "manual blocked" (allow_queue=false). Previously both showed "BUSY - blocked"
-              // even when the real reason was that the queue system was disabled.
               if (allow_queue && !id(queue_system_enabled)) {
                 ESP_LOGW("irrigation", "⚠️ QUEUE DISABLED - Program %d will NOT run (system busy)!", program);
               } else {
@@ -11730,10 +11803,10 @@ script:
                 id(queue_add_delays)[pos] = add_delay;
                 id(queue_trigger_sources)[pos] = trigger_source;
                 id(queue_count)++;
+                id(queue_status_display).update();  // Push queue display immediately
                 ESP_LOGI("irrigation", "📋 Queued Zone %d in slot %d/3 (%d items queued)",
                          zone + 1, pos + 1, id(queue_count));
               } else {
-                // QUEUE OVERFLOW HANDLING (FIXED)
                 ESP_LOGE("irrigation", "🚫 ═══════════════════════════════════════════════");
                 ESP_LOGE("irrigation", "🚫 QUEUE OVERFLOW - Zone %d DROPPED!", zone + 1);
                 ESP_LOGE("irrigation", "🚫 ═══════════════════════════════════════════════");
@@ -11922,11 +11995,6 @@ script:
             
             id(cycle_soak_total_duration) = 0;
             id(cycle_soak_elapsed_time) = 0;
-            // Previously normal mode wrote -1 here, so when a disabled zone's
-            // turn_on_action checked "active_z >= 0" to decide whether to fire
-            // deferred_zone_restart, the check always failed — the running zone
-            // was never restarted after the blocked interrupt. C&S mode always
-            // set this correctly; normal and quick-run mode must do the same.
             id(active_zone_number) = zone;
             id(total_cycles) = 0;
             id(last_cycle_seconds) = 0;
@@ -12805,9 +12873,6 @@ script:
                 ESP_LOGI("irrigation", "✅ ═══════════════════════════════════════════════");
                 ESP_LOGI("irrigation", "");
       
-      # Previously: irrigation_busy cleared, then 500ms for auto_advance, then 100ms
-      # before drain_queue. During those 600ms a new press saw busy=false and started
-      # immediately, then drain_queue fired and also started something → conflict.
       - if:
           condition:
             lambda: 'return !id(cycle_soak_script_blocked);'
@@ -13162,7 +13227,7 @@ script:
 
   # Check if current time is within the restriction window
   - id: check_time_restriction
-    mode: single
+    mode: restart  # restart ensures manual calls (switch/setting changes) are never dropped by the 30s interval
     then:
       - lambda: |-
           // Check if time restriction is disabled
@@ -13172,6 +13237,8 @@ script:
               ESP_LOGD("irrigation", "⏰ Time restriction DISABLED");
               id(last_time_restriction_state) = 3;
             }
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
             return;
           }
           
@@ -13182,6 +13249,8 @@ script:
               ESP_LOGI("irrigation", "⏰ Time restriction OVERRIDDEN - watering allowed");
               id(last_time_restriction_state) = 2;
             }
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
             return;
           }
           
@@ -13194,6 +13263,8 @@ script:
               ESP_LOGW("irrigation", "⏰ Time not synced — defaulting to RESTRICTED");
               id(last_time_restriction_state) = 4;
             }
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
             return;
           }
           
@@ -13218,6 +13289,9 @@ script:
             ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
             id(last_time_restriction_state) = new_state;
           }
+          // Always push display sensors so HA stays in sync
+          id(time_restriction_status).update();
+          id(time_restriction_next_allowed).update();
 
 
 ###############################################
@@ -13429,8 +13503,46 @@ select:
     set_action:
       - lambda: |-
           id(restrict_start_am_pm) = (x == "AM") ? 0 : 1;
-          id(time_restriction_status).update();
-          id(time_restriction_next_allowed).update();
+          // ── Inline time restriction eval (instant — no script scheduling) ──
+          auto _tr_eval = [&]() {
+            if (!id(time_restriction_switch).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 3;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            if (id(manual_time_restriction_override).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 2;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            auto _now = id(homeassistant_time).now();
+            if (!_now.is_valid()) {
+              id(is_time_restricted) = true;
+              id(last_time_restriction_state) = 4;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            int sh = id(restrict_start_hour);
+            int eh = id(restrict_end_hour);
+            int s24 = (id(restrict_start_am_pm) == 1) ? ((sh == 12) ? 12 : sh + 12) : ((sh == 12) ? 0 : sh);
+            int e24 = (id(restrict_end_am_pm) == 1) ? ((eh == 12) ? 12 : eh + 12) : ((eh == 12) ? 0 : eh);
+            int now_min   = _now.hour * 60 + _now.minute;
+            int start_min = s24 * 60 + id(restrict_start_minute);
+            int end_min   = e24 * 60 + id(restrict_end_minute);
+            bool blocked  = (start_min < end_min) ? (now_min >= start_min && now_min < end_min)
+                                                   : (now_min >= start_min || now_min < end_min);
+            id(is_time_restricted) = blocked;
+            id(last_time_restriction_state) = blocked ? 0 : 1;
+            ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
+          };
+          _tr_eval();
 
   - platform: template
     id: restrict_end_am_pm_select
@@ -13445,8 +13557,46 @@ select:
     set_action:
       - lambda: |-
           id(restrict_end_am_pm) = (x == "AM") ? 0 : 1;
-          id(time_restriction_status).update();
-          id(time_restriction_next_allowed).update();
+          // ── Inline time restriction eval (instant — no script scheduling) ──
+          auto _tr_eval = [&]() {
+            if (!id(time_restriction_switch).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 3;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            if (id(manual_time_restriction_override).state) {
+              id(is_time_restricted) = false;
+              id(last_time_restriction_state) = 2;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            auto _now = id(homeassistant_time).now();
+            if (!_now.is_valid()) {
+              id(is_time_restricted) = true;
+              id(last_time_restriction_state) = 4;
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+              return;
+            }
+            int sh = id(restrict_start_hour);
+            int eh = id(restrict_end_hour);
+            int s24 = (id(restrict_start_am_pm) == 1) ? ((sh == 12) ? 12 : sh + 12) : ((sh == 12) ? 0 : sh);
+            int e24 = (id(restrict_end_am_pm) == 1) ? ((eh == 12) ? 12 : eh + 12) : ((eh == 12) ? 0 : eh);
+            int now_min   = _now.hour * 60 + _now.minute;
+            int start_min = s24 * 60 + id(restrict_start_minute);
+            int end_min   = e24 * 60 + id(restrict_end_minute);
+            bool blocked  = (start_min < end_min) ? (now_min >= start_min && now_min < end_min)
+                                                   : (now_min >= start_min || now_min < end_min);
+            id(is_time_restricted) = blocked;
+            id(last_time_restriction_state) = blocked ? 0 : 1;
+            ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
+          };
+          _tr_eval();
 
   # Watering Window 1 Start AM-PM
   - platform: template
@@ -15287,12 +15437,104 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              _days += "Mon "; // this day just toggled ON
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, true /*monday forced ON*/, id(schedule_tuesday).state, id(schedule_wednesday).state, id(schedule_thursday).state, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
     turn_off_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              // Mon just toggled OFF — skip
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, false /*monday forced OFF*/, id(schedule_tuesday).state, id(schedule_wednesday).state, id(schedule_thursday).state, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
   - platform: template
     name: "Weekly Schedule - 2 Tuesday"
     id: schedule_tuesday
@@ -15301,12 +15543,104 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              _days += "Tue "; // this day just toggled ON
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, true /*tuesday forced ON*/, id(schedule_wednesday).state, id(schedule_thursday).state, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
     turn_off_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              // Tue just toggled OFF — skip
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, false /*tuesday forced OFF*/, id(schedule_wednesday).state, id(schedule_thursday).state, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
   - platform: template
     name: "Weekly Schedule - 3 Wednesday"
     id: schedule_wednesday
@@ -15315,12 +15649,104 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              _days += "Wed "; // this day just toggled ON
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, id(schedule_tuesday).state, true /*wednesday forced ON*/, id(schedule_thursday).state, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
     turn_off_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              // Wed just toggled OFF — skip
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, id(schedule_tuesday).state, false /*wednesday forced OFF*/, id(schedule_thursday).state, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
   - platform: template
     name: "Weekly Schedule - 4 Thursday"
     id: schedule_thursday
@@ -15329,12 +15755,104 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              _days += "Thu "; // this day just toggled ON
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, id(schedule_tuesday).state, id(schedule_wednesday).state, true /*thursday forced ON*/, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
     turn_off_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              // Thu just toggled OFF — skip
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, id(schedule_tuesday).state, id(schedule_wednesday).state, false /*thursday forced OFF*/, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
   - platform: template
     name: "Weekly Schedule - 5 Friday"
     id: schedule_friday
@@ -15343,12 +15861,104 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              _days += "Fri "; // this day just toggled ON
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, id(schedule_tuesday).state, id(schedule_wednesday).state, id(schedule_thursday).state, true /*friday forced ON*/, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
     turn_off_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              // Fri just toggled OFF — skip
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, id(schedule_tuesday).state, id(schedule_wednesday).state, id(schedule_thursday).state, false /*friday forced OFF*/, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
   - platform: template
     name: "Weekly Schedule - 6 Saturday"
     id: schedule_saturday
@@ -15357,12 +15967,104 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              _days += "Sat "; // this day just toggled ON
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, id(schedule_tuesday).state, id(schedule_wednesday).state, id(schedule_thursday).state, id(schedule_friday).state, true /*saturday forced ON*/
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
     turn_off_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              // Sat just toggled OFF — skip
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, id(schedule_tuesday).state, id(schedule_wednesday).state, id(schedule_thursday).state, id(schedule_friday).state, false /*saturday forced OFF*/
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
   - platform: template
     name: "Weekly Schedule - 7 Sunday"
     id: schedule_sunday
@@ -15371,12 +16073,104 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              _days += "Sun "; // this day just toggled ON
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  true /*sunday forced ON*/, id(schedule_monday).state, id(schedule_tuesday).state, id(schedule_wednesday).state, id(schedule_thursday).state, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
     turn_off_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            bool _ws_enabled = id(weekly_schedule_switch).state;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              // Sun just toggled OFF — skip
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  false /*sunday forced OFF*/, id(schedule_monday).state, id(schedule_tuesday).state, id(schedule_wednesday).state, id(schedule_thursday).state, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
 
   # ═══════════════════════════════════════════════════════════
   # SMART ET SCHEDULE DAYS
@@ -15455,6 +16249,7 @@ switch:
       - lambda: |-
           id(queue_system_enabled) = true;
           ESP_LOGI("irrigation", "\xf0\x9f\x93\x8b Queue system ENABLED - busy requests will be queued (up to 3 slots)");
+          id(queue_status_display).update();  // Push enabled state immediately
     turn_off_action:
       - lambda: |-
           id(queue_system_enabled) = false;
@@ -15475,6 +16270,7 @@ switch:
           } else {
             ESP_LOGI("irrigation", "\xf0\x9f\x9a\xab Queue system DISABLED - busy requests will be blocked/dropped");
           }
+          id(queue_status_display).update();  // Always push — covers empty and cleared queue
 
   # ═══════════════════════════════════════════════════════════
   # WATERING WINDOW ENABLE SWITCHES
@@ -15543,11 +16339,49 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
-      - script.execute: check_time_restriction
-      - logger.log: "⚠️ Time restriction override ON - immediate check triggered"
+      - lambda: |-
+          // We KNOW override is active: unconditionally clear restriction
+          id(is_time_restricted) = false;
+          id(last_time_restriction_state) = 2;
+          ESP_LOGI("irrigation", "⏰ Time restriction OVERRIDDEN - watering allowed");
+          id(time_restriction_status).update();
+          id(time_restriction_next_allowed).update();
     turn_off_action:
-      - script.execute: check_time_restriction
-      - logger.log: "✓ Time restriction override OFF - immediate check triggered"
+      - lambda: |-
+          if (!id(time_restriction_switch).state) {
+            id(is_time_restricted) = false;
+            id(last_time_restriction_state) = 3;
+            ESP_LOGD("irrigation", "⏰ Time restriction disabled (override removed, switch OFF)");
+            id(time_restriction_status).update();
+            id(time_restriction_next_allowed).update();
+            return;
+          }
+          // Switch enabled, no override — evaluate current time against window
+          {
+              auto _now = id(homeassistant_time).now();
+              if (!_now.is_valid()) {
+                id(is_time_restricted) = true;
+                id(last_time_restriction_state) = 4;
+                ESP_LOGW("irrigation", "⏰ Time not synced — defaulting to RESTRICTED");
+                id(time_restriction_status).update();
+                id(time_restriction_next_allowed).update();
+                return;
+              }
+              int sh = id(restrict_start_hour);
+              int eh = id(restrict_end_hour);
+              int s24 = (id(restrict_start_am_pm) == 1) ? ((sh == 12) ? 12 : sh + 12) : ((sh == 12) ? 0 : sh);
+              int e24 = (id(restrict_end_am_pm) == 1) ? ((eh == 12) ? 12 : eh + 12) : ((eh == 12) ? 0 : eh);
+              int now_min   = _now.hour * 60 + _now.minute;
+              int start_min = s24 * 60 + id(restrict_start_minute);
+              int end_min   = e24 * 60 + id(restrict_end_minute);
+              bool blocked  = (start_min < end_min) ? (now_min >= start_min && now_min < end_min)
+                                                     : (now_min >= start_min || now_min < end_min);
+              id(is_time_restricted) = blocked;
+              id(last_time_restriction_state) = blocked ? 0 : 1;
+              ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
+              id(time_restriction_status).update();
+              id(time_restriction_next_allowed).update();
+          }
 
   # Time of Day Restriction (10am-3pm block)
   - platform: template
@@ -15558,12 +16392,59 @@ switch:
     restore_mode: RESTORE_DEFAULT_ON
     turn_on_action:
       - lambda: |-
-          id(time_restriction_status).update();
-          id(time_restriction_next_allowed).update();
+          if (id(manual_time_restriction_override).state) {
+            id(is_time_restricted) = false;
+            id(last_time_restriction_state) = 2;
+            ESP_LOGI("irrigation", "⏰ Time restriction OVERRIDDEN - watering allowed");
+            id(time_restriction_status).publish_state("Overridden - Watering Allowed");
+            id(time_restriction_next_allowed).publish_state("Now");
+            return;
+          }
+          auto _now = id(homeassistant_time).now();
+          if (!_now.is_valid()) {
+            id(is_time_restricted) = true;
+            id(last_time_restriction_state) = 4;
+            id(time_restriction_status).publish_state("BLOCKED NOW (time not synced)");
+            id(time_restriction_next_allowed).publish_state("Unknown");
+            return;
+          }
+          int _sh = id(restrict_start_hour);
+          int _eh = id(restrict_end_hour);
+          int _s24 = (id(restrict_start_am_pm) == 1) ? ((_sh == 12) ? 12 : _sh + 12) : ((_sh == 12) ? 0 : _sh);
+          int _e24 = (id(restrict_end_am_pm) == 1) ? ((_eh == 12) ? 12 : _eh + 12) : ((_eh == 12) ? 0 : _eh);
+          int _now_min   = _now.hour * 60 + _now.minute;
+          int _start_min = _s24 * 60 + id(restrict_start_minute);
+          int _end_min   = _e24 * 60 + id(restrict_end_minute);
+          bool _blocked  = (_start_min < _end_min) ? (_now_min >= _start_min && _now_min < _end_min)
+                                                    : (_now_min >= _start_min || _now_min < _end_min);
+          id(is_time_restricted) = _blocked;
+          id(last_time_restriction_state) = _blocked ? 0 : 1;
+          char _buf[96];
+          if (_blocked) {
+            snprintf(_buf, sizeof(_buf), "BLOCKED NOW (Restricted: %d:%02d %s - %d:%02d %s)",
+                     id(restrict_start_hour), id(restrict_start_minute), (id(restrict_start_am_pm) == 0 ? "AM" : "PM"),
+                     id(restrict_end_hour), id(restrict_end_minute), (id(restrict_end_am_pm) == 0 ? "AM" : "PM"));
+            id(time_restriction_status).publish_state(_buf);
+            int _h24 = _end_min / 60; int _mm = _end_min % 60;
+            int _ampm = (_h24 >= 12) ? 1 : 0; int _h12 = _h24 % 12; if (_h12 == 0) _h12 = 12;
+            char _tbuf[32]; snprintf(_tbuf, sizeof(_tbuf), "%d:%02d %s", _h12, _mm, (_ampm == 0 ? "AM" : "PM"));
+            id(time_restriction_next_allowed).publish_state(_tbuf);
+          } else {
+            snprintf(_buf, sizeof(_buf), "Allowed (Restricted: %d:%02d %s - %d:%02d %s)",
+                     id(restrict_start_hour), id(restrict_start_minute), (id(restrict_start_am_pm) == 0 ? "AM" : "PM"),
+                     id(restrict_end_hour), id(restrict_end_minute), (id(restrict_end_am_pm) == 0 ? "AM" : "PM"));
+            id(time_restriction_status).publish_state(_buf);
+            id(time_restriction_next_allowed).publish_state("Now");
+          }
+          ESP_LOGI("irrigation", "⏰ Time restriction: %s", _blocked ? "BLOCKED" : "Allowed");
     turn_off_action:
       - lambda: |-
-          id(time_restriction_status).update();
-          id(time_restriction_next_allowed).update();
+          id(is_time_restricted) = false;
+          id(last_time_restriction_state) = 3;
+          ESP_LOGD("irrigation", "⏰ Time restriction DISABLED");
+          id(time_restriction_status).publish_state("Disabled");
+          id(time_restriction_next_allowed).publish_state("Now");
+
 
   # Weekly schedule enable
   - platform: template
@@ -15574,12 +16455,62 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          // publish_state directly with switch treated as enabled.
+          {
+            // weekly_schedule_switch is being turned ON — treat as enabled
+            bool _ws_enabled = true;
+            if (!_ws_enabled) {
+              id(weekly_schedule_status).publish_state("Disabled");
+              id(next_watering_day).publish_state("None scheduled");
+            } else {
+              std::string _days = "";
+              if (id(schedule_monday).state) _days += "Mon ";
+              if (id(schedule_tuesday).state) _days += "Tue ";
+              if (id(schedule_wednesday).state) _days += "Wed ";
+              if (id(schedule_thursday).state) _days += "Thu ";
+              if (id(schedule_friday).state) _days += "Fri ";
+              if (id(schedule_saturday).state) _days += "Sat ";
+              if (id(schedule_sunday).state) _days += "Sun ";
+              if (!_days.empty()) _days.pop_back();
+              if (_days.empty()) {
+                id(weekly_schedule_status).publish_state("Enabled - No days selected!");
+              } else {
+                int _h = (int)id(schedule_start_hour).state;
+                int _m = (int)id(schedule_start_minute).state;
+                std::string _ap = id(schedule_am_pm).current_option();
+                char _buf[150];
+                sprintf(_buf, "\u2713 Active: %s @ %d:%02d %s (All enabled zones)",
+                        _days.c_str(), _h, _m, _ap.c_str());
+                id(weekly_schedule_status).publish_state(_buf);
+              }
+              // Compute next_watering_day with same forced value
+              auto _nwd_now = id(homeassistant_time).now();
+              if (!_nwd_now.is_valid()) {
+                id(next_watering_day).publish_state("Time not synced");
+              } else {
+                int _cur_day = _nwd_now.day_of_week;
+                const char* _days_arr[] = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+                bool _day_enabled[7] = {
+                  id(schedule_sunday).state, id(schedule_monday).state, id(schedule_tuesday).state, id(schedule_wednesday).state, id(schedule_thursday).state, id(schedule_friday).state, id(schedule_saturday).state
+                };
+                bool _found = false;
+                for (int _i = 1; _i <= 7; _i++) {
+                  int _cd = ((_cur_day - 1 + _i) % 7);
+                  if (_day_enabled[_cd]) {
+                    id(next_watering_day).publish_state(_days_arr[_cd]);
+                    _found = true; break;
+                  }
+                }
+                if (!_found) id(next_watering_day).publish_state("None scheduled");
+              }
+            }
+          }
     turn_off_action:
       - lambda: |-
-          id(weekly_schedule_status).update();
-          id(next_watering_day).update();
+          {
+            id(weekly_schedule_status).publish_state("Disabled");
+            id(next_watering_day).update(); // lambda read of other switches is safe here
+          }
 
   # Manual Rain Delay Override
   - platform: template
@@ -16153,8 +17084,6 @@ switch:
     optimistic: true
     turn_on_action:
       - lambda: |-
-          // Previously the early return below (when busy) bypassed this check, so a disabled zone's
-          // relay could still fire via the if: block when another zone was already running.
           if (!id(zone1_enable).state && !id(test_mode_active)) {
             ESP_LOGW("irrigation", "🚫 Zone 1 BLOCKED (direct) - zone disabled");
             std::string _reason = "🚫 Zone 1 disabled (direct switch)";
@@ -18844,11 +19773,8 @@ sprinkler:
               id(last_zone_start_epoch) = 0;
               id(normal_run_duration_seconds) = 0;
 
-              // Previously there were TWO restore blocks here: the first fired
               // unconditionally (clearing restore_multiplier_after_run), which made
               // the second (correctly guarded) block dead code that never executed.
-              // Now: single block handles ALL cases correctly.
-              //   - Stop pressed mid-run: stop button already restored and cleared the flag;
               //     this block sees restore_multiplier_after_run=false and does nothing.
               //   - Normal mode natural completion: flag still set → restore here.
               //   - C&S completion: C&S completion block already restored; flag=false → skip.
@@ -19261,8 +20187,6 @@ button:
         - if:
             condition:
               lambda: |-
-                // NZ public holidays from HA). Previously only checked the 10 manual slots,
-                // silently ignoring Good Friday, Easter Monday, and other HA holiday sensors.
                 if (id(is_blackout_date).state) {
                   ESP_LOGW("irrigation", "🚫 BLOCKED: Normal Mode - Blackout active (manual slot or NZ holiday)");
                   return true;
@@ -19353,6 +20277,7 @@ button:
                                               id(queue_add_delays)[pos] = false;
                                               id(queue_trigger_sources)[pos] = "Manual: All Zones (Normal)";
                                               id(queue_count)++;
+                                              id(queue_status_display).update();  // Push queue display immediately
                                               
                                               ESP_LOGI("irrigation", "📋 QUEUED Normal Mode → Slot %d/3 | Queue now: %d items",
                                                        pos + 1, id(queue_count));
@@ -19472,6 +20397,7 @@ button:
                                               id(queue_add_delays)[pos] = false;
                                               id(queue_trigger_sources)[pos] = "Manual: All Zones Normal (Base 1.0x)";
                                               id(queue_count)++;
+                                              id(queue_status_display).update();  // Push queue display immediately
                                               ESP_LOGI("irrigation", "📋 QUEUED Normal Base → Slot %d/3 | Queue now: %d items",
                                                        pos + 1, id(queue_count));
                                               ESP_LOGI("irrigation", "💡 Multiplier will be set to 1.0x when this runs");
@@ -20292,6 +21218,7 @@ button:
                                                 id(queue_trigger_sources)[pos] = "Manual: Cycle & Soak All Zones";
                                               }
                                               id(queue_count)++;
+                                              id(queue_status_display).update();  // Push queue display immediately
                                               
                                               ESP_LOGI("irrigation", "📋 QUEUED Cycle & Soak → Slot %d/3 | Queue now: %d items",
                                                        pos + 1, id(queue_count));
@@ -20434,6 +21361,7 @@ button:
                                               id(queue_add_delays)[pos] = false;
                                               id(queue_trigger_sources)[pos] = "Manual: C&S All Zones (Base 1.0x)";
                                               id(queue_count)++;
+                                              id(queue_status_display).update();  // Push queue display immediately
                                               
                                               // NOTE: For queued runs, we save the multiplier just before drain_queue
                                               // executes the item. This ensures we use the multiplier that's active
