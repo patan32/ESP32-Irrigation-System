@@ -384,7 +384,6 @@ esphome:
             }
             ESP_LOGI("irrigation", "🔄 BOOT: 3-slot queue initialized (Hunter Pro-C style)");
             
-            // BUG #46 FIX: Do NOT reset pw_current_multiplier on boot.
             // pw_current_multiplier has restore_value:True — its NVS value is valid and
             // should be used until calculate_predictive_watering recalculates from live
             // weather (within 60 min of boot). Resetting to 1.0 discards a valid seasonal
@@ -569,7 +568,6 @@ esphome:
               // are never written back and the garbage value survives the next reboot.
               global_preferences->sync();
               ESP_LOGE("irrigation", "❌ All water counters wiped and flushed to NVS (was %.1fL)", old_usage);
-              // BUG FIX: Push water sensor displays immediately after wipe.
               // Without this HA keeps showing pre-wipe values until next scheduled poll
               // (or indefinitely now that sensors use update_interval: never).
               id(zone1_water_sensor).update(); id(zone2_water_sensor).update();
@@ -597,9 +595,7 @@ esphome:
             id(last_boot_nvs_action) = std::string(_nvs_buf);
             ESP_LOGI("irrigation", "");
 
-      # BUG 1 FIX: Apply NVS-persisted multiplier to sprinkler component immediately on boot.
       # Previously this was hard-coded to 1 (resetting the component to 1.0x on every reboot),
-      # which undid the BUG #46 fix that preserved pw_current_multiplier in NVS.
       # Any zone that fired before HA time synced (~30s) would run at 1.0x instead of the
       # correct seasonal rate. Now the NVS value is applied directly; the seasonal lambda
       # below will recalculate and update it once time is available.
@@ -607,7 +603,7 @@ esphome:
           float boot_mult = id(pw_current_multiplier);
           float boot_vac  = id(vacation_mode_active) ? boot_mult * 0.5f : boot_mult;
           id($devicename1).set_multiplier(boot_vac);
-          ESP_LOGI("irrigation", "🔄 BUG1 FIX: Boot multiplier set from NVS: %.2fx%s → %.2fx applied",
+          ESP_LOGI("irrigation", "Boot multiplier set from NVS: %.2fx%s → %.2fx applied",
                    boot_mult, id(vacation_mode_active) ? " ×0.5 (vacation)" : "", boot_vac);
 # Set smart multiplier on boot based on temperature and season (overrides NVS value once time syncs)
 
@@ -721,7 +717,7 @@ esphome:
           float retry_final = id(vacation_mode_active) ? multiplier * 0.5f : multiplier;
           id($devicename1).set_multiplier(retry_final);
           if (id(vacation_mode_active)) id(normal_multiplier) = multiplier;
-          boot_multiplier_applied = true;  // BUG FIX: Mark applied so guard works correctly for 1.0x case
+          boot_multiplier_applied = true;
           ESP_LOGI("irrigation", "RETRY: Boot multiplier set to %.1f%s (temp: %.1f°C)",
                    retry_final, id(vacation_mode_active) ? " (×0.5 vacation)" : "", temp);
       
@@ -841,7 +837,6 @@ esphome:
             float percent = id(monthly_water_budget) > 0 ? (id(current_month_usage) / id(monthly_water_budget)) * 100.0 : 0.0;
             ESP_LOGI("irrigation", "📊 Water Budget: %.1fL / %.1fL (%.1f%%)", 
                      id(current_month_usage), id(monthly_water_budget), percent);
-            // BUG 3 FIX: Use ${budget_warning_pct}f substitution instead of hardcoded 80.
             // The 30s watchdog already uses the substitution correctly; this inconsistency
             // would cause a misleading startup warning if budget_warning_pct was ever changed.
             if (percent > ${budget_warning_pct}f) {
@@ -1837,56 +1832,56 @@ globals:
   # activates and restored when vacation mode deactivates.
   - id: vacation_saved_zone1_sched
     type: bool
-    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    restore_value: True
     # If vacation mode is active and ESP reboots, these saved states are lost.
     # When vacation mode is then turned off, all zone schedules restore to 'false'
     # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone2_sched
     type: bool
-    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    restore_value: True
     # If vacation mode is active and ESP reboots, these saved states are lost.
     # When vacation mode is then turned off, all zone schedules restore to 'false'
     # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone3_sched
     type: bool
-    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    restore_value: True
     # If vacation mode is active and ESP reboots, these saved states are lost.
     # When vacation mode is then turned off, all zone schedules restore to 'false'
     # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone4_sched
     type: bool
-    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    restore_value: True
     # If vacation mode is active and ESP reboots, these saved states are lost.
     # When vacation mode is then turned off, all zone schedules restore to 'false'
     # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone5_sched
     type: bool
-    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    restore_value: True
     # If vacation mode is active and ESP reboots, these saved states are lost.
     # When vacation mode is then turned off, all zone schedules restore to 'false'
     # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone6_sched
     type: bool
-    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    restore_value: True
     # If vacation mode is active and ESP reboots, these saved states are lost.
     # When vacation mode is then turned off, all zone schedules restore to 'false'
     # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone7_sched
     type: bool
-    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    restore_value: True
     # If vacation mode is active and ESP reboots, these saved states are lost.
     # When vacation mode is then turned off, all zone schedules restore to 'false'
     # (the initial_value), permanently wiping the user's schedule configuration.
     initial_value: 'false'
   - id: vacation_saved_zone8_sched
     type: bool
-    restore_value: True   # BUG FIX (Bug 30): Must persist across reboots.
+    restore_value: True
     # If vacation mode is active and ESP reboots, these saved states are lost.
     # When vacation mode is then turned off, all zone schedules restore to 'false'
     # (the initial_value), permanently wiping the user's schedule configuration.
@@ -1969,7 +1964,6 @@ globals:
     type: int
     restore_value: False  # Runtime state — updated during cycle & soak
     initial_value: '0'
-  # BUG FIX: Track when the current cycle started so deferred_zone_restart can
   # calculate REMAINING cycle time instead of restarting for the full cycle duration.
   # Without this, a deferred restart after a disabled-zone interrupt runs the valve
   # for a full extra cycle, pushing the actual run time beyond the grand total and
@@ -1978,13 +1972,11 @@ globals:
     type: int64_t
     restore_value: False  # Runtime state — set when each C&S cycle starts
     initial_value: '0'
-  # BUG FIX: flag set during inter-zone station delays so the elapsed timer
   # continues advancing (preventing "Time Remaining" from freezing during delays).
   - id: station_delay_active
     type: bool
     restore_value: False  # Runtime state — cleared on completion and reboot
     initial_value: 'false'
-  # BUG FIX: tracks the 0-based index of the most recently started zone.
   # Unlike active_zone_number (which is set only inside run_zone_with_cycles),
   # this is set by each zone's on_turn_on so it persists for BOTH
   # start_full_cycle (normal all-zones) AND run_zone_with_cycles (single/quick/C&S).
@@ -1994,7 +1986,6 @@ globals:
     type: int
     restore_value: False  # Runtime state — cleared on reboot
     initial_value: '-1'
-  # BUG FIX: timestamp (unix epoch) when the last zone relay opened.
   # Used with last_active_zone to compute TRUE remaining time for normal-mode
   # restarts. The sprinkler's time_remaining_active_valve() becomes unreliable
   # when a disabled zone is triggered — the component switches active_valve_
@@ -2771,7 +2762,7 @@ time:
                 // Set rain delay if it's raining
                 if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
                   id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (${seconds_per_day} * ${auto_rain_delay_days}); // auto rain delay
-                  id(rain_delay_remaining).update();  // BUG FIX: push immediately when delay is set
+                  id(rain_delay_remaining).update();
                   id(rain_delay_days) = ${auto_rain_delay_days};
                   id(rain_delay_days_input).publish_state(${auto_rain_delay_days});
                   ESP_LOGI("irrigation", "Auto rain delay activated - weather is %s", weather.c_str());
@@ -2800,10 +2791,7 @@ time:
           - script.execute: calculate_smart_et
       
       # Reset daily water counter AND zone runtime counters at midnight
-      # BUG 4 FIX: Previously only daily_water_litres was reset here; zone runtime counters
-      # (zoneX_runtime_today) were reset ONLY by the 30s watchdog's day_of_month check (Bug 2).
       # Adding them here ensures a definitive atomic reset at midnight, independent of the
-      # watchdog timing, and eliminates the double-reliance on Bug 2's flawed mechanism.
       - seconds: 0
         minutes: 0
         hours: 0
@@ -2819,7 +2807,6 @@ time:
               }
               id(daily_water_sensor).publish_state(0.0f);
               ESP_LOGI("irrigation", "✅ Daily water counter reset to 0 L");
-              // BUG 4 FIX: Reset per-zone daily runtime counters at midnight.
               // This is the authoritative reset; the 30s watchdog also resets them as a
               // belt-and-suspenders fallback but this midnight cron is the primary path.
               id(zone1_runtime_today) = 0;
@@ -2858,6 +2845,10 @@ time:
                   
                   // Re-check ET schedule day - pending irrigation must still be on a valid day
                   auto time_day = id(homeassistant_time).now();
+                  if (!time_day.is_valid()) {
+                    ESP_LOGW("irrigation", "⏰ Smart ET schedule check skipped - time not synced");
+                    return;
+                  }
                   int dow = time_day.day_of_week;  // 1=Sun, 2=Mon, 3=Tue...
                   bool day_ok = (dow == 2 && id(et_schedule_monday).state) ||
                                 (dow == 3 && id(et_schedule_tuesday).state) ||
@@ -2872,6 +2863,10 @@ time:
                     return;
                   }
                   auto now = id(homeassistant_time).now();
+                  if (!now.is_valid()) {
+                    ESP_LOGW("irrigation", "⏰ Smart ET window check skipped - time not synced");
+                    return;
+                  }
                   int current_hour = now.hour;
                   int current_minute = now.minute;
                   int current_time_minutes = (current_hour * 60) + current_minute;
@@ -2879,7 +2874,6 @@ time:
                   bool in_window = false;
                   std::string active_window = "";
                   
-                  // Check Window 1  // BUG FIX: Support midnight-crossing windows (e.g. 22:00-02:00)
                   if (id(window1_enabled)) {
                     int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
                     int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
@@ -2892,7 +2886,6 @@ time:
                     }
                   }
                   
-                  // Check Window 2  // BUG FIX: Support midnight-crossing windows
                   if (!in_window && id(window2_enabled)) {
                     int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
                     int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
@@ -2914,7 +2907,7 @@ time:
                         : (current_time_minutes >= start_min || current_time_minutes < end_min);
                     if (in_win3) {
                       in_window = true;
-                      active_window = "ET Watering Window 3";  // BUG FIX: midnight-crossing
+                      active_window = "ET Watering Window 3";
                     }
                   }
                   
@@ -2947,18 +2940,15 @@ time:
                     id(watering_trigger_source) = "Smart ET (" + active_window + ")";
                     ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
                     
-                    // BUG FIX (Bug 21): Do NOT turn on cycle_soak_switch before press().
                     // The button/script handles it in the correct path. Turning it on
                     // prematurely leaves it ON if the button blocks any safety check.
                     
-                    // BUG FIX (Bug 28): Do NOT call set_multiplier before press().
                     // If the button blocks (blackout/weather/etc.), the multiplier would
                     // stay at the ET-boosted value for up to 5 min until the restore loop
                     // corrects it. Any program/zone scheduled in that window runs at the
                     // wrong multiplier. Move set_multiplier to after press(), inside the
                     // "run started" branch where we know irrigation_busy=true.
                     //
-                    // BUG FIX: Capture busy state BEFORE calling press() so we can distinguish
                     // between "run started" vs "run queued" vs "run blocked".
                     bool _et_was_idle = !id(irrigation_busy);
                     id(start_all_zones_cycle_soak).press();
@@ -2974,12 +2964,11 @@ time:
                       ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run blocked by safety check — deficit preserved (%.1fmm), will retry", id(et_soil_moisture_deficit));
                     } else {
                       // Run started successfully — NOW apply multiplier (run is confirmed active)
-                      // BUG FIX (Bug 28): Moved here from before press() so multiplier is only
                       // elevated when a run is actually in progress, not during a blocked attempt.
                       id($devicename1).set_multiplier(combined_final);
                       id(et_soil_moisture_deficit) = 0;
                       { auto _t2b = id(homeassistant_time).now(); if (_t2b.is_valid()) id(et_last_water_time) = _t2b.timestamp; }
-                      id(et_pending_irrigation) = false;  // BUG FIX: Only clear when run actually started
+                      id(et_pending_irrigation) = false;
                     }
                   }
                 }
@@ -2990,7 +2979,6 @@ time:
         minutes: /5  # Every 5 minutes
         then:
           - lambda: |-
-              // BUG #46 FIX: Check irrigation_busy, not just active_valve().
               // During a Cycle & Soak soak period the valve is OFF (active_valve() = false)
               // but the system is still running (irrigation_busy=true). The old check fired
               // restore_pw_multiplier mid-soak, resetting the ET multiplier to 1.0 and
@@ -3520,8 +3508,6 @@ time:
                 ESP_LOGD("irrigation", "Midnight multiplier skipped - Predictive Watering is active");
                 return;
               }
-              // Bug #41 FIX: Don't apply multiplier mid-run — same class as Bug #32 (Smart ET)
-              // and Bug #40 (Predictive Watering). A run started before midnight would get its
               // remaining zones' durations silently changed. Skip — the next midnight will apply it.
               if (id(irrigation_busy)) {
                 ESP_LOGI("irrigation", "Midnight multiplier deferred — system busy (will apply at next midnight)");
@@ -4155,7 +4141,6 @@ time:
                   }
                   
                   // Blackout date check (incl. NZ public holidays via is_blackout_date sensor)
-                  // BUG FIX (Bug 29): Weekly schedule was missing this check. All other
                   // schedule types (Programs A/B/C, Zone schedules) check is_blackout_date;
                   // weekly schedule silently fired on public holidays and manual blackout days.
                   if (id(is_blackout_date).state) {
@@ -4164,7 +4149,6 @@ time:
                   }
                   
                   // Check rain delay (respects manual_rain_delay_override)
-                  // BUG FIX: was missing override guard — weekly schedule blocked even with override ON.
                   if (!id(manual_rain_delay_override) && id(rain_delay_end_time) > now.timestamp) {
                     ESP_LOGD("irrigation", "Weekly schedule blocked - rain delay active");
                     return false;
@@ -4227,6 +4211,10 @@ time:
               then:
                 - lambda: |-
                     auto now = id(homeassistant_time).now();
+                    if (!now.is_valid()) {
+                      ESP_LOGD("irrigation", "⏰ Weekly schedule check skipped - time not synced");
+                      return;
+                    }
                     const char* day_names[] = {"", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
                     int dow = now.day_of_week;
                     
@@ -4296,7 +4284,6 @@ time:
                       // Set trigger source for weekly schedule
                       id(watering_trigger_source) = "Weekly Schedule";
                       ESP_LOGI("irrigation", "📍 TRIGGER: Weekly Schedule");
-                      // BUG #30 FIX: Set irrigation_busy=true BEFORE pending_normal_start
                       // so concurrent requests see the system as busy during the ~500ms
                       // window before the 500ms interval fires start_full_cycle.
                       id(irrigation_busy) = true;
@@ -4338,10 +4325,8 @@ interval:
               id(run_all_zones_cycle_soak_script).stop();
               id(wait_until_idle_then_drain).stop();
               id(continue_cycle_soak_after_resume).stop();
-              id(deferred_zone_restart).stop();  // BUG FIX: prevent deferred restart firing after blackout abort
-              // BUG #35 FIX: Restore auto_advance — C&S turns it OFF at start.
+              id(deferred_zone_restart).stop();
               id(dev1_auto_advance).turn_on();
-              // BUG FIX: Turn off C&S switch — if a C&S run was active when budget
               // was exceeded, the switch stays ON and confuses the next run.
               id(cycle_soak_switch).turn_off();
               // Full state reset — matches Stop button cleanup exactly
@@ -4358,7 +4343,6 @@ interval:
               id(cycle_soak_elapsed_time) = 0;
               id(cycle_start_epoch) = 0;
               id(station_delay_active) = false;
-              // BUG FIX: Restore multiplier if a Base Duration run was stopped mid-run.
               // Without this, the multiplier stays at 1.0x permanently after any stop/abort
               // during a Normal Base or C&S Base Duration run.
               if (id(restore_multiplier_after_run)) {
@@ -4369,8 +4353,8 @@ interval:
                 id(restore_multiplier_after_run) = false;
                 id(saved_multiplier_for_base_run) = 1.0;
               }
-              id(last_active_zone) = -1;      // BUG FIX: reset tracking globals on stop
-              id(last_zone_start_epoch) = 0;  // BUG FIX: prevent stale epoch on next run
+              id(last_active_zone) = -1;
+              id(last_zone_start_epoch) = 0;
               id(normal_run_duration_seconds) = 0;
               id(cycle_soak_is_soaking) = false;
               id(cycle_soak_soak_end_time) = 0;
@@ -4439,21 +4423,21 @@ interval:
                   ESP_LOGW("irrigation", "🚫 NORMAL start BLOCKED — system disabled");
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
-                  id(drain_queue).execute();  // BUG #38 FIX: drain queue immediately, don't wait for watchdog
+                  id(drain_queue).execute();
                   return;
                 }
                 if (id(freeze_protection_active)) {
                   ESP_LOGW("irrigation", "❄️ NORMAL start BLOCKED — freeze protection active (%.1f°C)", id(outside_temperature).state);
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
-                  id(drain_queue).execute();  // BUG #38 FIX
+                  id(drain_queue).execute();
                   return;
                 }
                 if (id(budget_exceeded) && !id(budget_override_active)) {
                   ESP_LOGW("irrigation", "🚫 NORMAL start BLOCKED — monthly budget exceeded (%.0fL / %.0fL)", id(current_month_usage), id(monthly_water_budget));
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
-                  id(drain_queue).execute();  // BUG #38 FIX
+                  id(drain_queue).execute();
                   return;
                 }
                 if (_ns_time.is_valid() && id(rain_delay_end_time) > _ns_time.timestamp) {
@@ -4461,21 +4445,21 @@ interval:
                   ESP_LOGW("irrigation", "🌧️ NORMAL start BLOCKED — rain delay active (%lld day(s) remaining)", _rd);
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
-                  id(drain_queue).execute();  // BUG #38 FIX
+                  id(drain_queue).execute();
                   return;
                 }
                 if (id(is_blackout_date).state) {
                   ESP_LOGW("irrigation", "🚫 NORMAL start BLOCKED — blackout date active");
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
-                  id(drain_queue).execute();  // BUG #38 FIX
+                  id(drain_queue).execute();
                   return;
                 }
                 if (id(is_time_restricted)) {
                   ESP_LOGW("irrigation", "⏰ NORMAL start BLOCKED — outside allowed watering window");
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
-                  id(drain_queue).execute();  // BUG #38 FIX
+                  id(drain_queue).execute();
                   return;
                 }
                 if (!id(manual_weather_override)) {
@@ -4485,7 +4469,7 @@ interval:
                       ESP_LOGW("irrigation", "⛈️ NORMAL start BLOCKED — bad weather: %s", _w.c_str());
                       id(pending_normal_start) = false; id(normal_start_attempts) = 0;
                       id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
-                      id(drain_queue).execute();  // BUG #38 FIX
+                      id(drain_queue).execute();
                       return;
                     }
                   }
@@ -4590,7 +4574,6 @@ interval:
           
           // Update soak countdown if currently soaking (and not paused)
           if (id(cycle_soak_is_soaking) && id(cycle_soak_soak_end_time) > 0 && !id(is_paused)) {
-            // BUG #13 FIX: Guard against time de-sync mid-soak (e.g. WiFi drop).
             // Without is_valid(), now().timestamp = 0 → remaining = end_time - 0 = huge positive
             // number → countdown sensor shows thousands of seconds instead of ~0.
             auto _sk_time = id(homeassistant_time).now();
@@ -4607,7 +4590,6 @@ interval:
             id(soak_countdown_seconds) = 0;
           }
           
-          // BUG FIX (deferred-restart timer sync): Only advance the elapsed counter when
           // the system is actually doing work — valve open, soaking between cycles, or in
           // a station delay between zones. This prevents the elapsed counter from advancing
           // during the "blocked-zone gap" (e.g. when a disabled zone's turn_on_action fires
@@ -4743,13 +4725,12 @@ interval:
           // PRODUCTION FEATURE CHECKS (Every 30s)
           // ═══════════════════════════════════════════════
 
-          // 0. BUG #45 FIX: Recalculate rain_delay_end_time if it was set while time was
           // unsynced (rain_delay_days > 0 but end_time == 0). This happens when the user
           // sets a manual rain delay before HA time has synced — the end_time is left at 0
           // so the delay is silently ignored. Now we restore it on the first synced tick.
           if (id(rain_delay_days) > 0 && id(rain_delay_end_time) == 0) {
             id(rain_delay_end_time) = now + (int64_t)(id(rain_delay_days) * ${seconds_per_day});
-            id(rain_delay_remaining).update();  // BUG FIX: push immediately when delay synced
+            id(rain_delay_remaining).update();
             ESP_LOGW("irrigation", "🌧️ Rain delay end time recalculated after time sync: %d day(s)", id(rain_delay_days));
           }
           
@@ -4796,11 +4777,9 @@ interval:
               id(run_all_zones_cycle_soak_script).stop();
               id(wait_until_idle_then_drain).stop();
               id(continue_cycle_soak_after_resume).stop();
-              id(deferred_zone_restart).stop();  // BUG FIX: prevent deferred restart firing after freeze abort
-              // BUG #35 FIX: Restore auto_advance — C&S turns it OFF at start.
+              id(deferred_zone_restart).stop();
               // Without this, all future normal-mode runs won't advance through zones.
               id(dev1_auto_advance).turn_on();
-              // BUG FIX: Turn off C&S switch — if a C&S run was active when this abort
               // fired, the switch stays ON and confuses the next run.
               id(cycle_soak_switch).turn_off();
               // Full state reset — matches Stop button cleanup exactly
@@ -4817,7 +4796,6 @@ interval:
               id(cycle_soak_elapsed_time) = 0;
               id(cycle_start_epoch) = 0;
               id(station_delay_active) = false;
-              // BUG FIX: Restore multiplier if a Base Duration run was stopped mid-run.
               // Without this, the multiplier stays at 1.0x permanently after any stop/abort
               // during a Normal Base or C&S Base Duration run.
               if (id(restore_multiplier_after_run)) {
@@ -4828,8 +4806,8 @@ interval:
                 id(restore_multiplier_after_run) = false;
                 id(saved_multiplier_for_base_run) = 1.0;
               }
-              id(last_active_zone) = -1;      // BUG FIX: reset tracking globals on stop
-              id(last_zone_start_epoch) = 0;  // BUG FIX: prevent stale epoch on next run
+              id(last_active_zone) = -1;
+              id(last_zone_start_epoch) = 0;
               id(normal_run_duration_seconds) = 0;
               id(cycle_soak_is_soaking) = false;
               id(cycle_soak_soak_end_time) = 0;
@@ -4865,7 +4843,6 @@ interval:
           // 2. DAILY RUNTIME RESET (at midnight)
           auto& esp_time = _30s_time;  // Reuse already-fetched time (P6 fix)
           if (esp_time.is_valid()) {
-            // BUG 2 FIX: Use day_of_year instead of day_of_month — day_of_month repeats
             // every month, so devices running across month boundaries (e.g. March 15
             // -> April 15) would NEVER reset the counters on the duplicate day-of-month.
             // day_of_year (1-365) is unique per calendar day, matching daily_water_reset_day.
@@ -4941,10 +4918,8 @@ interval:
               id(run_all_zones_cycle_soak_script).stop();
               id(wait_until_idle_then_drain).stop();
               id(continue_cycle_soak_after_resume).stop();
-              id(deferred_zone_restart).stop();  // BUG FIX: prevent deferred restart firing after budget abort
-              // BUG #35 FIX: Restore auto_advance — C&S turns it OFF at start.
+              id(deferred_zone_restart).stop();
               id(dev1_auto_advance).turn_on();
-              // BUG FIX: Turn off C&S switch — if a C&S run was active when budget was
               // exceeded, the switch stays ON and confuses the next run (same fix as freeze path).
               id(cycle_soak_switch).turn_off();
               // Full state reset — matches Stop button cleanup exactly
@@ -4961,7 +4936,6 @@ interval:
               id(cycle_soak_elapsed_time) = 0;
               id(cycle_start_epoch) = 0;
               id(station_delay_active) = false;
-              // BUG FIX: Restore multiplier if a Base Duration run was stopped mid-run.
               // Without this, the multiplier stays at 1.0x permanently after any stop/abort
               // during a Normal Base or C&S Base Duration run.
               if (id(restore_multiplier_after_run)) {
@@ -4972,8 +4946,8 @@ interval:
                 id(restore_multiplier_after_run) = false;
                 id(saved_multiplier_for_base_run) = 1.0;
               }
-              id(last_active_zone) = -1;      // BUG FIX: reset tracking globals on stop
-              id(last_zone_start_epoch) = 0;  // BUG FIX: prevent stale epoch on next run
+              id(last_active_zone) = -1;
+              id(last_zone_start_epoch) = 0;
               id(normal_run_duration_seconds) = 0;
               id(cycle_soak_is_soaking) = false;
               id(cycle_soak_soak_end_time) = 0;
@@ -4993,7 +4967,6 @@ interval:
           }
           
           // 4b. RAIN DELAY EXPIRY CHECK
-          // BUG A FIX: The rain_delay_remaining sensor lambda previously handled expiry
           // via side-effects. Now that the lambda is read-only (safe), the watchdog is the
           // sole expiry authority. This also fixes the missing rain_delay_days_input.publish_state(0)
           // which left the HA number entity showing stale days after the delay expired.
@@ -5002,7 +4975,7 @@ interval:
               ESP_LOGI("irrigation", "⏰ Rain delay expired — clearing");
               id(rain_delay_end_time) = 0;
               id(rain_delay_days)     = 0;
-              id(rain_delay_days_input).publish_state(0);  // BUG A FIX: sync HA number entity
+              id(rain_delay_days_input).publish_state(0);
               id(rain_delay_remaining).update();           // Push display sensor to 0
             }
           }
@@ -5072,7 +5045,6 @@ interval:
               id(cycle_soak_elapsed_time) = 0;
               id(cycle_start_epoch) = 0;
               id(station_delay_active) = false;
-              // BUG FIX: Restore multiplier if a Base Duration run was stopped mid-run.
               // Without this, the multiplier stays at 1.0x permanently after any stop/abort
               // during a Normal Base or C&S Base Duration run.
               if (id(restore_multiplier_after_run)) {
@@ -5092,7 +5064,6 @@ interval:
               id(resume_csa_blocked) = false;
               id(dev1_auto_advance).turn_on();
               id(cycle_soak_switch).turn_off();
-              // BUG FIX: Stop deferred_zone_restart — 24h abort must cancel any pending
               // deferred restart to prevent it firing into a cleared system.
               id(deferred_zone_restart).stop();
               id(dev1_valve_status).publish_state("Idle");
@@ -5160,21 +5131,20 @@ interval:
             id(last_cycle_seconds) = 0;
             id(cycle_soak_total_duration) = 0;
             id(cycle_soak_elapsed_time) = 0;
-            id(cycle_start_epoch) = 0;        // BUG FIX: was missing from clean-completion
-            id(station_delay_active) = false; // BUG FIX: was missing from clean-completion
+            id(cycle_start_epoch) = 0;
+            id(station_delay_active) = false;
             id(normal_run_duration_seconds) = 0;
             id(cycle_soak_is_soaking) = false;
             id(cycle_soak_soak_end_time) = 0;
             id(soak_countdown_seconds) = 0;
             id(resume_csa_blocked) = false;
-            id(last_active_zone) = -1;        // BUG FIX: was missing from clean-completion
-            id(last_zone_start_epoch) = 0;    // BUG FIX: was missing from clean-completion
+            id(last_active_zone) = -1;
+            id(last_zone_start_epoch) = 0;
             id(watering_trigger_source) = "Idle";
             id(dev1_valve_status).publish_state("Idle");
             // Ensure C&S switch and auto-advance are restored
             id(cycle_soak_switch).turn_off();
             id(dev1_auto_advance).turn_on();
-            // BUG FIX (Bug 23): Clear paused/pending state that prior buggy paths may
             // have left behind. The watchdog escalation (60s) had these; clean-completion
             // did not. If a paused run completed cleanly these would persist.
             id(pending_normal_start) = false;
@@ -5218,7 +5188,6 @@ interval:
               id(cycle_soak_elapsed_time) = 0;
               id(cycle_start_epoch) = 0;
               id(station_delay_active) = false;
-              // BUG FIX: Restore multiplier if a Base Duration run was stopped mid-run.
               // Without this, the multiplier stays at 1.0x permanently after any stop/abort
               // during a Normal Base or C&S Base Duration run.
               if (id(restore_multiplier_after_run)) {
@@ -5229,8 +5198,8 @@ interval:
                 id(restore_multiplier_after_run) = false;
                 id(saved_multiplier_for_base_run) = 1.0;
               }
-              id(last_active_zone) = -1;      // BUG FIX: reset tracking globals on stop
-              id(last_zone_start_epoch) = 0;  // BUG FIX: prevent stale epoch on next run
+              id(last_active_zone) = -1;
+              id(last_zone_start_epoch) = 0;
               id(normal_run_duration_seconds) = 0;
               id(cycle_soak_is_soaking) = false;
               id(cycle_soak_soak_end_time) = 0;
@@ -5249,10 +5218,8 @@ interval:
               // normal-mode runs can step through zones correctly.
               id(dev1_auto_advance).turn_on();
               id(cycle_soak_switch).turn_off();
-              // BUG FIX: Stop deferred_zone_restart — a stuck-state abort must cancel
               // any pending deferred restart to prevent it firing after watchdog cleanup.
               id(deferred_zone_restart).stop();
-              // BUG FIX: Also clear pending_normal_start in watchdog escalation.
               // If a normal-mode start timed out, this flag stays set until Stop.
               id(pending_normal_start) = false;
               id(normal_start_attempts) = 0;
@@ -5838,7 +5805,7 @@ text_sensor:
       
       float deficit = id(et_soil_moisture_deficit);
       float threshold = id(et_water_threshold);
-      if (threshold <= 0.0f) threshold = 1.0f;  // BUG FIX: Guard against divide-by-zero if NVS corrupts et_water_threshold
+      if (threshold <= 0.0f) threshold = 1.0f;
       float pct = (deficit / threshold) * 100.0;
       float et_mult = id(et_duration_multiplier);
       
@@ -6213,7 +6180,6 @@ text_sensor:
     update_interval: $sensor_update_frequency
     icon: "mdi:progress-clock"
     lambda: |-
-      // BUG FIX: Cycle & Soak progress was broken because valve_run_duration_adjusted
       // returns the FULL zone duration (e.g. 12 min) while time_remaining counts down
       // from only one CYCLE duration (e.g. 3 min), so elapsed = 12-3 = 9 min = 75%
       // at the very start of every cycle. Fix: use the dedicated C&S elapsed/total
@@ -6399,13 +6365,16 @@ text_sensor:
     update_interval: never
     lambda: |-
       auto now = id(homeassistant_time).now();
+      if (!now.is_valid()) {
+        return {"Time not synced"};
+      }
       int current_day = now.day_of_week;
       
       const char* days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
       
       // Check next 7 days
       for (int i = 1; i <= 7; i++) {
-        int check_day = ((current_day - 1 + i) % 7);  // BUG FIX: ESPHome day_of_week is 1-7, so subtract 1 for 0-based modulo before wrapping
+        int check_day = ((current_day - 1 + i) % 7);
         if ((check_day == 1 && id(schedule_monday).state) ||
             (check_day == 2 && id(schedule_tuesday).state) ||
             (check_day == 3 && id(schedule_wednesday).state) ||
@@ -6523,7 +6492,6 @@ text_sensor:
     # cycle/soak is active. Eliminates 86,400 daily HA state writes when idle.
     update_interval: never
     lambda: |-
-      // BUG FIX: Check soaking FIRST, independent of cs_running.
       // Previously, soaking was inside the cs_running block which required cycle_soak_switch.state
       // AND cycle_soak_total_duration > 0. If either was stale/false the sensor fell through to
       // "Idle" even when cycle_soak_is_soaking was correctly true. Checking soaking first ensures
@@ -6840,7 +6808,6 @@ text_sensor:
       if (id(queue_count) == 0) {
         return {"Empty (0/3)"};
       }
-      // BUG #42 FIX: Added type 3 (Normal Mode) and type 4 (Cycle & Soak) which were
       // silently ignored — queues containing these showed "X/3: " with no description.
       std::string result = std::to_string(id(queue_count)) + "/3: ";
       for (int i = 0; i < id(queue_count) && i < 3; i++) {
@@ -7485,13 +7452,11 @@ sensor:
     filters:
       - delta: 0.01
     lambda: |-
-      // BUG A FIX: Removed side-effects from sensor lambda.
       // Previously this set rain_delay_end_time=0 and rain_delay_days=0 inline, which:
       //   (a) mutated globals from a read-only sensor lambda (unsafe — ESPHome may
       //       call this more than once), and
       //   (b) did NOT call rain_delay_days_input.publish_state(0), leaving the HA
       //       number entity showing stale days after auto-expiry.
-      // Expiry cleanup is now handled exclusively by the 30s watchdog (BUG A FIX below).
       if (id(rain_delay_end_time) == 0) return 0.0f;
       auto _rd_now = id(homeassistant_time).now();
       if (!_rd_now.is_valid()) return 0.0f;
@@ -7506,9 +7471,7 @@ sensor:
     icon: "mdi:calendar-month"
     unit_of_measurement: "x"
     accuracy_decimals: 1
-    # BUG C FIX: Changed to push model (never). Pushed from every place that updates
     # the seasonal multiplier. Previously polled at 1h and read the wrong source.
-    # BUG C: was id($devicename1).multiplier() which returns the CURRENT applied value —
     # PW or ET override when those features are active. normal_multiplier is the correct
     # source: it stores the seasonal baseline (undiscounted, without PW adjustment).
     update_interval: never
@@ -7751,10 +7714,8 @@ sensor:
     filters:
       - delta: 0.01
     lambda: |-
-      // BUG B FIX: Removed side-effect (reset of daily_water_litres/daily_water_reset_day).
       // Side-effects in sensor lambdas are unsafe — ESPHome may call the lambda multiple
       // times during a single update cycle, causing double-resets. The midnight cron
-      // (Bug 4 fix) is the sole authoritative reset path for these counters.
       return id(daily_water_litres);
   
   # Days Into Current Water Budget Period
@@ -7771,7 +7732,6 @@ sensor:
       if (id(water_reset_timestamp) == 0) {
         return 0.0;
       }
-      // BUG #15 FIX: Guard against time not synced.
       // Without is_valid(), now().timestamp=0 → days = (0 - reset_timestamp) = large negative.
       auto _dib_time = id(homeassistant_time).now();
       if (!_dib_time.is_valid()) return 0.0;
@@ -7845,7 +7805,6 @@ binary_sensor:
       if (id(freeze_protection_active)) return false;
       if (id(budget_exceeded) && !id(budget_override_active)) return false;
       auto _stw_now = id(homeassistant_time).now();
-      // BUG FIX: was missing !id(manual_rain_delay_override) guard — direct zone switch
       // path was blocked by rain delay even when the override was active.
       if (!id(manual_rain_delay_override) && _stw_now.is_valid() && id(rain_delay_end_time) > _stw_now.timestamp) return false;
       if (id(is_time_restricted)) return false;
@@ -7988,7 +7947,7 @@ number:
               id(rain_delay_end_time) = 0;  // Will be set correctly once time syncs
             } else {
               id(rain_delay_end_time) = _rd_time.timestamp + (x * ${seconds_per_day});
-              id(rain_delay_remaining).update();  // BUG FIX: push immediately on manual set
+              id(rain_delay_remaining).update();
               ESP_LOGI("irrigation", "🌧️ Rain delay set: %d day(s)", (int)x);
               {
                 char _a[80]; snprintf(_a, sizeof(_a), "🌧️ MANUAL RAIN DELAY: %d day(s)", (int)x);
@@ -10078,7 +10037,6 @@ script:
             return;
           }
 
-          // Bug #40 FIX: Don't apply a new multiplier mid-run — it would change the duration
           // of zones not yet started in a multi-zone program or C&S sequence.
           // PW runs hourly, so the next tick will apply the calculation when the system is idle.
           if (id(irrigation_busy)) {
@@ -10412,7 +10370,6 @@ script:
             return;
           }
           
-          // BUG #32 FIX: If a run is active, don't touch the multiplier.
           // set_multiplier() is called below based on the new ET calculation; changing
           // it mid-run corrupts the duration of zones not yet started.
           // Mark pending — the every-5-min check will fire it when the system is free.
@@ -10749,7 +10706,6 @@ script:
             } else if (id(is_time_restricted)) {
               ESP_LOGW("irrigation", "   ⏰ Time restricted - will water when allowed");
               id(et_pending_irrigation) = true;
-              // BUG FIX (Bug 28b): Restore multiplier immediately so any program/zone
               // that fires during the time-restriction window uses the correct multiplier.
               // Previously the sprinkler multiplier stayed at ET-boosted for up to 5 min
               // until the restore loop corrected it.
@@ -10793,7 +10749,6 @@ script:
               bool in_window = false;
               std::string active_window = "";
               
-              // Check Window 1  // BUG FIX: Support midnight-crossing windows
               if (id(window1_enabled)) {
                 int start_min = (id(window1_start_hour) * 60) + id(window1_start_minute);
                 int end_min = (id(window1_end_hour) * 60) + id(window1_end_minute);
@@ -10806,7 +10761,6 @@ script:
                 }
               }
               
-              // Check Window 2  // BUG FIX: Support midnight-crossing windows
               if (!in_window && id(window2_enabled)) {
                 int start_min = (id(window2_start_hour) * 60) + id(window2_start_minute);
                 int end_min = (id(window2_end_hour) * 60) + id(window2_end_minute);
@@ -10819,7 +10773,6 @@ script:
                 }
               }
               
-              // Check Window 3  // BUG FIX: Support midnight-crossing windows
               if (!in_window && id(window3_enabled)) {
                 int start_min = (id(window3_start_hour) * 60) + id(window3_start_minute);
                 int end_min = (id(window3_end_hour) * 60) + id(window3_end_minute);
@@ -10841,12 +10794,10 @@ script:
                 ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
                 id(et_pending_irrigation) = false;
                 
-                // BUG FIX (Bug 22): Do NOT turn on cycle_soak_switch before press().
                 // The button handles this in its idle path; premature turn_on here
                 // leaves it ON if the button is blocked by any safety check.
                 
                 // Start all enabled zones (vacation-adjusted multiplier already applied)
-                // BUG FIX (Bug 27): Capture busy state BEFORE press() so we can
                 // distinguish "queued" (system already busy) from "blocked" (was idle
                 // but button/safety check rejected run). Without this, a blocked run
                 // falls into the "was queued" branch below and et_pending_irrigation
@@ -10854,7 +10805,6 @@ script:
                 bool _main_et_was_idle = !id(irrigation_busy);
                 id(start_all_zones_cycle_soak).press();
                 
-                // BUG #33 FIX: Only clear deficit and record last_water_time when the
                 // run actually started (system was idle). If the system is busy, the run
                 // was just queued — clearing the deficit now would lose the data if the
                 // queued run is later dropped (e.g. freeze kicks in before it executes).
@@ -10866,7 +10816,6 @@ script:
                   ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
                 } else if (!id(irrigation_busy) && _main_et_was_idle) {
                   // Was idle but button/safety-check blocked the run — restore pending flag so retry fires in 5 min.
-                  // BUG FIX (Bug 27): Previously fell into "Was queued" branch above,
                   // leaving et_pending_irrigation=false and silently dropping the retry.
                   id(et_pending_irrigation) = true;
                   ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run blocked by safety check — deficit preserved (%.1fmm), retrying in 5 min", id(et_soil_moisture_deficit));
@@ -10950,7 +10899,6 @@ script:
                          current_minute,
                          current_hour >= 12 ? "PM" : "AM");
                 id(et_pending_irrigation) = true;
-                // BUG FIX (Bug 28c): Restore multiplier immediately (window not open yet).
                 // Watering is deferred to when the window opens, so the multiplier must not
                 // stay elevated. The retry path (5-min) will re-apply it when the window opens
                 // and the run actually starts.
@@ -11219,7 +11167,6 @@ script:
             ESP_LOGI("irrigation", "📍 TRIGGER: %s", trigger_source.c_str());
             id(irrigation_busy) = true;
             id(in_program_run) = true;
-            // BUG FIX: Record last_run at START for interval scheduling (mirrors request_program_start fix)
             {
               auto _dq_lr = id(homeassistant_time).now();
               if (_dq_lr.is_valid()) {
@@ -11268,7 +11215,6 @@ script:
                        base_mult, id(vacation_mode_active) ? " (1.0 × 0.5 vacation)" : "");
             }
             
-            // BUG #26 FIX: Set irrigation_busy=true BEFORE pending_normal_start so that
             // request_zone_start and request_program_start see the system as busy during
             // the ~500ms window between here and the 500ms interval firing start_full_cycle.
             // Without this, a concurrent button press sees busy=false and starts a
@@ -11307,9 +11253,7 @@ script:
                        base_mult, id(vacation_mode_active) ? " (1.0 × 0.5 vacation)" : "");
             }
             
-            // Bug #36 FIX: Set irrigation_busy=true before execute() for consistency with
             // types 1/2/3. Without it there is a scheduler gap between drain_queue returning
-            // and run_all_zones_cycle_soak_script setting it. Bug #29 handles the blocked
             // path and clears it if pre-flight fails.
             id(irrigation_busy) = true;
             // Turn ON cycle and soak mode
@@ -11512,7 +11456,6 @@ script:
                 }
               }
             } else {
-              // BUG FIX: Distinguish "queue disabled" (allow_queue=true but queue off) from
               // "manual blocked" (allow_queue=false). Previously both showed "BUSY - blocked"
               // even when the real reason was that the queue system was disabled.
               if (allow_queue && !id(queue_system_enabled)) {
@@ -11532,7 +11475,6 @@ script:
           id(irrigation_busy) = true;
           id(in_program_run) = true;
           
-          // BUG FIX: Record last_run at START (not at completion) for interval scheduling.
           // Recording at completion caused programs with long runtimes to skip runs:
           // a 2h program on a 1-day interval would record last_run=8AM, then the 6AM
           // cron next day would compute days_since=22h/86400=0 → skip. The program
@@ -11770,7 +11712,6 @@ script:
           }
           ESP_LOGI("irrigation", "✓ Time restriction check PASSED for Zone %d", zone + 1);
 
-          // BUG #44 FIX: Only treat active_valve() as busy if it's a DIFFERENT zone.
           // When a user presses a zone switch directly in HA, the sprinkler component
           // sets active_valve() to that zone BEFORE turn_on_action calls request_zone_start,
           // causing a false "busy" block. irrigation_busy is the authoritative lock;
@@ -11981,7 +11922,6 @@ script:
             
             id(cycle_soak_total_duration) = 0;
             id(cycle_soak_elapsed_time) = 0;
-            // BUG FIX: Set active_zone_number to the running zone (not -1).
             // Previously normal mode wrote -1 here, so when a disabled zone's
             // turn_on_action checked "active_z >= 0" to decide whether to fire
             // deferred_zone_restart, the check always failed — the running zone
@@ -11991,7 +11931,6 @@ script:
             id(total_cycles) = 0;
             id(last_cycle_seconds) = 0;
             id(current_cycle) = 0;
-            // BUG FIX: Store the ACTUAL adjusted duration so the progress sensor
             // can compute elapsed/total correctly. valve_run_duration_adjusted()
             // returns the UI slider value * multiplier, which differs from the
             // actual run duration when a Quick Run button is used.
@@ -12017,20 +11956,17 @@ script:
             id(last_cycle_seconds) = last_cycle_sec;
             // Total time = exact watering time + soaks between cycles + optional station delay.
             // (actual watering = total_duration because last cycle is shortened)
-            // BUG FIX: Also add valve_open_delay_sec per cycle. Each start_single_valve call
             // waits valve_open_delay before opening the relay. Without this, the elapsed
             // counter would reach the total while the relay is still waiting to open on
             // the last cycle, briefly showing "0s remaining" before the valve even opens.
             int valve_open_d = ${default_valve_open_delay_sec};
             int total_time = total_duration + ((cycles - 1) * soak_seconds) + (cycles * valve_open_d);
-            // BUG FIX: include station delay so the countdown does not hit 0
             // and freeze while the inter-zone gap elapses.
             if (add_delay) total_time += id(station_delay_seconds);
             
             ESP_LOGI("irrigation", "==> CYCLE & SOAK MODE - %d cycles (last=%ds of %ds) mult=%.2f adj=%ds soak=%ds%s",
                      cycles, last_cycle_sec, cycle_seconds, multiplier, total_duration, soak_seconds, add_delay ? " +delay" : "");
             
-            // BUG FIX: When called from run_all_zones_cycle_soak_script, the grand total
             // and elapsed counter are already set to span ALL zones. Do NOT reset them
             // per-zone or progress would restart at 0% for each zone instead of
             // advancing continuously from 0% to 100% across the entire run.
@@ -12074,7 +12010,6 @@ script:
                 // total_water_litres, current_month_usage, runtime_today, last_watering_timestamp
                 ESP_LOGI("irrigation", "Zone %d NORMAL MODE complete", zone + 1);
                 
-                // BUG FIX: Reset active_zone_number now that the zone is done.
                 // We set it to zone (not -1) at the start of normal mode so that
                 // deferred_zone_restart can identify the running zone if a disabled
                 // zone switch is triggered mid-run. Clear it on completion so it
@@ -12094,7 +12029,6 @@ script:
           then:
             # Run first cycle. If only 1 cycle total, use last_cycle_seconds (may be shorter than
             # full cycle_duration_minutes * 60) to deliver exactly the adjusted duration.
-            # BUG FIX: Record cycle_start_epoch so deferred_zone_restart can calculate REMAINING
             # cycle time instead of always restarting for the full cycle duration.
             - lambda: |-
                 auto _cse = id(homeassistant_time).now();
@@ -12117,7 +12051,6 @@ script:
             - repeat:
                 count: !lambda "return id(total_cycles) - 1;"
                 then:
-                  # BUG #27 FIX: Check safety conditions before each soak/cycle iteration.
                   # If freeze or budget activates mid-run, stop immediately rather than
                   # completing remaining cycles. Script.stop from stop button also works
                   # (kills at next delay yield) but this provides proactive protection.
@@ -12164,7 +12097,6 @@ script:
                         
                         # Next cycle. Use last_cycle_seconds when this is the final cycle
                         # so the total watering matches the exact adjusted duration.
-                        # BUG FIX: Update cycle_start_epoch so deferred_zone_restart always
                         # knows when the CURRENT cycle started for remaining-time calculation.
                         - lambda: |-
                             auto _cse2 = id(homeassistant_time).now();
@@ -12190,7 +12122,6 @@ script:
                 // Total across all cycles is already accumulated in zone_water_used etc.
                 ESP_LOGI("irrigation", "Zone %d CYCLE & SOAK complete (%d cycles)", zone + 1, id(total_cycles));
                 
-                // BUG #25 FIX: Do NOT clear irrigation_busy or call drain_queue if we are
                 // running inside run_all_zones_cycle_soak_script. That script manages busy
                 // and drains the queue itself after all zones complete.
                 bool _from_all_zones = id(run_all_zones_cycle_soak_script).is_running();
@@ -12202,9 +12133,8 @@ script:
                 id(current_cycle) = 0;
                 id(total_cycles) = 0;
                 id(last_cycle_seconds) = 0;
-                id(cycle_start_epoch) = 0;   // BUG FIX: clear cycle epoch on completion
-                id(station_delay_active) = false;  // BUG FIX: ensure cleared on C&S done
-                // BUG FIX: When running inside run_all_zones_cycle_soak_script,
+                id(cycle_start_epoch) = 0;
+                id(station_delay_active) = false;
                 // do NOT clear cycle_soak_total_duration or cycle_soak_elapsed_time.
                 // The all-zones script set a grand total covering ALL zones; clearing
                 // it here after zone 1 completes would leave total_duration=0 when
@@ -12220,13 +12150,13 @@ script:
             lambda: "return !id(zone_run_blocked) && add_delay;"
           then:
             - lambda: |-
-                id(station_delay_active) = true;  // BUG FIX: allow elapsed timer to advance during inter-zone gap
+                id(station_delay_active) = true;
                 ESP_LOGI("irrigation", "Station delay: %d seconds", id(station_delay_seconds));
             - delay: !lambda "return id(station_delay_seconds) * 1000;"
             
             # Reset after all cycles
             - lambda: |-
-                id(station_delay_active) = false;  // BUG FIX: clear station delay flag
+                id(station_delay_active) = false;
                 // Get custom zone name (from runtime text input)
                 std::string zone_name = "${dev1_zone1}";  // Default fallback
                 switch(zone) {
@@ -12240,7 +12170,6 @@ script:
                   case 7: zone_name = id(zone8_name).state; break;
                 }
                 ESP_LOGI("irrigation", "%s complete (cycle & soak + station delay)", zone_name.c_str());
-                // BUG #25 FIX: Same guard as C&S cleanup above — don't clear busy
                 // or drain queue if we're inside run_all_zones_cycle_soak_script.
                 bool _from_all_zones_sd = id(run_all_zones_cycle_soak_script).is_running();
                 if (!id(in_program_run) && !_from_all_zones_sd) {
@@ -12251,8 +12180,7 @@ script:
                 id(current_cycle) = 0;
                 id(total_cycles) = 0;
                 id(last_cycle_seconds) = 0;
-                id(cycle_start_epoch) = 0;   // BUG FIX: clear cycle epoch on completion
-                // BUG FIX: When running inside run_all_zones_cycle_soak_script,
+                id(cycle_start_epoch) = 0;
                 // do NOT clear total_duration/elapsed here (station delay cleanup).
                 // Same reason as the C&S cleanup block above: grand total covers
                 // ALL zones; zeroing it after zone N's delay would break zone N+1.
@@ -12295,10 +12223,9 @@ script:
             id(last_cycle_seconds) = 0;
             id(cycle_soak_is_soaking) = false;
             id(cycle_soak_soak_end_time) = 0;
-            id(cycle_start_epoch) = 0;        // BUG FIX: was missing from _csa_block
-            id(station_delay_active) = false; // BUG FIX: was missing from _csa_block
-            id(soak_countdown_seconds) = 0;   // BUG FIX: was missing from _csa_block
-            // BUG FIX (Bug 24): _csa_block was missing full state cleanup.
+            id(cycle_start_epoch) = 0;
+            id(station_delay_active) = false;
+            id(soak_countdown_seconds) = 0;
             // Without these, a blocked resume left stale C&S/paused variables
             // that confused the next run or the watchdog.
             id(cycle_soak_total_duration) = 0;
@@ -12318,7 +12245,7 @@ script:
             id(dev1_valve_status).publish_state("Idle");
             id(last_active_zone) = -1;
             id(last_zone_start_epoch) = 0;
-            id(deferred_zone_restart).stop();  // BUG FIX: cancel any pending deferred restart
+            id(deferred_zone_restart).stop();
             id(drain_queue).execute();
             id(resume_csa_blocked) = true;  // Signal all subsequent blocks to skip
           };
@@ -12436,16 +12363,14 @@ script:
                 id(active_zone_number) = -1; id(current_cycle) = 0; id(total_cycles) = 0;
                 id(last_cycle_seconds) = 0;
                 id(cycle_soak_is_soaking) = false; id(cycle_soak_soak_end_time) = 0;
-                id(cycle_start_epoch) = 0;        // BUG FIX: was missing from loop abort
-                id(station_delay_active) = false; // BUG FIX: was missing from loop abort
-                id(soak_countdown_seconds) = 0;   // BUG FIX: was missing from loop abort
-                // BUG FIX (Bug 26): loop abort was missing these cleanups.
+                id(cycle_start_epoch) = 0;
+                id(station_delay_active) = false;
+                id(soak_countdown_seconds) = 0;
                 // Without them, cycle_soak_switch stays ON and auto_advance stays OFF
                 // after a mid-resume freeze/budget abort, breaking all future runs.
                 id(cycle_soak_total_duration) = 0;
                 id(cycle_soak_elapsed_time) = 0;
                 id(normal_run_duration_seconds) = 0;
-                // BUG FIX: paused_* state was never cleared on loop abort.
                 id(paused_zone) = -1;
                 id(paused_cycle) = 0;
                 id(time_remaining_when_paused) = 0;
@@ -12460,7 +12385,7 @@ script:
                 id(dev1_valve_status).publish_state("Idle");
                 id(last_active_zone) = -1;
                 id(last_zone_start_epoch) = 0;
-                id(deferred_zone_restart).stop();  // BUG FIX: cancel any pending deferred restart
+                id(deferred_zone_restart).stop();
                 id(drain_queue).execute();
                 return false;
               }
@@ -12511,9 +12436,9 @@ script:
           id(last_cycle_seconds) = 0;
           id(cycle_soak_total_duration) = 0;
           id(cycle_soak_elapsed_time) = 0;
-          id(cycle_start_epoch) = 0;        // BUG FIX: was missing from resume natural completion
-          id(station_delay_active) = false; // BUG FIX: was missing from resume natural completion
-          id(soak_countdown_seconds) = 0;   // BUG FIX: was missing from resume natural completion
+          id(cycle_start_epoch) = 0;
+          id(station_delay_active) = false;
+          id(soak_countdown_seconds) = 0;
           id(normal_run_duration_seconds) = 0;
           id(cycle_soak_is_soaking) = false;
           id(cycle_soak_soak_end_time) = 0;
@@ -12525,16 +12450,13 @@ script:
           id(paused_total_cycles) = 0;
           id(paused_cycle_soak_total_duration) = 0;
           id(paused_cycle_soak_elapsed_time) = 0;
-          // BUG FIX (Bug 31b): Clear in_program_run here.
           id(in_program_run) = false;
           id(irrigation_busy) = false;
           id(drain_queue).execute();
           // Restore Auto Advance and turn off C&S switch
           id(dev1_auto_advance).turn_on();
-          // BUG FIX: Turn off C&S switch on resume completion so future runs
           // start in the correct mode.
           id(cycle_soak_switch).turn_off();
-          // BUG FIX (Bug 31): watering_trigger_source was never reset to "Idle" here.
           id(watering_trigger_source) = "Idle";
           id(last_active_zone) = -1;
           id(last_zone_start_epoch) = 0;
@@ -12554,7 +12476,6 @@ script:
       target_zone: int   # 0-based zone index to restart
       run_sec: int       # seconds to run
     then:
-      # BUG FIX: 300ms (was 150ms) — ESPHome optimistic switches re-assert the disabled
       # zone's public switch AFTER turn_on_action returns. If we call start_single_valve
       # too quickly the re-assertion fires AFTER our finish_active_valve_ cleanup,
       # leaving the disabled zone's HA switch stuck ON. 300ms gives the component
@@ -12566,7 +12487,6 @@ script:
             ESP_LOGI("irrigation", "⏱️ Deferred restart aborted — system no longer busy");
             return;
           }
-          // BUG FIX: Only require run_zone_with_cycles to be running when we were
           // actually called from the C&S / single / quick-run script path.
           // For start_full_cycle (Normal All Zones), run_zone_with_cycles is NEVER
           // running — checking it here was the reason normal-mode restarts always
@@ -12581,7 +12501,6 @@ script:
             ESP_LOGI("irrigation", "⏱️ Deferred restart: Zone %d already active — skip", target_zone + 1);
             return;
           }
-          // BUG FIX: Compensate cycle_soak_total_duration for the valve_open_delay that
           // will be spent before the relay actually opens. Without this the elapsed counter
           // (which pauses during inactive periods with the new timer guard) re-syncs
           // correctly, but the total is still short by one valve_open_delay (2s) per
@@ -12597,7 +12516,6 @@ script:
           // this call will properly finish_active_valve_(disabled_zone) → turns off its public HA switch,
           // then activates target_zone.
           id($devicename1).start_single_valve(target_zone, run_sec);
-          // BUG FIX: start_single_valve() internally sets auto_advance_=false on the sprinkler
           // component, which reflects back to dev1_auto_advance going OFF in HA. For Normal
           // All Zones (start_full_cycle) mode, auto_advance must stay ON so the sprinkler
           // continues sequencing through the remaining zones after this one finishes.
@@ -12671,7 +12589,6 @@ script:
           // (If any check above blocked, it set cycle_soak_script_blocked=true and returned.
           //  The cleanup below runs only on natural completion or after successful start.)
 
-      # BUG #29 FIX: If pre-flight blocked, clear irrigation_busy and drain queue.
       # Callers (button handlers and drain_queue) set irrigation_busy=true BEFORE calling
       # this script. Without this guard, a blocked pre-flight silently leaves the system
       # locked (irrigation_busy=true forever, every subsequent press queues or is blocked).
@@ -12679,7 +12596,6 @@ script:
           condition:
             lambda: 'return id(cycle_soak_script_blocked);'
           then:
-            # BUG FIX: turn off cycle_soak_switch which caller already turned on;
             # without this, the switch stays ON and confuses subsequent runs.
             - switch.turn_off: cycle_soak_switch
             - lambda: |-
@@ -12741,9 +12657,7 @@ script:
                 int grand_total = 0;
                 // Sum total time for each ENABLED zone (all cycles + all soaks).
                 // Apply multiplier to zone duration — same as normal mode behaviour.
-                // BUG FIX: also add station_delay_seconds for zones 1-7 (add_delay=true)
                 // so the countdown does not hit 0 and freeze during station delays.
-                // BUG FIX: include valve_open_delay_sec per cycle per zone so the elapsed
                 // counter doesn't reach the grand total before the last relay has opened.
                 auto zone_total = [&](float dur_sec) -> int {
                   int dur = (int)(dur_sec * mult);  // Apply multiplier
@@ -12891,8 +12805,6 @@ script:
                 ESP_LOGI("irrigation", "✅ ═══════════════════════════════════════════════");
                 ESP_LOGI("irrigation", "");
       
-      # BUG #31 FIX: Combine cleanup into a single block — no delays between clearing
-      # irrigation_busy and calling drain_queue. Same pattern as Bug #28 in run_program.
       # Previously: irrigation_busy cleared, then 500ms for auto_advance, then 100ms
       # before drain_queue. During those 600ms a new press saw busy=false and started
       # immediately, then drain_queue fired and also started something → conflict.
@@ -13012,7 +12924,6 @@ script:
             ESP_LOGI("irrigation", "🎯 PROGRAM %d STARTING | Checking zone assignments...", program);
           }
 
-      # Bug #37 FIX: If pre-flight blocked, drain queue now instead of waiting up to 30s
       # for the watchdog to notice. _prog_block() already cleared irrigation_busy.
       - if:
           condition:
@@ -13205,7 +13116,6 @@ script:
             - script.wait: run_zone_with_cycles
 
       # last_run for interval-based schedules (type 3) is now recorded at START in
-      # request_program_start and drain_queue (BUG FIX: was recorded here at completion,
       # causing programs with long runtimes to skip runs on short intervals — e.g. a 2h
       # program on a 1-day interval recorded last_run=8AM, so the 6AM cron next day
       # computed days_since=0 and skipped). Recording at start is now the authoritative path.
@@ -13243,7 +13153,6 @@ script:
                 id: dev1_valve_status
                 state: "Idle"
             - logger.log: "Valve status reset to Idle"
-            # BUG #28 FIX: Auto-advance restore and drain_queue were previously separated
             # by 500ms + 100ms delays. During those 600ms the watchdog could fire its own
             # clean-completion path and call drain_queue concurrently (mode:restart → one
             # cancels the other). Execute both immediately: no yield gap, no race.
@@ -13281,7 +13190,6 @@ script:
             // Time not synced — default to RESTRICTED to prevent watering
             // outside the allowed window during the boot period
             id(is_time_restricted) = true;
-            // BUG FIX: update state tracker so this only logs once, not every 30s tick
             if (id(last_time_restriction_state) != 4) {
               ESP_LOGW("irrigation", "⏰ Time not synced — defaulting to RESTRICTED");
               id(last_time_restriction_state) = 4;
@@ -13305,7 +13213,6 @@ script:
                                                 : (now_min >= start_min || now_min < end_min);
           
           id(is_time_restricted) = blocked;
-          // BUG FIX: track normal blocked/allowed transitions so changes are logged exactly once
           int new_state = blocked ? 0 : 1;
           if (id(last_time_restriction_state) != new_state) {
             ESP_LOGI("irrigation", "⏰ Time restriction: %s", blocked ? "BLOCKED" : "Allowed");
@@ -15813,7 +15720,6 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON  # Defaults to ON (enabled)
     turn_off_action:
-      # BUG #43 FIX: Stop ALL scripts — previously only run_zone_with_cycles was stopped.
       # run_program, run_all_zones_cycle_soak_script, etc. kept running after disable.
       # irrigation_busy was also never cleared, leaving the system locked until the 30s watchdog.
       - sprinkler.shutdown: $devicename1
@@ -15823,10 +15729,8 @@ switch:
       - script.stop: run_all_zones_normal_script
       - script.stop: continue_cycle_soak_after_resume
       - script.stop: wait_until_idle_then_drain
-      # BUG FIX: Stop deferred_zone_restart — same reason as stop/pause buttons.
       - script.stop: deferred_zone_restart
       - switch.turn_on: dev1_auto_advance
-      # BUG FIX: Turn off C&S switch when system is disabled so it
       # does not confuse subsequent runs after re-enable.
       - switch.turn_off: cycle_soak_switch
       - lambda: |-
@@ -15836,8 +15740,8 @@ switch:
           id(last_cycle_seconds) = 0;
           id(cycle_soak_total_duration) = 0;
           id(cycle_soak_elapsed_time) = 0;
-          id(cycle_start_epoch) = 0;        // BUG FIX: was missing from system disable cleanup
-          id(station_delay_active) = false; // BUG FIX: was missing from system disable cleanup
+          id(cycle_start_epoch) = 0;
+          id(station_delay_active) = false;
           id(is_paused) = false;
           id(pending_normal_start) = false;
           id(normal_start_attempts) = 0;
@@ -15847,7 +15751,6 @@ switch:
           id(cycle_soak_soak_end_time) = 0;
           id(resume_csa_blocked) = false;
           id(watering_trigger_source) = "Idle";
-          // BUG #49 FIX: Clear pause state variables
           id(paused_zone) = -1;
           id(paused_cycle) = 0;
           id(time_remaining_when_paused) = 0;
@@ -15858,7 +15761,6 @@ switch:
           id(paused_cycle_soak_elapsed_time) = 0;
           id(soak_countdown_seconds) = 0;
           id(normal_run_duration_seconds) = 0;
-          // BUG FIX: Restore multiplier if a Base Duration run was stopped mid-run.
           if (id(restore_multiplier_after_run)) {
             float saved_mult = id(saved_multiplier_for_base_run);
             float vac_mult = id(vacation_mode_active) ? saved_mult * 0.5f : saved_mult;
@@ -16251,7 +16153,6 @@ switch:
     optimistic: true
     turn_on_action:
       - lambda: |-
-          // BUG FIX: Zone enable check FIRST — must block regardless of irrigation_busy state.
           // Previously the early return below (when busy) bypassed this check, so a disabled zone's
           // relay could still fire via the if: block when another zone was already running.
           if (!id(zone1_enable).state && !id(test_mode_active)) {
@@ -16259,7 +16160,6 @@ switch:
             std::string _reason = "🚫 Zone 1 disabled (direct switch)";
             id(last_zone_block_reason) = _reason;
             id(zone_block_reason_sensor).publish_state(_reason);
-            // BUG FIX: Do NOT call turn_off() on ${devicename1}_1 before start_single_valve.
             // When turn_off() fires first, the sprinkler clears its active_valve state,
             // so the subsequent start_single_valve call sees no active valve and skips
             // finish_active_valve_(). That means the HA valve indicator switch "Lawn Zone1"
@@ -16267,7 +16167,6 @@ switch:
             // Instead: call start_single_valve WHILE zone 1 is still the active valve.
             // The sprinkler's finish_active_valve_() then properly: turns off relay, turns off
             // the "Lawn Zone1" HA indicator, then starts the correct zone.
-            // BUG FIX: also handle start_full_cycle (normal all-zones) where
             // run_zone_with_cycles is NOT running. In that path irrigation_busy is true
             // but active_zone_number and run_zone_with_cycles are not used — we must
             // look up the last active zone from last_active_zone (set by on_turn_on).
@@ -16292,7 +16191,6 @@ switch:
                 }
               }
               if (active_z >= 0 && active_z != 0) {  // 0 = Zone 1 index
-                // BUG FIX: In C&S mode, restart for the REMAINING time in the current
                 // cycle (full_cycle - elapsed_since_cycle_start) so the valve timer stays
                 // in sync with run_zone_with_cycles's delay. Using the full cycle duration
                 // causes the valve to run beyond the script's delay, creating a period where
@@ -16322,7 +16220,6 @@ switch:
                 } else {
                   // Normal / Quick Run / start_full_cycle mode.
                   //
-                  // BUG FIX: Do NOT use time_remaining_active_valve() here.
                   // When a disabled zone is triggered the sprinkler component switches
                   // active_valve_ to the disabled zone BEFORE turn_on_action runs.
                   // So time_remaining_active_valve() would return the disabled zone's
@@ -16330,7 +16227,6 @@ switch:
                   // Instead compute: remaining = configured_duration - elapsed_since_start
                   // using last_zone_start_epoch (set in on_turn_on of the running zone).
                   {
-                    // BUG FIX: Priority order for determining full duration:
                     //   1. normal_run_duration_seconds — set by run_zone_with_cycles for
                     //      Quick Run and single-zone runs. This IS the intended run time
                     //      (e.g. 5 min quick run). Must take precedence over the zone's
@@ -16367,7 +16263,6 @@ switch:
                       _elapsed_nrm = (int)(_nrn.timestamp - id(last_zone_start_epoch));
                     }
                     restart_dur = _full_dur - _elapsed_nrm;
-                    // BUG FIX: Replace old clamping "if < 5 → use full_dur" with a proper
                     // guard that distinguishes two cases:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
@@ -16387,7 +16282,6 @@ switch:
                   }
                 }
                 if (restart_dur > 0) {
-                  // BUG FIX: Do NOT call start_single_valve here (re-entrancy).
                   // ESPHome sets active_valve_ and re-asserts the public zone 1 switch
                   // AFTER turn_on_action returns, overriding our finish_active_valve_ cleanup.
                   // Defer 300ms (was 150ms) so the sprinkler fully completes zone 1 activation
@@ -16447,7 +16341,6 @@ switch:
             id(${devicename1}_1).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
           // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
           // direct-switch path to work even though the sprinkler component already set active_valve()
           // when it saw the zone switch turn on — before this lambda ran.
@@ -16467,7 +16360,6 @@ switch:
       - output.turn_off: relay_zone_1_out
     on_turn_on:
       - lambda: |-
-          // BUG FIX: Check zone enable FIRST.
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
           // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
@@ -16483,11 +16375,11 @@ switch:
           id(flow_zone_start_pulses) = id(flow_pulse_total);
           id(flow_sensor_session_litres) = 0.0f;
           id(zone_flow_active) = true;
-          id(last_active_zone) = 0;  // BUG FIX: track for start_full_cycle restart
+          id(last_active_zone) = 0;
           {
             auto _lzse = id(homeassistant_time).now();
             id(last_zone_start_epoch) = _lzse.is_valid() ? _lzse.timestamp : 0;
-          }  // BUG FIX: record start epoch for accurate remaining-time calc
+          }
           ESP_LOGD("flow", "Zone 1 start: pulse snapshot = %.1f", id(flow_zone_start_pulses));
           ESP_LOGI("irrigation", "🚀 ${dev1_zone1} STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone1 Active");
@@ -16496,7 +16388,6 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
           // OLD: !busy || !soaking → showed Idle between program zones (station delay).
           // NEW: also check !in_program_run so multi-zone programs show status correctly.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
@@ -16559,7 +16450,6 @@ switch:
               ESP_LOGI("flow", "💧 Zone 1 ESTIMATED %.2f L | Duration: %llds (no sensor data)", water_used, duration);
             }
 
-            // Single guard for all water accounting (prevents start_time=0 bug)
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone1_water_litres) += water_used;
               id(total_water_litres) += water_used;
@@ -16595,13 +16485,11 @@ switch:
     optimistic: true
     turn_on_action:
       - lambda: |-
-          // BUG FIX: Zone enable check FIRST — must block regardless of irrigation_busy state.
           if (!id(zone2_enable).state && !id(test_mode_active)) {
             ESP_LOGW("irrigation", "🚫 Zone 2 BLOCKED (direct) - zone disabled");
             std::string _reason = "🚫 Zone 2 disabled (direct switch)";
             id(last_zone_block_reason) = _reason;
             id(zone_block_reason_sensor).publish_state(_reason);
-            // BUG FIX: Do NOT call turn_off() on ${devicename1}_2 before start_single_valve.
             // When turn_off() fires first, the sprinkler clears its active_valve state,
             // so the subsequent start_single_valve call sees no active valve and skips
             // finish_active_valve_(). That means the HA valve indicator switch "Lawn Zone2"
@@ -16609,7 +16497,6 @@ switch:
             // Instead: call start_single_valve WHILE zone 2 is still the active valve.
             // The sprinkler's finish_active_valve_() then properly: turns off relay, turns off
             // the "Lawn Zone2" HA indicator, then starts the correct zone.
-            // BUG FIX: also handle start_full_cycle (normal all-zones) where
             // run_zone_with_cycles is NOT running. In that path irrigation_busy is true
             // but active_zone_number and run_zone_with_cycles are not used — we look up
             // the last zone that ran via last_active_zone (set by on_turn_on).
@@ -16632,7 +16519,6 @@ switch:
                 }
               }
               if (active_z >= 0 && active_z != 1) {
-                // BUG FIX: In C&S mode, restart for the REMAINING time in the current
                 // cycle (full_cycle - elapsed_since_cycle_start) so the valve timer stays
                 // in sync with run_zone_with_cycles's delay. Using the full cycle duration
                 // causes the valve to run beyond the script's delay, creating a period where
@@ -16662,7 +16548,6 @@ switch:
                 } else {
                   // Normal / Quick Run / start_full_cycle mode.
                   //
-                  // BUG FIX: Do NOT use time_remaining_active_valve() here.
                   // When a disabled zone is triggered the sprinkler component switches
                   // active_valve_ to the disabled zone BEFORE turn_on_action runs.
                   // So time_remaining_active_valve() would return the disabled zone's
@@ -16670,7 +16555,6 @@ switch:
                   // Instead compute: remaining = configured_duration - elapsed_since_start
                   // using last_zone_start_epoch (set in on_turn_on of the running zone).
                   {
-                    // BUG FIX: Priority order for determining full duration:
                     //   1. normal_run_duration_seconds — set by run_zone_with_cycles for
                     //      Quick Run and single-zone runs. This IS the intended run time
                     //      (e.g. 5 min quick run). Must take precedence over the zone's
@@ -16707,7 +16591,6 @@ switch:
                       _elapsed_nrm = (int)(_nrn.timestamp - id(last_zone_start_epoch));
                     }
                     restart_dur = _full_dur - _elapsed_nrm;
-                    // BUG FIX: Replace old clamping "if < 5 → use full_dur" with a proper
                     // guard that distinguishes two cases:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
@@ -16727,7 +16610,6 @@ switch:
                   }
                 }
                 if (restart_dur > 0) {
-                  // BUG FIX: Do NOT call start_single_valve here (re-entrancy).
                   // ESPHome sets active_valve_ and re-asserts the public zone 2 switch
                   // AFTER turn_on_action returns, overriding our finish_active_valve_ cleanup.
                   // Defer 300ms (was 150ms) so the sprinkler fully completes zone 2 activation
@@ -16787,7 +16669,6 @@ switch:
             id(${devicename1}_2).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
           // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
           // direct-switch path to work even though the sprinkler component already set active_valve()
           // when it saw the zone switch turn on — before this lambda ran.
@@ -16807,7 +16688,6 @@ switch:
       - output.turn_off: relay_zone_2_out
     on_turn_on:
       - lambda: |-
-          // BUG FIX: Check zone enable FIRST.
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
           // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
@@ -16823,11 +16703,11 @@ switch:
           id(flow_zone_start_pulses) = id(flow_pulse_total);
           id(flow_sensor_session_litres) = 0.0f;
           id(zone_flow_active) = true;
-          id(last_active_zone) = 1;  // BUG FIX: track for start_full_cycle restart
+          id(last_active_zone) = 1;
           {
             auto _lzse = id(homeassistant_time).now();
             id(last_zone_start_epoch) = _lzse.is_valid() ? _lzse.timestamp : 0;
-          }  // BUG FIX: record start epoch for accurate remaining-time calc
+          }
           ESP_LOGD("flow", "Zone 2 start: pulse snapshot = %.1f", id(flow_zone_start_pulses));
           ESP_LOGI("irrigation", "🚀 ${dev1_zone2} STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone2 Active");
@@ -16836,7 +16716,6 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
           // OLD: !busy || !soaking → showed Idle between program zones (station delay).
           // NEW: also check !in_program_run so multi-zone programs show status correctly.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
@@ -16890,7 +16769,6 @@ switch:
               water_used = (duration / 60.0f) * id(zone2_flow_rate);
               ESP_LOGI("flow", "💧 Zone 2 ESTIMATED %.2f L | Duration: %llds (no sensor data)", water_used, duration);
             }
-            // Single guard for all water accounting (prevents start_time=0 bug)
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone2_water_litres) += water_used;
               id(total_water_litres) += water_used;
@@ -16926,13 +16804,11 @@ switch:
     optimistic: true
     turn_on_action:
       - lambda: |-
-          // BUG FIX: Zone enable check FIRST — must block regardless of irrigation_busy state.
           if (!id(zone3_enable).state && !id(test_mode_active)) {
             ESP_LOGW("irrigation", "🚫 Zone 3 BLOCKED (direct) - zone disabled");
             std::string _reason = "🚫 Zone 3 disabled (direct switch)";
             id(last_zone_block_reason) = _reason;
             id(zone_block_reason_sensor).publish_state(_reason);
-            // BUG FIX: Do NOT call turn_off() on ${devicename1}_3 before start_single_valve.
             // When turn_off() fires first, the sprinkler clears its active_valve state,
             // so the subsequent start_single_valve call sees no active valve and skips
             // finish_active_valve_(). That means the HA valve indicator switch "Lawn Zone3"
@@ -16940,7 +16816,6 @@ switch:
             // Instead: call start_single_valve WHILE zone 3 is still the active valve.
             // The sprinkler's finish_active_valve_() then properly: turns off relay, turns off
             // the "Lawn Zone3" HA indicator, then starts the correct zone.
-            // BUG FIX: also handle start_full_cycle (normal all-zones) where
             // run_zone_with_cycles is NOT running. In that path irrigation_busy is true
             // but active_zone_number and run_zone_with_cycles are not used — we look up
             // the last zone that ran via last_active_zone (set by on_turn_on).
@@ -16963,7 +16838,6 @@ switch:
                 }
               }
               if (active_z >= 0 && active_z != 2) {
-                // BUG FIX: In C&S mode, restart for the REMAINING time in the current
                 // cycle (full_cycle - elapsed_since_cycle_start) so the valve timer stays
                 // in sync with run_zone_with_cycles's delay. Using the full cycle duration
                 // causes the valve to run beyond the script's delay, creating a period where
@@ -16993,7 +16867,6 @@ switch:
                 } else {
                   // Normal / Quick Run / start_full_cycle mode.
                   //
-                  // BUG FIX: Do NOT use time_remaining_active_valve() here.
                   // When a disabled zone is triggered the sprinkler component switches
                   // active_valve_ to the disabled zone BEFORE turn_on_action runs.
                   // So time_remaining_active_valve() would return the disabled zone's
@@ -17001,7 +16874,6 @@ switch:
                   // Instead compute: remaining = configured_duration - elapsed_since_start
                   // using last_zone_start_epoch (set in on_turn_on of the running zone).
                   {
-                    // BUG FIX: Priority order for determining full duration:
                     //   1. normal_run_duration_seconds — set by run_zone_with_cycles for
                     //      Quick Run and single-zone runs. This IS the intended run time
                     //      (e.g. 5 min quick run). Must take precedence over the zone's
@@ -17038,7 +16910,6 @@ switch:
                       _elapsed_nrm = (int)(_nrn.timestamp - id(last_zone_start_epoch));
                     }
                     restart_dur = _full_dur - _elapsed_nrm;
-                    // BUG FIX: Replace old clamping "if < 5 → use full_dur" with a proper
                     // guard that distinguishes two cases:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
@@ -17058,7 +16929,6 @@ switch:
                   }
                 }
                 if (restart_dur > 0) {
-                  // BUG FIX: Do NOT call start_single_valve here (re-entrancy).
                   // ESPHome sets active_valve_ and re-asserts the public zone 3 switch
                   // AFTER turn_on_action returns, overriding our finish_active_valve_ cleanup.
                   // Defer 300ms (was 150ms) so the sprinkler fully completes zone 3 activation
@@ -17118,7 +16988,6 @@ switch:
             id(${devicename1}_3).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
           // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
           // direct-switch path to work even though the sprinkler component already set active_valve()
           // when it saw the zone switch turn on — before this lambda ran.
@@ -17138,7 +17007,6 @@ switch:
       - output.turn_off: relay_zone_3_out
     on_turn_on:
       - lambda: |-
-          // BUG FIX: Check zone enable FIRST.
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
           // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
@@ -17154,11 +17022,11 @@ switch:
           id(flow_zone_start_pulses) = id(flow_pulse_total);
           id(flow_sensor_session_litres) = 0.0f;
           id(zone_flow_active) = true;
-          id(last_active_zone) = 2;  // BUG FIX: track for start_full_cycle restart
+          id(last_active_zone) = 2;
           {
             auto _lzse = id(homeassistant_time).now();
             id(last_zone_start_epoch) = _lzse.is_valid() ? _lzse.timestamp : 0;
-          }  // BUG FIX: record start epoch for accurate remaining-time calc
+          }
           ESP_LOGD("flow", "Zone 3 start: pulse snapshot = %.1f", id(flow_zone_start_pulses));
           ESP_LOGI("irrigation", "🚀 ${dev1_zone3} STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone3 Active");
@@ -17167,7 +17035,6 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
           // OLD: !busy || !soaking → showed Idle between program zones (station delay).
           // NEW: also check !in_program_run so multi-zone programs show status correctly.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
@@ -17221,7 +17088,6 @@ switch:
               water_used = (duration / 60.0f) * id(zone3_flow_rate);
               ESP_LOGI("flow", "💧 Zone 3 ESTIMATED %.2f L | Duration: %llds (no sensor data)", water_used, duration);
             }
-            // Single guard for all water accounting (prevents start_time=0 bug)
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone3_water_litres) += water_used;
               id(total_water_litres) += water_used;
@@ -17257,13 +17123,11 @@ switch:
     optimistic: true
     turn_on_action:
       - lambda: |-
-          // BUG FIX: Zone enable check FIRST — must block regardless of irrigation_busy state.
           if (!id(zone4_enable).state && !id(test_mode_active)) {
             ESP_LOGW("irrigation", "🚫 Zone 4 BLOCKED (direct) - zone disabled");
             std::string _reason = "🚫 Zone 4 disabled (direct switch)";
             id(last_zone_block_reason) = _reason;
             id(zone_block_reason_sensor).publish_state(_reason);
-            // BUG FIX: Do NOT call turn_off() on ${devicename1}_4 before start_single_valve.
             // When turn_off() fires first, the sprinkler clears its active_valve state,
             // so the subsequent start_single_valve call sees no active valve and skips
             // finish_active_valve_(). That means the HA valve indicator switch "Lawn Zone4"
@@ -17271,7 +17135,6 @@ switch:
             // Instead: call start_single_valve WHILE zone 4 is still the active valve.
             // The sprinkler's finish_active_valve_() then properly: turns off relay, turns off
             // the "Lawn Zone4" HA indicator, then starts the correct zone.
-            // BUG FIX: also handle start_full_cycle (normal all-zones) where
             // run_zone_with_cycles is NOT running. In that path irrigation_busy is true
             // but active_zone_number and run_zone_with_cycles are not used — we look up
             // the last zone that ran via last_active_zone (set by on_turn_on).
@@ -17294,7 +17157,6 @@ switch:
                 }
               }
               if (active_z >= 0 && active_z != 3) {
-                // BUG FIX: In C&S mode, restart for the REMAINING time in the current
                 // cycle (full_cycle - elapsed_since_cycle_start) so the valve timer stays
                 // in sync with run_zone_with_cycles's delay. Using the full cycle duration
                 // causes the valve to run beyond the script's delay, creating a period where
@@ -17324,7 +17186,6 @@ switch:
                 } else {
                   // Normal / Quick Run / start_full_cycle mode.
                   //
-                  // BUG FIX: Do NOT use time_remaining_active_valve() here.
                   // When a disabled zone is triggered the sprinkler component switches
                   // active_valve_ to the disabled zone BEFORE turn_on_action runs.
                   // So time_remaining_active_valve() would return the disabled zone's
@@ -17332,7 +17193,6 @@ switch:
                   // Instead compute: remaining = configured_duration - elapsed_since_start
                   // using last_zone_start_epoch (set in on_turn_on of the running zone).
                   {
-                    // BUG FIX: Priority order for determining full duration:
                     //   1. normal_run_duration_seconds — set by run_zone_with_cycles for
                     //      Quick Run and single-zone runs. This IS the intended run time
                     //      (e.g. 5 min quick run). Must take precedence over the zone's
@@ -17369,7 +17229,6 @@ switch:
                       _elapsed_nrm = (int)(_nrn.timestamp - id(last_zone_start_epoch));
                     }
                     restart_dur = _full_dur - _elapsed_nrm;
-                    // BUG FIX: Replace old clamping "if < 5 → use full_dur" with a proper
                     // guard that distinguishes two cases:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
@@ -17389,7 +17248,6 @@ switch:
                   }
                 }
                 if (restart_dur > 0) {
-                  // BUG FIX: Do NOT call start_single_valve here (re-entrancy).
                   // ESPHome sets active_valve_ and re-asserts the public zone 4 switch
                   // AFTER turn_on_action returns, overriding our finish_active_valve_ cleanup.
                   // Defer 300ms (was 150ms) so the sprinkler fully completes zone 4 activation
@@ -17449,7 +17307,6 @@ switch:
             id(${devicename1}_4).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
           // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
           // direct-switch path to work even though the sprinkler component already set active_valve()
           // when it saw the zone switch turn on — before this lambda ran.
@@ -17469,7 +17326,6 @@ switch:
       - output.turn_off: relay_zone_4_out
     on_turn_on:
       - lambda: |-
-          // BUG FIX: Check zone enable FIRST.
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
           // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
@@ -17485,11 +17341,11 @@ switch:
           id(flow_zone_start_pulses) = id(flow_pulse_total);
           id(flow_sensor_session_litres) = 0.0f;
           id(zone_flow_active) = true;
-          id(last_active_zone) = 3;  // BUG FIX: track for start_full_cycle restart
+          id(last_active_zone) = 3;
           {
             auto _lzse = id(homeassistant_time).now();
             id(last_zone_start_epoch) = _lzse.is_valid() ? _lzse.timestamp : 0;
-          }  // BUG FIX: record start epoch for accurate remaining-time calc
+          }
           ESP_LOGD("flow", "Zone 4 start: pulse snapshot = %.1f", id(flow_zone_start_pulses));
           ESP_LOGI("irrigation", "🚀 ${dev1_zone4} STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone4 Active");
@@ -17498,7 +17354,6 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
           // OLD: !busy || !soaking → showed Idle between program zones (station delay).
           // NEW: also check !in_program_run so multi-zone programs show status correctly.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
@@ -17552,7 +17407,6 @@ switch:
               water_used = (duration / 60.0f) * id(zone4_flow_rate);
               ESP_LOGI("flow", "💧 Zone 4 ESTIMATED %.2f L | Duration: %llds (no sensor data)", water_used, duration);
             }
-            // Single guard for all water accounting (prevents start_time=0 bug)
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone4_water_litres) += water_used;
               id(total_water_litres) += water_used;
@@ -17588,13 +17442,11 @@ switch:
     optimistic: true
     turn_on_action:
       - lambda: |-
-          // BUG FIX: Zone enable check FIRST — must block regardless of irrigation_busy state.
           if (!id(zone5_enable).state && !id(test_mode_active)) {
             ESP_LOGW("irrigation", "🚫 Zone 5 BLOCKED (direct) - zone disabled");
             std::string _reason = "🚫 Zone 5 disabled (direct switch)";
             id(last_zone_block_reason) = _reason;
             id(zone_block_reason_sensor).publish_state(_reason);
-            // BUG FIX: Do NOT call turn_off() on ${devicename1}_5 before start_single_valve.
             // When turn_off() fires first, the sprinkler clears its active_valve state,
             // so the subsequent start_single_valve call sees no active valve and skips
             // finish_active_valve_(). That means the HA valve indicator switch "Lawn Zone5"
@@ -17602,7 +17454,6 @@ switch:
             // Instead: call start_single_valve WHILE zone 5 is still the active valve.
             // The sprinkler's finish_active_valve_() then properly: turns off relay, turns off
             // the "Lawn Zone5" HA indicator, then starts the correct zone.
-            // BUG FIX: also handle start_full_cycle (normal all-zones) where
             // run_zone_with_cycles is NOT running. In that path irrigation_busy is true
             // but active_zone_number and run_zone_with_cycles are not used — we look up
             // the last zone that ran via last_active_zone (set by on_turn_on).
@@ -17625,7 +17476,6 @@ switch:
                 }
               }
               if (active_z >= 0 && active_z != 4) {
-                // BUG FIX: In C&S mode, restart for the REMAINING time in the current
                 // cycle (full_cycle - elapsed_since_cycle_start) so the valve timer stays
                 // in sync with run_zone_with_cycles's delay. Using the full cycle duration
                 // causes the valve to run beyond the script's delay, creating a period where
@@ -17655,7 +17505,6 @@ switch:
                 } else {
                   // Normal / Quick Run / start_full_cycle mode.
                   //
-                  // BUG FIX: Do NOT use time_remaining_active_valve() here.
                   // When a disabled zone is triggered the sprinkler component switches
                   // active_valve_ to the disabled zone BEFORE turn_on_action runs.
                   // So time_remaining_active_valve() would return the disabled zone's
@@ -17663,7 +17512,6 @@ switch:
                   // Instead compute: remaining = configured_duration - elapsed_since_start
                   // using last_zone_start_epoch (set in on_turn_on of the running zone).
                   {
-                    // BUG FIX: Priority order for determining full duration:
                     //   1. normal_run_duration_seconds — set by run_zone_with_cycles for
                     //      Quick Run and single-zone runs. This IS the intended run time
                     //      (e.g. 5 min quick run). Must take precedence over the zone's
@@ -17700,7 +17548,6 @@ switch:
                       _elapsed_nrm = (int)(_nrn.timestamp - id(last_zone_start_epoch));
                     }
                     restart_dur = _full_dur - _elapsed_nrm;
-                    // BUG FIX: Replace old clamping "if < 5 → use full_dur" with a proper
                     // guard that distinguishes two cases:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
@@ -17720,7 +17567,6 @@ switch:
                   }
                 }
                 if (restart_dur > 0) {
-                  // BUG FIX: Do NOT call start_single_valve here (re-entrancy).
                   // ESPHome sets active_valve_ and re-asserts the public zone 5 switch
                   // AFTER turn_on_action returns, overriding our finish_active_valve_ cleanup.
                   // Defer 300ms (was 150ms) so the sprinkler fully completes zone 5 activation
@@ -17780,7 +17626,6 @@ switch:
             id(${devicename1}_5).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
           // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
           // direct-switch path to work even though the sprinkler component already set active_valve()
           // when it saw the zone switch turn on — before this lambda ran.
@@ -17800,7 +17645,6 @@ switch:
       - output.turn_off: relay_zone_5_out
     on_turn_on:
       - lambda: |-
-          // BUG FIX: Check zone enable FIRST.
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
           // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
@@ -17816,11 +17660,11 @@ switch:
           id(flow_zone_start_pulses) = id(flow_pulse_total);
           id(flow_sensor_session_litres) = 0.0f;
           id(zone_flow_active) = true;
-          id(last_active_zone) = 4;  // BUG FIX: track for start_full_cycle restart
+          id(last_active_zone) = 4;
           {
             auto _lzse = id(homeassistant_time).now();
             id(last_zone_start_epoch) = _lzse.is_valid() ? _lzse.timestamp : 0;
-          }  // BUG FIX: record start epoch for accurate remaining-time calc
+          }
           ESP_LOGD("flow", "Zone 5 start: pulse snapshot = %.1f", id(flow_zone_start_pulses));
           ESP_LOGI("irrigation", "🚀 ${dev1_zone5} STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone5 Active");
@@ -17829,7 +17673,6 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
           // OLD: !busy || !soaking → showed Idle between program zones (station delay).
           // NEW: also check !in_program_run so multi-zone programs show status correctly.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
@@ -17883,7 +17726,6 @@ switch:
               water_used = (duration / 60.0f) * id(zone5_flow_rate);
               ESP_LOGI("flow", "💧 Zone 5 ESTIMATED %.2f L | Duration: %llds (no sensor data)", water_used, duration);
             }
-            // Single guard for all water accounting (prevents start_time=0 bug)
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone5_water_litres) += water_used;
               id(total_water_litres) += water_used;
@@ -17919,13 +17761,11 @@ switch:
     optimistic: true
     turn_on_action:
       - lambda: |-
-          // BUG FIX: Zone enable check FIRST — must block regardless of irrigation_busy state.
           if (!id(zone6_enable).state && !id(test_mode_active)) {
             ESP_LOGW("irrigation", "🚫 Zone 6 BLOCKED (direct) - zone disabled");
             std::string _reason = "🚫 Zone 6 disabled (direct switch)";
             id(last_zone_block_reason) = _reason;
             id(zone_block_reason_sensor).publish_state(_reason);
-            // BUG FIX: Do NOT call turn_off() on ${devicename1}_6 before start_single_valve.
             // When turn_off() fires first, the sprinkler clears its active_valve state,
             // so the subsequent start_single_valve call sees no active valve and skips
             // finish_active_valve_(). That means the HA valve indicator switch "Lawn Zone6"
@@ -17933,7 +17773,6 @@ switch:
             // Instead: call start_single_valve WHILE zone 6 is still the active valve.
             // The sprinkler's finish_active_valve_() then properly: turns off relay, turns off
             // the "Lawn Zone6" HA indicator, then starts the correct zone.
-            // BUG FIX: also handle start_full_cycle (normal all-zones) where
             // run_zone_with_cycles is NOT running. In that path irrigation_busy is true
             // but active_zone_number and run_zone_with_cycles are not used — we look up
             // the last zone that ran via last_active_zone (set by on_turn_on).
@@ -17956,7 +17795,6 @@ switch:
                 }
               }
               if (active_z >= 0 && active_z != 5) {
-                // BUG FIX: In C&S mode, restart for the REMAINING time in the current
                 // cycle (full_cycle - elapsed_since_cycle_start) so the valve timer stays
                 // in sync with run_zone_with_cycles's delay. Using the full cycle duration
                 // causes the valve to run beyond the script's delay, creating a period where
@@ -17986,7 +17824,6 @@ switch:
                 } else {
                   // Normal / Quick Run / start_full_cycle mode.
                   //
-                  // BUG FIX: Do NOT use time_remaining_active_valve() here.
                   // When a disabled zone is triggered the sprinkler component switches
                   // active_valve_ to the disabled zone BEFORE turn_on_action runs.
                   // So time_remaining_active_valve() would return the disabled zone's
@@ -17994,7 +17831,6 @@ switch:
                   // Instead compute: remaining = configured_duration - elapsed_since_start
                   // using last_zone_start_epoch (set in on_turn_on of the running zone).
                   {
-                    // BUG FIX: Priority order for determining full duration:
                     //   1. normal_run_duration_seconds — set by run_zone_with_cycles for
                     //      Quick Run and single-zone runs. This IS the intended run time
                     //      (e.g. 5 min quick run). Must take precedence over the zone's
@@ -18031,7 +17867,6 @@ switch:
                       _elapsed_nrm = (int)(_nrn.timestamp - id(last_zone_start_epoch));
                     }
                     restart_dur = _full_dur - _elapsed_nrm;
-                    // BUG FIX: Replace old clamping "if < 5 → use full_dur" with a proper
                     // guard that distinguishes two cases:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
@@ -18051,7 +17886,6 @@ switch:
                   }
                 }
                 if (restart_dur > 0) {
-                  // BUG FIX: Do NOT call start_single_valve here (re-entrancy).
                   // ESPHome sets active_valve_ and re-asserts the public zone 6 switch
                   // AFTER turn_on_action returns, overriding our finish_active_valve_ cleanup.
                   // Defer 300ms (was 150ms) so the sprinkler fully completes zone 6 activation
@@ -18111,7 +17945,6 @@ switch:
             id(${devicename1}_6).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
           // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
           // direct-switch path to work even though the sprinkler component already set active_valve()
           // when it saw the zone switch turn on — before this lambda ran.
@@ -18131,7 +17964,6 @@ switch:
       - output.turn_off: relay_zone_6_out
     on_turn_on:
       - lambda: |-
-          // BUG FIX: Check zone enable FIRST.
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
           // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
@@ -18147,11 +17979,11 @@ switch:
           id(flow_zone_start_pulses) = id(flow_pulse_total);
           id(flow_sensor_session_litres) = 0.0f;
           id(zone_flow_active) = true;
-          id(last_active_zone) = 5;  // BUG FIX: track for start_full_cycle restart
+          id(last_active_zone) = 5;
           {
             auto _lzse = id(homeassistant_time).now();
             id(last_zone_start_epoch) = _lzse.is_valid() ? _lzse.timestamp : 0;
-          }  // BUG FIX: record start epoch for accurate remaining-time calc
+          }
           ESP_LOGD("flow", "Zone 6 start: pulse snapshot = %.1f", id(flow_zone_start_pulses));
           ESP_LOGI("irrigation", "🚀 ${dev1_zone6} STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone6 Active");
@@ -18160,7 +17992,6 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
           // OLD: !busy || !soaking → showed Idle between program zones (station delay).
           // NEW: also check !in_program_run so multi-zone programs show status correctly.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
@@ -18214,7 +18045,6 @@ switch:
               water_used = (duration / 60.0f) * id(zone6_flow_rate);
               ESP_LOGI("flow", "💧 Zone 6 ESTIMATED %.2f L | Duration: %llds (no sensor data)", water_used, duration);
             }
-            // Single guard for all water accounting (prevents start_time=0 bug)
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone6_water_litres) += water_used;
               id(total_water_litres) += water_used;
@@ -18250,13 +18080,11 @@ switch:
     optimistic: true
     turn_on_action:
       - lambda: |-
-          // BUG FIX: Zone enable check FIRST — must block regardless of irrigation_busy state.
           if (!id(zone7_enable).state && !id(test_mode_active)) {
             ESP_LOGW("irrigation", "🚫 Zone 7 BLOCKED (direct) - zone disabled");
             std::string _reason = "🚫 Zone 7 disabled (direct switch)";
             id(last_zone_block_reason) = _reason;
             id(zone_block_reason_sensor).publish_state(_reason);
-            // BUG FIX: Do NOT call turn_off() on ${devicename1}_7 before start_single_valve.
             // When turn_off() fires first, the sprinkler clears its active_valve state,
             // so the subsequent start_single_valve call sees no active valve and skips
             // finish_active_valve_(). That means the HA valve indicator switch "Lawn Zone7"
@@ -18264,7 +18092,6 @@ switch:
             // Instead: call start_single_valve WHILE zone 7 is still the active valve.
             // The sprinkler's finish_active_valve_() then properly: turns off relay, turns off
             // the "Lawn Zone7" HA indicator, then starts the correct zone.
-            // BUG FIX: also handle start_full_cycle (normal all-zones) where
             // run_zone_with_cycles is NOT running. In that path irrigation_busy is true
             // but active_zone_number and run_zone_with_cycles are not used — we look up
             // the last zone that ran via last_active_zone (set by on_turn_on).
@@ -18287,7 +18114,6 @@ switch:
                 }
               }
               if (active_z >= 0 && active_z != 6) {
-                // BUG FIX: In C&S mode, restart for the REMAINING time in the current
                 // cycle (full_cycle - elapsed_since_cycle_start) so the valve timer stays
                 // in sync with run_zone_with_cycles's delay. Using the full cycle duration
                 // causes the valve to run beyond the script's delay, creating a period where
@@ -18317,7 +18143,6 @@ switch:
                 } else {
                   // Normal / Quick Run / start_full_cycle mode.
                   //
-                  // BUG FIX: Do NOT use time_remaining_active_valve() here.
                   // When a disabled zone is triggered the sprinkler component switches
                   // active_valve_ to the disabled zone BEFORE turn_on_action runs.
                   // So time_remaining_active_valve() would return the disabled zone's
@@ -18325,7 +18150,6 @@ switch:
                   // Instead compute: remaining = configured_duration - elapsed_since_start
                   // using last_zone_start_epoch (set in on_turn_on of the running zone).
                   {
-                    // BUG FIX: Priority order for determining full duration:
                     //   1. normal_run_duration_seconds — set by run_zone_with_cycles for
                     //      Quick Run and single-zone runs. This IS the intended run time
                     //      (e.g. 5 min quick run). Must take precedence over the zone's
@@ -18362,7 +18186,6 @@ switch:
                       _elapsed_nrm = (int)(_nrn.timestamp - id(last_zone_start_epoch));
                     }
                     restart_dur = _full_dur - _elapsed_nrm;
-                    // BUG FIX: Replace old clamping "if < 5 → use full_dur" with a proper
                     // guard that distinguishes two cases:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
@@ -18382,7 +18205,6 @@ switch:
                   }
                 }
                 if (restart_dur > 0) {
-                  // BUG FIX: Do NOT call start_single_valve here (re-entrancy).
                   // ESPHome sets active_valve_ and re-asserts the public zone 7 switch
                   // AFTER turn_on_action returns, overriding our finish_active_valve_ cleanup.
                   // Defer 300ms (was 150ms) so the sprinkler fully completes zone 7 activation
@@ -18442,7 +18264,6 @@ switch:
             id(${devicename1}_7).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
           // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
           // direct-switch path to work even though the sprinkler component already set active_valve()
           // when it saw the zone switch turn on — before this lambda ran.
@@ -18462,7 +18283,6 @@ switch:
       - output.turn_off: relay_zone_7_out
     on_turn_on:
       - lambda: |-
-          // BUG FIX: Check zone enable FIRST.
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
           // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
@@ -18478,11 +18298,11 @@ switch:
           id(flow_zone_start_pulses) = id(flow_pulse_total);
           id(flow_sensor_session_litres) = 0.0f;
           id(zone_flow_active) = true;
-          id(last_active_zone) = 6;  // BUG FIX: track for start_full_cycle restart
+          id(last_active_zone) = 6;
           {
             auto _lzse = id(homeassistant_time).now();
             id(last_zone_start_epoch) = _lzse.is_valid() ? _lzse.timestamp : 0;
-          }  // BUG FIX: record start epoch for accurate remaining-time calc
+          }
           ESP_LOGD("flow", "Zone 7 start: pulse snapshot = %.1f", id(flow_zone_start_pulses));
           ESP_LOGI("irrigation", "🚀 ${dev1_zone7} STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone7 Active");
@@ -18491,7 +18311,6 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
           // OLD: !busy || !soaking → showed Idle between program zones (station delay).
           // NEW: also check !in_program_run so multi-zone programs show status correctly.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
@@ -18545,7 +18364,6 @@ switch:
               water_used = (duration / 60.0f) * id(zone7_flow_rate);
               ESP_LOGI("flow", "💧 Zone 7 ESTIMATED %.2f L | Duration: %llds (no sensor data)", water_used, duration);
             }
-            // Single guard for all water accounting (prevents start_time=0 bug)
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone7_water_litres) += water_used;
               id(total_water_litres) += water_used;
@@ -18581,13 +18399,11 @@ switch:
     optimistic: true
     turn_on_action:
       - lambda: |-
-          // BUG FIX: Zone enable check FIRST — must block regardless of irrigation_busy state.
           if (!id(zone8_enable).state && !id(test_mode_active)) {
             ESP_LOGW("irrigation", "🚫 Zone 8 BLOCKED (direct) - zone disabled");
             std::string _reason = "🚫 Zone 8 disabled (direct switch)";
             id(last_zone_block_reason) = _reason;
             id(zone_block_reason_sensor).publish_state(_reason);
-            // BUG FIX: Do NOT call turn_off() on ${devicename1}_8 before start_single_valve.
             // When turn_off() fires first, the sprinkler clears its active_valve state,
             // so the subsequent start_single_valve call sees no active valve and skips
             // finish_active_valve_(). That means the HA valve indicator switch "Lawn Zone8"
@@ -18595,7 +18411,6 @@ switch:
             // Instead: call start_single_valve WHILE zone 8 is still the active valve.
             // The sprinkler's finish_active_valve_() then properly: turns off relay, turns off
             // the "Lawn Zone8" HA indicator, then starts the correct zone.
-            // BUG FIX: also handle start_full_cycle (normal all-zones) where
             // run_zone_with_cycles is NOT running. In that path irrigation_busy is true
             // but active_zone_number and run_zone_with_cycles are not used — we look up
             // the last zone that ran via last_active_zone (set by on_turn_on).
@@ -18618,7 +18433,6 @@ switch:
                 }
               }
               if (active_z >= 0 && active_z != 7) {
-                // BUG FIX: In C&S mode, restart for the REMAINING time in the current
                 // cycle (full_cycle - elapsed_since_cycle_start) so the valve timer stays
                 // in sync with run_zone_with_cycles's delay. Using the full cycle duration
                 // causes the valve to run beyond the script's delay, creating a period where
@@ -18648,7 +18462,6 @@ switch:
                 } else {
                   // Normal / Quick Run / start_full_cycle mode.
                   //
-                  // BUG FIX: Do NOT use time_remaining_active_valve() here.
                   // When a disabled zone is triggered the sprinkler component switches
                   // active_valve_ to the disabled zone BEFORE turn_on_action runs.
                   // So time_remaining_active_valve() would return the disabled zone's
@@ -18656,7 +18469,6 @@ switch:
                   // Instead compute: remaining = configured_duration - elapsed_since_start
                   // using last_zone_start_epoch (set in on_turn_on of the running zone).
                   {
-                    // BUG FIX: Priority order for determining full duration:
                     //   1. normal_run_duration_seconds — set by run_zone_with_cycles for
                     //      Quick Run and single-zone runs. This IS the intended run time
                     //      (e.g. 5 min quick run). Must take precedence over the zone's
@@ -18693,7 +18505,6 @@ switch:
                       _elapsed_nrm = (int)(_nrn.timestamp - id(last_zone_start_epoch));
                     }
                     restart_dur = _full_dur - _elapsed_nrm;
-                    // BUG FIX: Replace old clamping "if < 5 → use full_dur" with a proper
                     // guard that distinguishes two cases:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
@@ -18713,7 +18524,6 @@ switch:
                   }
                 }
                 if (restart_dur > 0) {
-                  // BUG FIX: Do NOT call start_single_valve here (re-entrancy).
                   // ESPHome sets active_valve_ and re-asserts the public zone 8 switch
                   // AFTER turn_on_action returns, overriding our finish_active_valve_ cleanup.
                   // Defer 300ms (was 150ms) so the sprinkler fully completes zone 8 activation
@@ -18773,7 +18583,6 @@ switch:
             id(${devicename1}_8).turn_off(); return;
           }
           // ✅ All checks passed — route through request_zone_start for full duration management.
-          // BUG #44 FIX: request_zone_start's busy check now ignores active_valve() for this zone
           // (only blocks on irrigation_busy, or if a DIFFERENT zone is active). This allows the
           // direct-switch path to work even though the sprinkler component already set active_valve()
           // when it saw the zone switch turn on — before this lambda ran.
@@ -18793,7 +18602,6 @@ switch:
       - output.turn_off: relay_zone_8_out
     on_turn_on:
       - lambda: |-
-          // BUG FIX: Check zone enable FIRST.
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
           // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
@@ -18809,11 +18617,11 @@ switch:
           id(flow_zone_start_pulses) = id(flow_pulse_total);
           id(flow_sensor_session_litres) = 0.0f;
           id(zone_flow_active) = true;
-          id(last_active_zone) = 7;  // BUG FIX: track for start_full_cycle restart
+          id(last_active_zone) = 7;
           {
             auto _lzse = id(homeassistant_time).now();
             id(last_zone_start_epoch) = _lzse.is_valid() ? _lzse.timestamp : 0;
-          }  // BUG FIX: record start epoch for accurate remaining-time calc
+          }
           ESP_LOGD("flow", "Zone 8 start: pulse snapshot = %.1f", id(flow_zone_start_pulses));
           ESP_LOGI("irrigation", "🚀 ${dev1_zone8} STARTED - Trigger: %s", id(watering_trigger_source).c_str());
           id(dev1_valve_status).publish_state("$dev1_zone8 Active");
@@ -18822,7 +18630,6 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // BUG #47 FIX: Only show Idle if the WHOLE run is done — not between zones.
           // OLD: !busy || !soaking → showed Idle between program zones (station delay).
           // NEW: also check !in_program_run so multi-zone programs show status correctly.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
@@ -18876,7 +18683,6 @@ switch:
               water_used = (duration / 60.0f) * id(zone8_flow_rate);
               ESP_LOGI("flow", "💧 Zone 8 ESTIMATED %.2f L | Duration: %llds (no sensor data)", water_used, duration);
             }
-            // Single guard for all water accounting (prevents start_time=0 bug)
             if (water_used > 0.0f && water_used < 10000.0f) {
               id(zone8_water_litres) += water_used;
               id(total_water_litres) += water_used;
@@ -19038,7 +18844,6 @@ sprinkler:
               id(last_zone_start_epoch) = 0;
               id(normal_run_duration_seconds) = 0;
 
-              // BUG FIX: Unified multiplier restore for the main-switch off path.
               // Previously there were TWO restore blocks here: the first fired
               // unconditionally (clearing restore_multiplier_after_run), which made
               // the second (correctly guarded) block dead code that never executed.
@@ -19132,7 +18937,6 @@ sprinkler:
             }
             
             // ═══════════════════════════════════════════════════════════
-            // ZONE ENABLE CHECK - FIX FOR BUG: Main switch activates when disabled zone is pressed
             // ═══════════════════════════════════════════════════════════
             // The ESPHome sprinkler component automatically turns on the main switch when ANY zone
             // switch is activated - even if that zone is disabled. We need to verify that the zone
@@ -19457,7 +19261,6 @@ button:
         - if:
             condition:
               lambda: |-
-                // BUG #48 FIX: Use is_blackout_date sensor (covers BOTH manual slots AND
                 // NZ public holidays from HA). Previously only checked the 10 manual slots,
                 // silently ignoring Good Friday, Easter Monday, and other HA holiday sensors.
                 if (id(is_blackout_date).state) {
@@ -19527,7 +19330,6 @@ button:
                                             ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
                                           }
                                           
-                                          // BUG #50 FIX: Check freeze and budget here (button had no early check)
                                           if (id(freeze_protection_active)) {
                                             ESP_LOGW("irrigation", "❄️ BLOCKED: Normal Mode — freeze protection active (%.1f°C)", id(outside_temperature).state);
                                             return;
@@ -19565,7 +19367,6 @@ button:
                                             // System is idle - start immediately
                                             id(watering_trigger_source) = "Manual: All Zones (Normal)";
                                             ESP_LOGI("irrigation", "📍 TRIGGER: Manual: All Zones (Normal)");
-                                            // BUG #30 FIX: Set irrigation_busy before pending_normal_start
                                             id(irrigation_busy) = true;
                                             id(pending_normal_start) = true;
                                             id(normal_start_attempts) = 0;
@@ -19875,7 +19676,6 @@ button:
             } else if (id(cycle_soak_is_soaking) && id(active_zone_number) >= 0 && id(total_cycles) > 0) {
               id(paused_zone) = id(active_zone_number);
               id(paused_cycle) = id(current_cycle);
-              // BUG #14 FIX: Guard against time de-sync mid-soak.
               // Without is_valid(), now().timestamp=0 → rem = soak_end_time - 0 = a large
               // future timestamp → paused_soak_remaining_seconds gets a huge value →
               // resume re-runs the soak for hours or days instead of the intended seconds.
@@ -19929,7 +19729,6 @@ button:
                 id(cycle_soak_is_soaking) = false;
                 id(cycle_soak_soak_end_time) = 0;
                 id(watering_trigger_source) = "Idle";
-                // BUG #45 FIX: drain_queue was missing here — queued items sat waiting
                 // up to 30s for the watchdog to notice irrigation_busy was cleared.
                 id(drain_queue).execute();
               }
@@ -19940,7 +19739,6 @@ button:
         - script.stop: run_program
         - script.stop: run_all_zones_normal_script
         - script.stop: continue_cycle_soak_after_resume
-        # BUG FIX: Stop deferred_zone_restart. If a disabled zone triggered a restart
         # and the user pauses within 300ms, without this stop the deferred restart fires
         # into the paused system (irrigation_busy is still true while paused), opening
         # the valve and showing it as active while the display says "Paused".
@@ -19987,7 +19785,6 @@ button:
                     id(in_program_run) = false;
                     id(active_zone_number) = -1;
                     id(watering_trigger_source) = "Idle";
-                    // BUG FIX: Full paused-state clear (previously left stale values)
                     id(paused_zone) = -1;
                     id(paused_cycle) = 0;
                     id(time_remaining_when_paused) = 0;
@@ -19999,7 +19796,6 @@ button:
                     id(cycle_soak_total_duration) = 0;
                     id(cycle_soak_elapsed_time) = 0;
                     id(normal_run_duration_seconds) = 0;
-                    // BUG FIX: Restore switches left in wrong state by paused C&S run
                     id(cycle_soak_switch).turn_off();
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
@@ -20013,7 +19809,6 @@ button:
                     id(in_program_run) = false;
                     id(active_zone_number) = -1;
                     id(watering_trigger_source) = "Idle";
-                    // BUG FIX: Full paused-state clear (previously left stale values)
                     id(paused_zone) = -1;
                     id(paused_cycle) = 0;
                     id(time_remaining_when_paused) = 0;
@@ -20025,7 +19820,6 @@ button:
                     id(cycle_soak_total_duration) = 0;
                     id(cycle_soak_elapsed_time) = 0;
                     id(normal_run_duration_seconds) = 0;
-                    // BUG FIX: Restore switches left in wrong state by paused C&S run
                     id(cycle_soak_switch).turn_off();
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
@@ -20039,7 +19833,6 @@ button:
                     id(in_program_run) = false;
                     id(active_zone_number) = -1;
                     id(watering_trigger_source) = "Idle";
-                    // BUG FIX: Full paused-state clear (previously left stale values)
                     id(paused_zone) = -1;
                     id(paused_cycle) = 0;
                     id(time_remaining_when_paused) = 0;
@@ -20051,7 +19844,6 @@ button:
                     id(cycle_soak_total_duration) = 0;
                     id(cycle_soak_elapsed_time) = 0;
                     id(normal_run_duration_seconds) = 0;
-                    // BUG FIX: Restore switches left in wrong state by paused C&S run
                     id(cycle_soak_switch).turn_off();
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
@@ -20069,7 +19861,6 @@ button:
                       id(in_program_run) = false;
                       id(active_zone_number) = -1;
                       id(watering_trigger_source) = "Idle";
-                      // BUG FIX: Full paused-state clear (previously left stale values)
                       id(paused_zone) = -1;
                       id(paused_cycle) = 0;
                       id(time_remaining_when_paused) = 0;
@@ -20081,7 +19872,6 @@ button:
                       id(cycle_soak_total_duration) = 0;
                       id(cycle_soak_elapsed_time) = 0;
                       id(normal_run_duration_seconds) = 0;
-                      // BUG FIX: Restore switches left in wrong state by paused C&S run
                       id(cycle_soak_switch).turn_off();
                       id(dev1_auto_advance).turn_on();
                       id(drain_queue).execute();
@@ -20096,7 +19886,6 @@ button:
                       id(in_program_run) = false;
                       id(active_zone_number) = -1;
                       id(watering_trigger_source) = "Idle";
-                      // BUG FIX: Full paused-state clear (previously left stale values)
                       id(paused_zone) = -1;
                       id(paused_cycle) = 0;
                       id(time_remaining_when_paused) = 0;
@@ -20108,7 +19897,6 @@ button:
                       id(cycle_soak_total_duration) = 0;
                       id(cycle_soak_elapsed_time) = 0;
                       id(normal_run_duration_seconds) = 0;
-                      // BUG FIX: Restore switches left in wrong state by paused C&S run
                       id(cycle_soak_switch).turn_off();
                       id(dev1_auto_advance).turn_on();
                       id(drain_queue).execute();
@@ -20127,7 +19915,6 @@ button:
                         id(in_program_run) = false;
                         id(active_zone_number) = -1;
                         id(watering_trigger_source) = "Idle";
-                        // BUG FIX: Full paused-state clear (previously left stale values)
                         id(paused_zone) = -1;
                         id(paused_cycle) = 0;
                         id(time_remaining_when_paused) = 0;
@@ -20139,7 +19926,6 @@ button:
                         id(cycle_soak_total_duration) = 0;
                         id(cycle_soak_elapsed_time) = 0;
                         id(normal_run_duration_seconds) = 0;
-                        // BUG FIX: Restore switches left in wrong state by paused C&S run
                         id(cycle_soak_switch).turn_off();
                         id(dev1_auto_advance).turn_on();
                         id(drain_queue).execute();
@@ -20284,7 +20070,6 @@ button:
         - script.stop: run_all_zones_normal_script
         - script.stop: continue_cycle_soak_after_resume
         - script.stop: wait_until_idle_then_drain
-        # BUG FIX: Stop deferred_zone_restart. If a disabled zone triggered a restart
         # and stop is pressed within the 300ms deferral window, without this the deferred
         # restart fires after shutdown, re-opening a valve on a supposedly stopped system.
         - script.stop: deferred_zone_restart
@@ -20301,8 +20086,8 @@ button:
             id(cycle_soak_is_soaking) = false;
             id(cycle_soak_soak_end_time) = 0;
             id(soak_countdown_seconds) = 0;
-            id(cycle_start_epoch) = 0;        // BUG FIX: was missing from stop cleanup
-            id(station_delay_active) = false; // BUG FIX: was missing from stop cleanup
+            id(cycle_start_epoch) = 0;
+            id(station_delay_active) = false;
             id(is_paused) = false;
             id(paused_zone) = -1;
             id(paused_cycle) = 0;
@@ -20315,7 +20100,6 @@ button:
             id(in_program_run) = false;
             id(resume_csa_blocked) = false;
             id(normal_run_duration_seconds) = 0;
-            // BUG FIX: Restore multiplier if a Base Duration run was stopped mid-run.
             if (id(restore_multiplier_after_run)) {
               float saved_mult = id(saved_multiplier_for_base_run);
               float vac_mult = id(vacation_mode_active) ? saved_mult * 0.5f : saved_mult;
@@ -20330,7 +20114,6 @@ button:
         # Turn OFF Cycle & Soak when stopping
         - switch.turn_off: cycle_soak_switch
         - logger.log: "🔄 Cycle & Soak Mode: OFF (stopped)"
-        # BUG #35 FIX: Always restore Auto Advance after a stop.
         # C&S turns it OFF at start; if stopped mid-run it stays OFF, breaking
         # all future normal-mode runs (they need auto-advance to step through zones).
         - switch.turn_on: dev1_auto_advance
@@ -20479,7 +20262,6 @@ button:
                                             ESP_LOGI("irrigation", "✅ Weather check PASSED: %s", w.c_str());
                                           }
                                           
-                                          // BUG FIX (Bug 25): Check freeze and budget before queue/start.
                                           // Normal button has these; C&S button did not, causing a brief
                                           // irrigation_busy=true window before the script pre-flight blocked.
                                           if (id(freeze_protection_active)) {
@@ -20530,7 +20312,6 @@ button:
                                               ESP_LOGI("irrigation", "📍 TRIGGER: Manual: Cycle & Soak All Zones");
                                             }
                                             ESP_LOGI("irrigation", "▶️ STARTING Cycle & Soak immediately (system idle)");
-                                            // BUG #47 FIX: Set irrigation_busy=true BEFORE execute()
                                             // to close the scheduler gap between execute() and the
                                             // script's first lambda setting it. Without this a watchdog
                                             // or concurrent press sees idle and starts a conflicting run.
@@ -20835,7 +20616,6 @@ button:
           id(total_water_sensor).publish_state(0.0f);
           
           // Reset monthly usage counter and budget flags
-          // BUG FIX: budget_exceeded and budget_warning_sent were not cleared, leaving the
           // system blocked even after a full water-usage reset. Both flags must be cleared
           // so watering is immediately unblocked and budget warnings re-arm correctly.
           id(current_month_usage) = 0;
@@ -21128,7 +20908,6 @@ button:
             
             if (enabled) {
               // Get custom zone name (from runtime text input)
-              // BUG 5 FIX: Changed misleading "${dev1_zone1}" fallback (always "Lawn Zone1")
               // to a defensive sentinel. Added default: case to the switch for completeness.
               // All zones 0-7 are handled, so default is unreachable with the current loop
               // bound of 8 — but explicit is safer and avoids silent wrong-name logging.
