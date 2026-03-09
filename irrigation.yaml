@@ -356,13 +356,23 @@ esphome:
           // Time Restriction — push at boot so HA shows correct state immediately (update_interval: never)
           id(time_restriction_status).update();
           id(time_restriction_next_allowed).update();
+          // Zone Last Watered text sensors — NVS-persisted timestamps are valid immediately;
+          // without this push they show "NA" in HA until each zone next runs (up to 24h away).
+          id(zone1_last_watered_text).update();
+          id(zone2_last_watered_text).update();
+          id(zone3_last_watered_text).update();
+          id(zone4_last_watered_text).update();
+          id(zone5_last_watered_text).update();
+          id(zone6_last_watered_text).update();
+          id(zone7_last_watered_text).update();
+          id(zone8_last_watered_text).update();
           // Time Remaining and Progress % — show 0 instead of NA when system is idle at boot
           id(valve_remaining_seconds).publish_state(0);
           id(dev1_time_remaining).publish_state("0:00:00");
           id(dev1_progress_percent).publish_state("0%");
           // Cycle & Soak Detailed Status — show Idle instead of NA at boot (update_interval: never)
           id(cycle_soak_detailed_status).publish_state("Idle");
-          ESP_LOGI("irrigation", "🔄 BOOT: Pushed %d NVS-persisted sensors to HA", 20);
+          ESP_LOGI("irrigation", "🔄 BOOT: Pushed %d NVS-persisted sensors to HA", 28);
       # reset multiplier at reboot
       - lambda: |-
           // === 3-ITEM QUEUE SYSTEM INITIALIZATION ===
@@ -489,14 +499,14 @@ esphome:
               }
             }
 
-            // CHECK 2c: max_zone_runtime_daily — fix silently, no reset needed
+            // CHECK 2c: max_zone_runtime_daily — correct silently, no reset needed
             if (id(max_zone_runtime_daily) <= 0 || id(max_zone_runtime_daily) > 1440) {
               ESP_LOGW("irrigation", "⚠️ max_zone_runtime_daily invalid (%d) — resetting to %d min",
                        id(max_zone_runtime_daily), ${default_max_zone_runtime_min});
               id(max_zone_runtime_daily) = ${default_max_zone_runtime_min};
             }
 
-            // CHECK 2d: daily_water_litres — fix silently (today's usage; safe to zero)
+            // CHECK 2d: daily_water_litres — correct silently (today's usage; safe to zero)
             if (isnan(id(daily_water_litres)) || std::isinf(id(daily_water_litres)) ||
                 id(daily_water_litres) < 0.0f || id(daily_water_litres) > 100000.0f) {
               ESP_LOGW("irrigation", "⚠️ daily_water_litres invalid (%.1f) — resetting to 0", id(daily_water_litres));
@@ -2758,15 +2768,21 @@ time:
                 
                 // Set rain delay if it's raining
                 if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
-                  id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (${seconds_per_day} * ${auto_rain_delay_days}); // auto rain delay
-                  id(rain_delay_remaining).update();
-                  id(rain_delay_days) = ${auto_rain_delay_days};
-                  id(rain_delay_days_input).publish_state(${auto_rain_delay_days});
-                  ESP_LOGI("irrigation", "Auto rain delay activated - weather is %s", weather.c_str());
+                  auto _wr_set = id(homeassistant_time).now();
+                  if (!_wr_set.is_valid()) {
+                    ESP_LOGW("irrigation", "⚠️ Rain delay not set — time not synced (will apply on next weather update)");
+                  } else {
+                    id(rain_delay_end_time) = _wr_set.timestamp + (${seconds_per_day} * ${auto_rain_delay_days}); // auto rain delay
+                    id(rain_delay_remaining).update();
+                    id(rain_delay_days) = ${auto_rain_delay_days};
+                    id(rain_delay_days_input).publish_state(${auto_rain_delay_days});
+                    ESP_LOGI("irrigation", "Auto rain delay activated - weather is %s", weather.c_str());
+                  }
                 }
                 // Clear rain delay if weather is good (only if not manually overridden)
                 else if (weather == "sunny" || weather == "clear" || weather == "partlycloudy" || weather == "cloudy") {
-                  if (!id(manual_rain_delay_override) && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp) {
+                  auto _wr_clr = id(homeassistant_time).now();
+                  if (!id(manual_rain_delay_override) && _wr_clr.is_valid() && id(rain_delay_end_time) > _wr_clr.timestamp) {
                     id(rain_delay_end_time) = 0;
                     id(rain_delay_days) = 0;
                     id(rain_delay_days_input).publish_state(0);
@@ -4442,7 +4458,7 @@ interval:
                   id(drain_queue).execute();
                   return;
                 }
-                if (_ns_time.is_valid() && id(rain_delay_end_time) > _ns_time.timestamp) {
+                if (!id(manual_rain_delay_override) && _ns_time.is_valid() && id(rain_delay_end_time) > _ns_time.timestamp) {
                   int64_t _rd = (id(rain_delay_end_time) - _ns_time.timestamp) / ${seconds_per_day};
                   ESP_LOGW("irrigation", "🌧️ NORMAL start BLOCKED — rain delay active (%lld day(s) remaining)", _rd);
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
@@ -4718,7 +4734,7 @@ interval:
   - interval: 30s
     then:
       - lambda: |-
-          // Cache .now() once — was calling it twice in this lambda (P6 fix)
+          // Cache .now() once for consistent timestamp across all checks in this lambda
           auto _30s_time = id(homeassistant_time).now();
           if (!_30s_time.is_valid()) return;  // Time not synced yet
           int64_t now = _30s_time.timestamp;
@@ -4843,7 +4859,7 @@ interval:
           }
           
           // 2. DAILY RUNTIME RESET (at midnight)
-          auto& esp_time = _30s_time;  // Reuse already-fetched time (P6 fix)
+          auto& esp_time = _30s_time;  // Reuse already-fetched time
           if (esp_time.is_valid()) {
             // every month, so devices running across month boundaries (e.g. March 15
             // -> April 15) would NEVER reset the counters on the duplicate day-of-month.
@@ -4922,7 +4938,7 @@ interval:
               id(continue_cycle_soak_after_resume).stop();
               id(deferred_zone_restart).stop();
               id(dev1_auto_advance).turn_on();
-              // exceeded, the switch stays ON and confuses the next run (same fix as freeze path).
+              // exceeded, the switch stays ON and confuses the next run.
               id(cycle_soak_switch).turn_off();
               // Full state reset — matches Stop button cleanup exactly
               id(pending_normal_start) = false;
@@ -5111,7 +5127,7 @@ interval:
           }
 
           // --------------------------------------------------
-          // SIMPLE FIX: CLEAN COMPLETION AUTO-CLEAR
+          // CLEAN COMPLETION AUTO-CLEAR
           // --------------------------------------------------
           if (id(irrigation_busy) &&
               !valve_active &&
@@ -6247,14 +6263,20 @@ text_sensor:
               
               // Set rain delay if it starts raining
               if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
-                id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (${seconds_per_day} * ${auto_rain_delay_days}); // auto rain delay
-                id(rain_delay_days) = ${auto_rain_delay_days};
-                id(rain_delay_days_input).publish_state(${auto_rain_delay_days});
-                ESP_LOGI("irrigation", "Auto rain delay activated immediately - weather changed to %s", weather.c_str());
+                auto _wov_set = id(homeassistant_time).now();
+                if (!_wov_set.is_valid()) {
+                  ESP_LOGW("irrigation", "⚠️ Rain delay not set — time not synced (will apply on next weather update)");
+                } else {
+                  id(rain_delay_end_time) = _wov_set.timestamp + (${seconds_per_day} * ${auto_rain_delay_days}); // auto rain delay
+                  id(rain_delay_days) = ${auto_rain_delay_days};
+                  id(rain_delay_days_input).publish_state(${auto_rain_delay_days});
+                  ESP_LOGI("irrigation", "Auto rain delay activated immediately - weather changed to %s", weather.c_str());
+                }
               }
               // Clear rain delay if weather improves (only if not manually overridden)
               else if (weather == "sunny" || weather == "clear" || weather == "partlycloudy" || weather == "cloudy") {
-                if (!id(manual_rain_delay_override) && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp) {
+                auto _wov_clr = id(homeassistant_time).now();
+                if (!id(manual_rain_delay_override) && _wov_clr.is_valid() && id(rain_delay_end_time) > _wov_clr.timestamp) {
                   id(rain_delay_end_time) = 0;
                   id(rain_delay_days) = 0;
                   id(rain_delay_days_input).publish_state(0);
@@ -7011,7 +7033,7 @@ sensor:
           bool zone_active = id(zone_flow_active);
           static int64_t stop_ts = 0;
           static int64_t start_ts = 0;
-          // Cache timestamp once — was calling .now() 3 times (P4 fix)
+          // Cache timestamp once for consistent leak detection timing
           int64_t now_s = (int64_t)(id(homeassistant_time).now().timestamp);
           if (zone_active) {
             stop_ts = 0;
@@ -7751,7 +7773,7 @@ binary_sensor:
     icon: "mdi:cancel"
     device_class: problem
     lambda: |-
-      // B2 FIX: Block during boot sync window (first 2 min), then allow if time never syncs.
+      // Block during boot sync window (first 2 min), then allow if time never syncs.
       // This prevents permanent irrigation lockout if HA connection is lost indefinitely,
       // while still protecting against spurious schedules firing before the clock is set.
       auto now = id(homeassistant_time).now();
@@ -7768,7 +7790,7 @@ binary_sensor:
       const char* reason = "";
 
       // CHECK 1: Manual blackout slots 1-10
-      // Each slot: parse ESPTime struct ONCE (B3 fix: was calling from_epoch_local twice per slot)
+      // Each slot: parse ESPTime struct ONCE and check both year and day_of_year
       {
         int64_t _dates[] = {id(blackout_date_1),id(blackout_date_2),id(blackout_date_3),id(blackout_date_4),id(blackout_date_5),
                          id(blackout_date_6),id(blackout_date_7),id(blackout_date_8),id(blackout_date_9),id(blackout_date_10)};
@@ -7779,7 +7801,7 @@ binary_sensor:
             auto _et = ESPTime::from_epoch_local(_dates[_i]);  // Parse once, check both fields
             if (_et.year == _ty && _et.day_of_year == _td) {
               is_blackout = true;
-              // Use existing description string directly — no copy (P2 fix: was building 10-string array)
+              // Use existing description string directly — no copy needed
               const std::string& _desc = [&]() -> const std::string& {
                 switch(_i) {
                   case 0: return id(blackout_desc_1);
@@ -7801,7 +7823,7 @@ binary_sensor:
         }
       }
 
-      // CHECK 2: NZ Public Holidays — compare char buffers (P3 fix: was allocating 5 std::strings)
+      // CHECK 2: NZ Public Holidays — compare char buffers directly for minimal stack use
       if (!is_blackout) {
         struct { const char* name; bool has; const char* state; } holidays[] = {
           { "Good Friday",    id(nz_good_friday_date).has_state(),   id(nz_good_friday_date).has_state()   ? id(nz_good_friday_date).state.c_str()   : "" },
@@ -7883,6 +7905,9 @@ number:
             }
           } else {
             id(rain_delay_end_time) = 0;
+            id(rain_delay_days) = 0;
+            id(rain_delay_remaining).update();  // Push cleared state to HA immediately
+            ESP_LOGI("irrigation", "🌧️ Rain delay cleared manually");
           }
 
   # Smart ET watering threshold
@@ -9978,7 +10003,7 @@ script:
           }
           
           // GUARD: Don't run without valid time — timestamps would be epoch 0
-          // Cache .now() result here; reuse timestamp below instead of calling .now() again (P5 fix)
+          // Cache .now() result once for consistent timestamps across all checks
           auto _fc_time = id(homeassistant_time).now();
           if (!_fc_time.is_valid()) {
             ESP_LOGW("forecast", "⚠️ Time not synced - skipping forecast rain delay check");
@@ -10054,7 +10079,7 @@ script:
             // Only set rain delay if manual override is OFF
             if (!id(manual_rain_delay_override)) {
               id(rain_delay_days) = delay_days;
-              int64_t now_ts = _fc_time.timestamp;  // Reuse cached time (P5 fix)
+              int64_t now_ts = _fc_time.timestamp;  // Reuse cached time
               id(rain_delay_end_time) = now_ts + (delay_days * ${seconds_per_day});
               
               ESP_LOGI("forecast", "✅ Auto Rain Delay SET: %d days", delay_days);
@@ -10064,6 +10089,7 @@ script:
                 id(irrigation_latest_alert) = _a;
                 id(irrigation_alert_sensor).publish_state(_a);
               }
+              id(rain_delay_remaining).update();  // Push countdown to HA immediately (auto-set)
             } else {
               ESP_LOGI("forecast", "ℹ️ Rain delay override is ON - not setting auto delay");
             }
@@ -10072,7 +10098,7 @@ script:
             ESP_LOGI("forecast", "   Imminent: %.1fmm, Today: %.1fmm", forecast_1h, forecast_0d);
             
             // SMART CLEARING: Clear rain delay if conditions have improved
-            int64_t now_ts = _fc_time.timestamp;  // Reuse cached time (P5 fix)
+            int64_t now_ts = _fc_time.timestamp;  // Reuse cached time
             if (id(rain_delay_end_time) > now_ts) {
               // There's an active rain delay - check if we should clear it
               // Thresholds configured in substitutions at top of file
@@ -10087,6 +10113,7 @@ script:
                 id(rain_delay_end_time) = 0;
                 id(rain_delay_days) = 0;
                 id(rain_delay_days_input).publish_state(0);
+                id(rain_delay_remaining).update();  // Push cleared state to HA immediately (auto-clear)
                 
                 ESP_LOGI("forecast", "✅ Rain delay CLEARED - watering can resume");
               } else if (id(manual_rain_delay_override)) {
@@ -10361,7 +10388,7 @@ script:
           
           float old_multiplier = id(pw_current_multiplier);
           id(pw_current_multiplier) = combined_multiplier;
-          id(pw_last_calculation_time) = id(homeassistant_time).now().timestamp;
+          { auto _pw_ts = id(homeassistant_time).now(); if (_pw_ts.is_valid()) id(pw_last_calculation_time) = _pw_ts.timestamp; }
           
           // Save as fallback for network offline mode
           id(fallback_multiplier) = combined_multiplier;
@@ -10777,7 +10804,7 @@ script:
               // et_duration_multiplier=1.0 prevents the 5-min restore loop from firing
               // Honour vacation mode 50% reduction during restore
               { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
-            } else if (id(homeassistant_time).now().is_valid() && id(rain_delay_end_time) > id(homeassistant_time).now().timestamp) {
+            } else if ([&]() { auto _et_rd = id(homeassistant_time).now(); return _et_rd.is_valid() && id(rain_delay_end_time) > _et_rd.timestamp; }()) {
               ESP_LOGW("irrigation", "   ❌ Rain delay is ACTIVE - cannot water");
               id(et_duration_multiplier) = 1.0;
               { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }  // Restore immediately
@@ -10886,8 +10913,12 @@ script:
                 // irrigation_busy was set inside run_all_zones_cycle_soak_script which
                 // was just execute()d; since it runs synchronously until its first yield
                 // we check the script directly.
-                if (!id(irrigation_busy) && !_main_et_was_idle) {
-                  // Was queued (system was already busy) — preserve deficit data for when it eventually executes
+                if (id(irrigation_busy) && _main_et_was_idle) {
+                  // Was idle, run started successfully — clear deficit
+                  id(et_soil_moisture_deficit) = 0;
+                  { auto _t2b2 = id(homeassistant_time).now(); if (_t2b2.is_valid()) id(et_last_water_time) = _t2b2.timestamp; }
+                } else if (id(irrigation_busy) && !_main_et_was_idle) {
+                  // Was already busy — run was queued; preserve deficit until run actually executes
                   ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued — deficit preserved (%.1fmm)", id(et_soil_moisture_deficit));
                 } else if (!id(irrigation_busy) && _main_et_was_idle) {
                   // Was idle but button/safety-check blocked the run — restore pending flag so retry fires in 5 min.
@@ -10895,8 +10926,9 @@ script:
                   id(et_pending_irrigation) = true;
                   ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run blocked by safety check — deficit preserved (%.1fmm), retrying in 5 min", id(et_soil_moisture_deficit));
                 } else {
-                  id(et_soil_moisture_deficit) = 0;
-                  { auto _t2b2 = id(homeassistant_time).now(); if (_t2b2.is_valid()) id(et_last_water_time) = _t2b2.timestamp; }
+                  // Was busy, now not busy — edge case (run completed instantly or was dropped immediately)
+                  ESP_LOGI("irrigation", "   ℹ️ Smart ET: Unexpected state after press (was_idle=%d, busy=%d) — deficit preserved", _main_et_was_idle, (int)id(irrigation_busy));
+                  id(et_pending_irrigation) = true;
                 }
               } else {
                 ESP_LOGI("irrigation", "");
@@ -12146,7 +12178,7 @@ script:
                             int soak_min = id(soak_duration_minutes);
                             int soak_sec = soak_min * 60;
                             int soak_ms = soak_sec * 1000;
-                            id(cycle_soak_soak_end_time) = id(homeassistant_time).now().timestamp + soak_sec;
+                            { auto _sk_now = id(homeassistant_time).now(); id(cycle_soak_soak_end_time) = _sk_now.is_valid() ? (_sk_now.timestamp + soak_sec) : 0; }
                             ESP_LOGI("irrigation", "🌧️ SOAK START: soak_duration_minutes=%d, seconds=%d, milliseconds=%d",
                                      soak_min, soak_sec, soak_ms);
                             // Update valve status so HA shows "Soaking" not "Idle" during soak period
@@ -12371,7 +12403,7 @@ script:
           then:
             - lambda: |-
                 id(cycle_soak_is_soaking) = true;
-                id(cycle_soak_soak_end_time) = id(homeassistant_time).now().timestamp + soak_remaining;
+                { auto _sk_now = id(homeassistant_time).now(); id(cycle_soak_soak_end_time) = _sk_now.is_valid() ? (_sk_now.timestamp + soak_remaining) : 0; }
                 ESP_LOGI("irrigation", "Resuming soak for %d seconds", soak_remaining);
                 id(dev1_valve_status).publish_state("Soaking");
             - delay: !lambda 'return soak_remaining * 1000;'
@@ -12463,7 +12495,7 @@ script:
                 // Soak between cycles
                 id(cycle_soak_is_soaking) = true;
                 int soak_s = id(soak_duration_minutes) * 60;
-                id(cycle_soak_soak_end_time) = id(homeassistant_time).now().timestamp + soak_s;
+                { auto _sk_now = id(homeassistant_time).now(); id(cycle_soak_soak_end_time) = _sk_now.is_valid() ? (_sk_now.timestamp + soak_s) : 0; }
                 ESP_LOGI("irrigation", "Soaking for %d seconds (cycle %d/%d)", soak_s, id(current_cycle), total);
                 id(dev1_valve_status).publish_state("Soaking");
             - delay: !lambda 'return id(soak_duration_minutes) * 60 * 1000;'
@@ -13389,14 +13421,14 @@ select:
               case 3:  id(blackout_date_3)  = var_date; id(blackout_desc_3)  = holiday; break;
               case 4:  id(blackout_date_4)  = var_date; id(blackout_desc_4)  = holiday; break;
               case 5:  id(blackout_date_5)  = var_date; id(blackout_desc_5)  = holiday; break;
-              // Push immediately so dashboard reflects new count without waiting for next poll
-              id(active_blackout_count).update();
               case 6:  id(blackout_date_6)  = var_date; id(blackout_desc_6)  = holiday; break;
               case 7:  id(blackout_date_7)  = var_date; id(blackout_desc_7)  = holiday; break;
               case 8:  id(blackout_date_8)  = var_date; id(blackout_desc_8)  = holiday; break;
               case 9:  id(blackout_date_9)  = var_date; id(blackout_desc_9)  = holiday; break;
               case 10: id(blackout_date_10) = var_date; id(blackout_desc_10) = holiday; break;
             }
+            // Push immediately so dashboard reflects new count without waiting for next poll
+            id(active_blackout_count).update();
             // Update display text field (DD-MM-YYYY format)
             time_t ts = (time_t)var_date;
             struct tm* tm_info = localtime(&ts);
@@ -13460,6 +13492,8 @@ select:
             case 9:  { auto call = id(blackout_date_9_text).make_call(); call.set_value(date_str); call.perform(); } break;
             case 10: { auto call = id(blackout_date_10_text).make_call(); call.set_value(date_str); call.perform(); } break;
           }
+          // Push immediately so dashboard reflects new count without waiting for next poll
+          id(active_blackout_count).update();
           
           ESP_LOGI("irrigation", "✅ Added %s (%d) to Blackout %d", holiday.c_str(), year, slot);
 
@@ -14361,6 +14395,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_1) = 0;
               id(blackout_desc_1) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 1 cleared");
               return;
             }
@@ -14387,6 +14422,7 @@ text:
                   
                   id(blackout_date_1) = (int64_t)mktime(&t);
                   id(blackout_desc_1) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 1 set: %s", date_part.c_str());
@@ -14424,6 +14460,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_2) = 0;
               id(blackout_desc_2) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 2 cleared");
               return;
             }
@@ -14450,6 +14487,7 @@ text:
                   
                   id(blackout_date_2) = (int64_t)mktime(&t);
                   id(blackout_desc_2) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 2 set: %s", date_part.c_str());
@@ -14487,6 +14525,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_3) = 0;
               id(blackout_desc_3) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 3 cleared");
               return;
             }
@@ -14513,6 +14552,7 @@ text:
                   
                   id(blackout_date_3) = (int64_t)mktime(&t);
                   id(blackout_desc_3) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 3 set: %s", date_part.c_str());
@@ -14550,6 +14590,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_4) = 0;
               id(blackout_desc_4) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 4 cleared");
               return;
             }
@@ -14576,6 +14617,7 @@ text:
                   
                   id(blackout_date_4) = (int64_t)mktime(&t);
                   id(blackout_desc_4) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 4 set: %s", date_part.c_str());
@@ -14613,6 +14655,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_5) = 0;
               id(blackout_desc_5) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 5 cleared");
               return;
             }
@@ -14639,6 +14682,7 @@ text:
                   
                   id(blackout_date_5) = (int64_t)mktime(&t);
                   id(blackout_desc_5) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 5 set: %s", date_part.c_str());
@@ -14676,6 +14720,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_6) = 0;
               id(blackout_desc_6) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 6 cleared");
               return;
             }
@@ -14702,6 +14747,7 @@ text:
                   
                   id(blackout_date_6) = (int64_t)mktime(&t);
                   id(blackout_desc_6) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 6 set: %s", date_part.c_str());
@@ -14739,6 +14785,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_7) = 0;
               id(blackout_desc_7) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 7 cleared");
               return;
             }
@@ -14765,6 +14812,7 @@ text:
                   
                   id(blackout_date_7) = (int64_t)mktime(&t);
                   id(blackout_desc_7) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 7 set: %s", date_part.c_str());
@@ -14802,6 +14850,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_8) = 0;
               id(blackout_desc_8) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 8 cleared");
               return;
             }
@@ -14828,6 +14877,7 @@ text:
                   
                   id(blackout_date_8) = (int64_t)mktime(&t);
                   id(blackout_desc_8) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 8 set: %s", date_part.c_str());
@@ -14865,6 +14915,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_9) = 0;
               id(blackout_desc_9) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 9 cleared");
               return;
             }
@@ -14891,6 +14942,7 @@ text:
                   
                   id(blackout_date_9) = (int64_t)mktime(&t);
                   id(blackout_desc_9) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 9 set: %s", date_part.c_str());
@@ -14928,6 +14980,7 @@ text:
             if (input.empty() || input == "clear" || input == "0") {
               id(blackout_date_10) = 0;
               id(blackout_desc_10) = "";
+              id(active_blackout_count).update();
               ESP_LOGI("irrigation", "🗑️  Blackout 10 cleared");
               return;
             }
@@ -14954,6 +15007,7 @@ text:
                   
                   id(blackout_date_10) = (int64_t)mktime(&t);
                   id(blackout_desc_10) = desc_part;
+                  id(active_blackout_count).update();
                   
                   if (desc_part.empty()) {
                     ESP_LOGI("irrigation", "✅ Blackout 10 set: %s", date_part.c_str());
@@ -16527,6 +16581,7 @@ switch:
           id(rain_delay_end_time) = 0;
           id(rain_delay_days) = 0;
           id(rain_delay_days_input).publish_state(0);
+          id(rain_delay_remaining).update();  // Push cleared state to HA immediately
           ESP_LOGI("irrigation", "Manual rain delay override enabled - active rain delay CLEARED");
     turn_off_action:
       - lambda: |-
@@ -16541,10 +16596,16 @@ switch:
           }
           
           if (weather == "rainy" || weather == "pouring" || weather == "snowy" || weather == "snowy-rainy") {
-            id(rain_delay_end_time) = id(homeassistant_time).now().timestamp + (${seconds_per_day} * ${auto_rain_delay_days});
-            id(rain_delay_days) = ${auto_rain_delay_days};
-            id(rain_delay_days_input).publish_state(${auto_rain_delay_days});
-            ESP_LOGI("irrigation", "Auto rain delay IMMEDIATELY activated - weather is %s", weather.c_str());
+            auto _ov_off = id(homeassistant_time).now();
+            if (!_ov_off.is_valid()) {
+              ESP_LOGW("irrigation", "⚠️ Rain delay not set — time not synced (will apply on next weather update)");
+            } else {
+              id(rain_delay_end_time) = _ov_off.timestamp + (${seconds_per_day} * ${auto_rain_delay_days});
+              id(rain_delay_days) = ${auto_rain_delay_days};
+              id(rain_delay_days_input).publish_state(${auto_rain_delay_days});
+              id(rain_delay_remaining).update();  // Push new countdown to HA immediately
+              ESP_LOGI("irrigation", "Auto rain delay IMMEDIATELY activated - weather is %s", weather.c_str());
+            }
           } else {
             ESP_LOGI("irrigation", "Weather is %s - no rain delay needed", weather.c_str());
           }
@@ -17196,7 +17257,7 @@ switch:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
                     //      → restart_dur <= 0 → set to 0 so the outer if(restart_dur > 0) skips
-                    //      the deferred restart entirely. Without this fix, start_full_cycle would
+                    //      the deferred restart entirely. Without this check, start_full_cycle would
                     //      restart Zone 2 forever each time auto-advance hit the disabled Zone 1.
                     if (restart_dur > _full_dur) restart_dur = _full_dur;  // Clamp overshoot only
                     if (restart_dur <= 15) {
@@ -17317,8 +17378,7 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
-          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          // Also check !in_program_run so multi-zone programs show the correct status.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
@@ -17524,7 +17584,7 @@ switch:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
                     //      → restart_dur <= 0 → set to 0 so the outer if(restart_dur > 0) skips
-                    //      the deferred restart entirely. Without this fix, start_full_cycle would
+                    //      the deferred restart entirely. Without this check, start_full_cycle would
                     //      restart Zone 2 forever each time auto-advance hit the disabled Zone 1.
                     if (restart_dur > _full_dur) restart_dur = _full_dur;  // Clamp overshoot only
                     if (restart_dur <= 15) {
@@ -17645,8 +17705,7 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
-          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          // Also check !in_program_run so multi-zone programs show the correct status.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
@@ -17843,7 +17902,7 @@ switch:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
                     //      → restart_dur <= 0 → set to 0 so the outer if(restart_dur > 0) skips
-                    //      the deferred restart entirely. Without this fix, start_full_cycle would
+                    //      the deferred restart entirely. Without this check, start_full_cycle would
                     //      restart Zone 2 forever each time auto-advance hit the disabled Zone 1.
                     if (restart_dur > _full_dur) restart_dur = _full_dur;  // Clamp overshoot only
                     if (restart_dur <= 15) {
@@ -17964,8 +18023,7 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
-          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          // Also check !in_program_run so multi-zone programs show the correct status.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
@@ -18162,7 +18220,7 @@ switch:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
                     //      → restart_dur <= 0 → set to 0 so the outer if(restart_dur > 0) skips
-                    //      the deferred restart entirely. Without this fix, start_full_cycle would
+                    //      the deferred restart entirely. Without this check, start_full_cycle would
                     //      restart Zone 2 forever each time auto-advance hit the disabled Zone 1.
                     if (restart_dur > _full_dur) restart_dur = _full_dur;  // Clamp overshoot only
                     if (restart_dur <= 15) {
@@ -18283,8 +18341,7 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
-          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          // Also check !in_program_run so multi-zone programs show the correct status.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
@@ -18481,7 +18538,7 @@ switch:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
                     //      → restart_dur <= 0 → set to 0 so the outer if(restart_dur > 0) skips
-                    //      the deferred restart entirely. Without this fix, start_full_cycle would
+                    //      the deferred restart entirely. Without this check, start_full_cycle would
                     //      restart Zone 2 forever each time auto-advance hit the disabled Zone 1.
                     if (restart_dur > _full_dur) restart_dur = _full_dur;  // Clamp overshoot only
                     if (restart_dur <= 15) {
@@ -18602,8 +18659,7 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
-          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          // Also check !in_program_run so multi-zone programs show the correct status.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
@@ -18800,7 +18856,7 @@ switch:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
                     //      → restart_dur <= 0 → set to 0 so the outer if(restart_dur > 0) skips
-                    //      the deferred restart entirely. Without this fix, start_full_cycle would
+                    //      the deferred restart entirely. Without this check, start_full_cycle would
                     //      restart Zone 2 forever each time auto-advance hit the disabled Zone 1.
                     if (restart_dur > _full_dur) restart_dur = _full_dur;  // Clamp overshoot only
                     if (restart_dur <= 15) {
@@ -18921,8 +18977,7 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
-          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          // Also check !in_program_run so multi-zone programs show the correct status.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
@@ -19119,7 +19174,7 @@ switch:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
                     //      → restart_dur <= 0 → set to 0 so the outer if(restart_dur > 0) skips
-                    //      the deferred restart entirely. Without this fix, start_full_cycle would
+                    //      the deferred restart entirely. Without this check, start_full_cycle would
                     //      restart Zone 2 forever each time auto-advance hit the disabled Zone 1.
                     if (restart_dur > _full_dur) restart_dur = _full_dur;  // Clamp overshoot only
                     if (restart_dur <= 15) {
@@ -19240,8 +19295,7 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
-          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          // Also check !in_program_run so multi-zone programs show the correct status.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
@@ -19438,7 +19492,7 @@ switch:
                     //   a) Zone interrupted mid-run: elapsed < full → restart_dur > 0 → DO restart
                     //   b) Zone naturally finished (auto-advance) OR stale epoch: elapsed >= full
                     //      → restart_dur <= 0 → set to 0 so the outer if(restart_dur > 0) skips
-                    //      the deferred restart entirely. Without this fix, start_full_cycle would
+                    //      the deferred restart entirely. Without this check, start_full_cycle would
                     //      restart Zone 2 forever each time auto-advance hit the disabled Zone 1.
                     if (restart_dur > _full_dur) restart_dur = _full_dur;  // Clamp overshoot only
                     if (restart_dur <= 15) {
@@ -19559,8 +19613,7 @@ switch:
           // Only reset to Idle if NOT mid-soak (between cycles in Cycle & Soak mode).
           // During a soak the valve turns off but the system is still running — showing
           // "Idle" here is misleading. Let the soak-complete handler set Idle instead.
-          // OLD: !busy || !soaking → showed Idle between program zones (station delay).
-          // NEW: also check !in_program_run so multi-zone programs show status correctly.
+          // Also check !in_program_run so multi-zone programs show the correct status.
           if (!id(irrigation_busy) || (!id(cycle_soak_is_soaking) && !id(in_program_run))) {
             id(dev1_valve_status).publish_state("Idle");
           }
@@ -20210,7 +20263,8 @@ button:
                           lambda: |-
                             // Check rain delay (unless manual override is active)
                             if (!id(manual_rain_delay_override)) {
-                              return id(rain_delay_end_time) > id(homeassistant_time).now().timestamp;
+                              auto _btn_rd = id(homeassistant_time).now();
+                              return _btn_rd.is_valid() && id(rain_delay_end_time) > _btn_rd.timestamp;
                             }
                             return false;  // Override active, don't block
                         then:
@@ -20776,37 +20830,38 @@ button:
                     id(dev1_valve_status).publish_state("Idle");
                     return;
                   }
+                  // BLACKOUT DATE CHECK — independent of rain_delay_override (always enforced)
+                  // (incl. NZ public holidays via is_blackout_date sensor)
+                  if (id(is_blackout_date).state) {
+                    ESP_LOGW("irrigation", "🚫 RESUME BLOCKED — blackout date active");
+                    id(is_paused) = false;
+                    id(irrigation_busy) = false;
+                    id(in_program_run) = false;
+                    id(active_zone_number) = -1;
+                    id(watering_trigger_source) = "Idle";
+                    id(paused_zone) = -1;
+                    id(paused_cycle) = 0;
+                    id(time_remaining_when_paused) = 0;
+                    id(paused_was_soaking) = false;
+                    id(paused_soak_remaining_seconds) = 0;
+                    id(paused_total_cycles) = 0;
+                    id(paused_cycle_soak_total_duration) = 0;
+                    id(paused_cycle_soak_elapsed_time) = 0;
+                    id(cycle_soak_total_duration) = 0;
+                    id(cycle_soak_elapsed_time) = 0;
+                    id(normal_run_duration_seconds) = 0;
+                    id(cycle_soak_switch).turn_off();
+                    id(dev1_auto_advance).turn_on();
+                    id(drain_queue).execute();
+                    id(dev1_valve_status).publish_state("Idle");
+                    return;
+                  }
                   // RAIN DELAY CHECK (respects manual_rain_delay_override — resume = manual action)
                   if (!id(manual_rain_delay_override)) {
                     auto _res_time = id(homeassistant_time).now();
                     if (_res_time.is_valid() && id(rain_delay_end_time) > _res_time.timestamp) {
                       int64_t _rd = (id(rain_delay_end_time) - _res_time.timestamp) / ${seconds_per_day};
                       ESP_LOGW("irrigation", "🌧️ RESUME BLOCKED — rain delay active (%lld day(s) remaining)", _rd);
-                      id(is_paused) = false;
-                      id(irrigation_busy) = false;
-                      id(in_program_run) = false;
-                      id(active_zone_number) = -1;
-                      id(watering_trigger_source) = "Idle";
-                      id(paused_zone) = -1;
-                      id(paused_cycle) = 0;
-                      id(time_remaining_when_paused) = 0;
-                      id(paused_was_soaking) = false;
-                      id(paused_soak_remaining_seconds) = 0;
-                      id(paused_total_cycles) = 0;
-                      id(paused_cycle_soak_total_duration) = 0;
-                      id(paused_cycle_soak_elapsed_time) = 0;
-                      id(cycle_soak_total_duration) = 0;
-                      id(cycle_soak_elapsed_time) = 0;
-                      id(normal_run_duration_seconds) = 0;
-                      id(cycle_soak_switch).turn_off();
-                      id(dev1_auto_advance).turn_on();
-                      id(drain_queue).execute();
-                      id(dev1_valve_status).publish_state("Idle");
-                      return;
-                    }
-                    // BLACKOUT DATE CHECK (incl. NZ public holidays via is_blackout_date sensor)
-                    if (id(is_blackout_date).state) {
-                      ESP_LOGW("irrigation", "🚫 RESUME BLOCKED — blackout date active");
                       id(is_paused) = false;
                       id(irrigation_busy) = false;
                       id(in_program_run) = false;
@@ -20863,10 +20918,10 @@ button:
                   ESP_LOGI("irrigation", "✅ Resume safety check passed — restarting valve");
 
               # ────────────────────────────────────────────────────────────────
-              # RESUME ROUTING — WATCHDOG RACE FIX (both normal and cycle/soak)
+              # RESUME ROUTING — WATCHDOG RACE PREVENTION (both normal and cycle/soak)
               # ────────────────────────────────────────────────────────────────
-              # ROOT CAUSE: any delay between is_paused=false and a script
-              # starting creates a window where the watchdog sees:
+              # Any delay between is_paused=false and a script starting creates
+              # a window where the watchdog sees:
               #   irrigation_busy=true + no script running + no valve active
               # → "Run finished cleanly" → irrigation_busy=false
               # → valve opens with busy=false → direct-switch path fires
@@ -20874,7 +20929,7 @@ button:
               # → irrigation_busy=true for full duration → every button queues
               # → queue fills → system locked until zone completes.
               #
-              # FIX: No delays before script.execute. Both modes route through
+              # No delays before script.execute. Both modes route through
               # a script immediately. script.execute is synchronous — is_running()
               # is true before the next ESPHome event-loop tick, so the watchdog
               # never sees a window without an active script.
@@ -21070,7 +21125,7 @@ button:
               id(irrigation_busy) = false;
               id(watering_trigger_source) = "Idle";
 
-              // ── STUCK SENSOR FIX ──────────────────────────────────────────
+              // ── Immediate sensor push on stop ─────────────────────────────
               // All three sensors below use update_interval: never (push model).
               // The 1s interval only pushes them while irrigation_busy is true.
               // Without this block they freeze at their last value after STOP
@@ -21081,6 +21136,10 @@ button:
               id(dev1_time_remaining).update();
               id(dev1_progress_percent).update();
               id(cycle_soak_detailed_status).update();
+              // Reset valve status to Idle immediately — the 1s interval only
+              // pushes it while irrigation_busy is true, so without this the
+              // "Stopped" state would persist for up to 60s until the per-minute cron.
+              id(dev1_valve_status).publish_state("Idle");
               // Also push queue status immediately so dashboard shows Empty
               id(queue_status_display).update();
             }
