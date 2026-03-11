@@ -134,9 +134,9 @@ substitutions:
   # SUMMER SETTINGS (December - February)
   summer_base_multiplier: "1.3"      # Base watering level for summer
   summer_hot_temp_c: "25"            # Temperature threshold for hot days
-  summer_hot_multiplier: "1.6"       # Increased watering on hot days
+  summer_hot_multiplier: "1.5"       # Increased watering on hot days
   summer_very_hot_temp_c: "30"       # Temperature threshold for very hot days  
-  summer_very_hot_multiplier: "1.8"  # Maximum watering on very hot days
+  summer_very_hot_multiplier: "1.7"  # Maximum watering on very hot days
   
   # WINTER SETTINGS (June - August)
   winter_base_multiplier: "0.5"      # Base watering level for winter
@@ -242,7 +242,7 @@ substitutions:
   # TESTING & DIAGNOSTICS
   # ═══════════════════════════════════════════════════════════
   test_master_valve_sec: "10"         # Master valve test duration (seconds)
-  test_zone_sec: "3"                  # Individual zone test duration (seconds)
+  test_zone_sec: "7"                  # Individual zone test duration (seconds)
   default_quick_run_min: "5"          # Default quick-run duration shown in HA (minutes)
   # Note: pause watchdog timeout is ${seconds_per_day} (24h) — see 30s watchdog interval
   
@@ -1573,51 +1573,51 @@ globals:
   - id: seasonal_jan
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '1.4'  # Peak summer
+    initial_value: '1.4'  # Peak summer — hot and dry
   - id: seasonal_feb
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '1.4'  # Peak summer
+    initial_value: '1.5'  # Hottest month in Whanganui, driest
   - id: seasonal_mar
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '1.2'  # Early autumn
+    initial_value: '1.1'  # Early autumn — warm but cooling
   - id: seasonal_apr
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '1.0'  # Autumn
+    initial_value: '0.9'  # Autumn — cooler, rainfall increasing
   - id: seasonal_may
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '0.9'  # Late autumn
+    initial_value: '0.7'  # Cool, regular rainfall
   - id: seasonal_jun
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '0.7'  # Winter
+    initial_value: '0.5'  # Winter — cold and wet
   - id: seasonal_jul
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '0.6'  # Winter
+    initial_value: '0.5'  # Peak winter — coldest month
   - id: seasonal_aug
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '0.7'  # Late winter
+    initial_value: '0.6'  # End of winter
   - id: seasonal_sep
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '0.9'  # Early spring
+    initial_value: '0.7'  # Early spring — still cool, variable
   - id: seasonal_oct
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '1.1'  # Spring
+    initial_value: '0.9'  # Spring — warming but wettest month of year
   - id: seasonal_nov
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '1.3'  # Late spring
+    initial_value: '1.1'  # Late spring — drying out
   - id: seasonal_dec
     type: float
     restore_value: True  # USER SETTING - must persist across reboots
-    initial_value: '1.4'  # Early summer
+    initial_value: '1.3'  # Early summer
     
   # ═══════════════════════════════════════════════
   # FREEZE PROTECTION
@@ -3182,7 +3182,7 @@ time:
               bool is_active = id($devicename1).active_valve().has_value();
               bool mid_soak = id(irrigation_busy) && id(cycle_soak_is_soaking);
               
-              if (!is_active && !mid_soak && !id(is_paused) && id(dev1_valve_status).state != "Idle") {
+              if (!is_active && !mid_soak && !id(is_paused) && !id(test_mode_active) && id(dev1_valve_status).state != "Idle") {
                 ESP_LOGI("irrigation", "No active valve detected - resetting status to Idle");
                 id(dev1_valve_status).publish_state("Idle");
               }
@@ -4849,7 +4849,11 @@ interval:
 
           // Publish remaining time to sensor every second.
           // Use elapsed counter whenever a grand total is set (covers both C&S and normal all-zones).
-          // Fall back to per-valve time_remaining for single-zone normal runs (total=0).
+          // Fall back to epoch-based calc for single-zone normal runs (total=0):
+          //   time_remaining_active_valve() uses valve_run_duration_adjusted() internally
+          //   (slider × system multiplier), which is WRONG when Quick Run Base Duration mode
+          //   suppresses the multiplier. Use normal_run_duration_seconds + last_zone_start_epoch
+          //   instead, as these always reflect the actual intended run duration.
           {
             float rem = 0.0f;
             if (id(cycle_soak_total_duration) > 0
@@ -4857,7 +4861,18 @@ interval:
               rem = (float)(id(cycle_soak_total_duration) - id(cycle_soak_elapsed_time));
               if (rem < 0.0f) rem = 0.0f;
             } else if (id($devicename1).active_valve().has_value()) {
-              rem = (float)id($devicename1).time_remaining_active_valve().value_or(0);
+              if (id(normal_run_duration_seconds) > 0 && id(last_zone_start_epoch) > 0) {
+                auto _tr_now = id(homeassistant_time).now();
+                if (_tr_now.is_valid()) {
+                  int _elapsed = (int)(_tr_now.timestamp - id(last_zone_start_epoch));
+                  int _rem = id(normal_run_duration_seconds) - _elapsed;
+                  rem = (float)(_rem > 0 ? _rem : 0);
+                } else {
+                  rem = (float)id($devicename1).time_remaining_active_valve().value_or(0);
+                }
+              } else {
+                rem = (float)id($devicename1).time_remaining_active_valve().value_or(0);
+              }
             }
             id(valve_remaining_seconds).publish_state(rem);
           }
@@ -13608,13 +13623,23 @@ script:
           id(diagnostics_zone_index) = 0;
           ESP_LOGI("irrigation", "");
           ESP_LOGI("irrigation", "📋 TEST 4: Individual Zone Valves");
+      # Stop any leftover instances from a previous (possibly incomplete) diagnostics run
+      # before launching fresh, so Zone 1 is never skipped due to a stale queued instance.
+      - script.stop: diagnostics_zone_test_step
       - script.execute: diagnostics_zone_test_step
 
   # Single zone step — advances diagnostics_zone_index after each zone
   - id: diagnostics_zone_test_step
-    mode: single
+    mode: queued
+    max_runs: 9
     then:
       - lambda: |-
+          // Guard: stale queued instances from a previous run will see test_mode_active=false
+          // and bail out immediately, preventing repeated DIAGNOSTICS COMPLETE output.
+          if (!id(test_mode_active)) {
+            id(diagnostics_zone_phase) = 2;  // Mark as stale so delay is skipped
+            return;
+          }
           int zone = id(diagnostics_zone_index);
           if (zone >= 8) {
             // All zones processed — log result and continue with TEST 5 & 6
@@ -13668,7 +13693,7 @@ script:
             // Exit test mode and reset status
             id(test_mode_active) = false;
             id(dev1_valve_status).publish_state("Idle");
-            id(diagnostics_zone_phase) = 2;
+            id(diagnostics_zone_phase) = 2;  // Mark complete — any stale instances will be skipped by the guard
             return;
           }
           bool enabled = false;
@@ -13726,14 +13751,19 @@ script:
             case 7: id(${devicename1}_8).turn_on(); break;
           }
           id(diagnostics_zone_phase) = 1;  // waiting for valve open delay
-      # Non-blocking hold: yield to the ESPHome scheduler so WiFi/HA stays alive
-      - delay: !lambda "return (uint32_t)(${test_zone_sec} * 1000);"
+      # Non-blocking hold: yield to the ESPHome scheduler so WiFi/HA stays alive.
+      # For disabled (phase=0) or stale (phase=2) zones, use a 10ms token delay instead
+      # of the full test duration — avoids 10s wasted waits for each inactive zone.
+      - delay: !lambda "return (id(diagnostics_zone_phase) == 1) ? (uint32_t)(${test_zone_sec} * 1000) : 10;"
       - lambda: |-
           int zone = id(diagnostics_zone_index);
           if (id(diagnostics_zone_phase) != 1) {
-            // Zone was skipped — advance to next
-            id(diagnostics_zone_index)++;
-            id(diagnostics_zone_test_step).execute();
+            // Zone was skipped (phase=0) or stale instance (phase=2) —
+            // index was already incremented in the first lambda; just queue next.
+            // Stale instances (phase=2) bail out at the top guard on their next run.
+            if (id(diagnostics_zone_phase) == 0) {
+              id(diagnostics_zone_test_step).execute();
+            }
             return;
           }
           // Close zone valve
@@ -17915,7 +17945,12 @@ switch:
           // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone1} (direct → routed to request_zone_start)");
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
-          id(request_zone_start).execute(0, (int)(id(Lawn_irrigation_controller_1_duration).state * 60), false, false, std::string("Manual: ${dev1_zone1}"));
+          {
+            int _dur = (int)(id(Lawn_irrigation_controller_1_duration).state * 60);
+            ESP_LOGI("irrigation", "💡 Zone 1 switch duration: %ds (%s)", _dur,
+                     id(zone1_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            id(request_zone_start).execute(0, _dur, false, false, std::string("Manual: ${dev1_zone1}"));
+          }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
           condition:
@@ -18268,7 +18303,12 @@ switch:
           // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone2} (direct → routed to request_zone_start)");
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
-          id(request_zone_start).execute(1, (int)(id(Lawn_irrigation_controller_2_duration).state * 60), false, false, std::string("Manual: ${dev1_zone2}"));
+          {
+            int _dur = (int)(id(Lawn_irrigation_controller_2_duration).state * 60);
+            ESP_LOGI("irrigation", "💡 Zone 2 switch duration: %ds (%s)", _dur,
+                     id(zone2_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            id(request_zone_start).execute(1, _dur, false, false, std::string("Manual: ${dev1_zone2}"));
+          }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
           condition:
@@ -18614,7 +18654,12 @@ switch:
           // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone3} (direct → routed to request_zone_start)");
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
-          id(request_zone_start).execute(2, (int)(id(Lawn_irrigation_controller_3_duration).state * 60), false, false, std::string("Manual: ${dev1_zone3}"));
+          {
+            int _dur = (int)(id(Lawn_irrigation_controller_3_duration).state * 60);
+            ESP_LOGI("irrigation", "💡 Zone 3 switch duration: %ds (%s)", _dur,
+                     id(zone3_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            id(request_zone_start).execute(2, _dur, false, false, std::string("Manual: ${dev1_zone3}"));
+          }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
           condition:
@@ -18960,7 +19005,12 @@ switch:
           // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone4} (direct → routed to request_zone_start)");
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
-          id(request_zone_start).execute(3, (int)(id(Lawn_irrigation_controller_4_duration).state * 60), false, false, std::string("Manual: ${dev1_zone4}"));
+          {
+            int _dur = (int)(id(Lawn_irrigation_controller_4_duration).state * 60);
+            ESP_LOGI("irrigation", "💡 Zone 4 switch duration: %ds (%s)", _dur,
+                     id(zone4_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            id(request_zone_start).execute(3, _dur, false, false, std::string("Manual: ${dev1_zone4}"));
+          }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
           condition:
@@ -19306,7 +19356,12 @@ switch:
           // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone5} (direct → routed to request_zone_start)");
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
-          id(request_zone_start).execute(4, (int)(id(Lawn_irrigation_controller_5_duration).state * 60), false, false, std::string("Manual: ${dev1_zone5}"));
+          {
+            int _dur = (int)(id(Lawn_irrigation_controller_5_duration).state * 60);
+            ESP_LOGI("irrigation", "💡 Zone 5 switch duration: %ds (%s)", _dur,
+                     id(zone5_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            id(request_zone_start).execute(4, _dur, false, false, std::string("Manual: ${dev1_zone5}"));
+          }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
           condition:
@@ -19652,7 +19707,12 @@ switch:
           // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone6} (direct → routed to request_zone_start)");
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
-          id(request_zone_start).execute(5, (int)(id(Lawn_irrigation_controller_6_duration).state * 60), false, false, std::string("Manual: ${dev1_zone6}"));
+          {
+            int _dur = (int)(id(Lawn_irrigation_controller_6_duration).state * 60);
+            ESP_LOGI("irrigation", "💡 Zone 6 switch duration: %ds (%s)", _dur,
+                     id(zone6_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            id(request_zone_start).execute(5, _dur, false, false, std::string("Manual: ${dev1_zone6}"));
+          }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
           condition:
@@ -19998,7 +20058,12 @@ switch:
           // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone7} (direct → routed to request_zone_start)");
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
-          id(request_zone_start).execute(6, (int)(id(Lawn_irrigation_controller_7_duration).state * 60), false, false, std::string("Manual: ${dev1_zone7}"));
+          {
+            int _dur = (int)(id(Lawn_irrigation_controller_7_duration).state * 60);
+            ESP_LOGI("irrigation", "💡 Zone 7 switch duration: %ds (%s)", _dur,
+                     id(zone7_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            id(request_zone_start).execute(6, _dur, false, false, std::string("Manual: ${dev1_zone7}"));
+          }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
           condition:
@@ -20344,7 +20409,12 @@ switch:
           // run_zone_with_cycles → sprinkler.start_single_valve → scripted path).
           ESP_LOGI("irrigation", "📍 TRIGGER: Manual: ${dev1_zone8} (direct → routed to request_zone_start)");
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
-          id(request_zone_start).execute(7, (int)(id(Lawn_irrigation_controller_8_duration).state * 60), false, false, std::string("Manual: ${dev1_zone8}"));
+          {
+            int _dur = (int)(id(Lawn_irrigation_controller_8_duration).state * 60);
+            ESP_LOGI("irrigation", "💡 Zone 8 switch duration: %ds (%s)", _dur,
+                     id(zone8_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            id(request_zone_start).execute(7, _dur, false, false, std::string("Manual: ${dev1_zone8}"));
+          }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
       - if:
           condition:
@@ -20591,6 +20661,15 @@ sprinkler:
       on_turn_off:
         - lambda: |-
 
+            // Don't interfere with diagnostics — valve switches are opened/closed directly
+            // during zone tests, which causes the sprinkler component to auto-close the main
+            // switch when the last enabled zone turns off. Without this guard that would
+            // fire run_zone_with_cycles.stop() and reset all state mid-diagnostics.
+            if (id(test_mode_active)) {
+              ESP_LOGD("irrigation", "Main switch OFF during diagnostics — state reset skipped");
+              return;
+            }
+
             // Don't stop run_zone_with_cycles during cycle/soak mode with multiple cycles
             // Only stop if we're in normal mode or if it's a manual stop
             bool in_cycle_soak = (id(total_cycles) > 0 && id(current_cycle) > 0);
@@ -20650,6 +20729,11 @@ sprinkler:
 
       on_turn_on:
         - lambda: |-
+            // DIAGNOSTICS BYPASS: Skip all restriction checks during hardware testing
+            if (id(test_mode_active)) {
+              ESP_LOGI("irrigation", "✅ Main switch turned ON - all checks passed");
+              return;
+            }
             // CRITICAL: Check if irrigation system is enabled
             if (!id(irrigation_system_enable).state) {
               std::string _reason = "🚫 Irrigation system disabled";
@@ -22476,6 +22560,11 @@ button:
           id(current_month_usage) = 0;
           id(budget_exceeded) = false;
           id(budget_warning_sent) = false;
+          
+          // Reset today's water used
+          id(daily_water_litres) = 0.0f;
+          id(daily_water_sensor).publish_state(0.0f);
+          ESP_LOGI("irrigation", "✅ Today water usage counter reset to 0 L");
           
           // Set reset timestamp — only if time is synced; 0 is handled downstream
           // as "Never" so storing epoch 0 here is safe and avoids a 50-year "days since reset".
