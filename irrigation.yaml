@@ -188,7 +188,7 @@ substitutions:
   # SYSTEM DEFAULTS
   # ═══════════════════════════════════════════════════════════
   default_freeze_threshold_c:       "2.0"    # Initial freeze protection temperature
-  default_monthly_budget_l:         "10000.0" # Monthly water budget (litres)
+  default_monthly_budget_l:         "90000.0" # Monthly water budget (litres)
   default_max_zone_runtime_min:     "60"     # Maximum minutes per zone per day
   default_stop_restart_delay_sec:   "8"      # Seconds between zone stop and next start
   default_valve_open_delay_sec:     "2"      # ESPHome sprinkler inter-zone delay (seconds)
