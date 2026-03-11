@@ -188,7 +188,9 @@ substitutions:
   # SYSTEM DEFAULTS
   # ═══════════════════════════════════════════════════════════
   default_freeze_threshold_c:       "2.0"    # Initial freeze protection temperature
-  default_monthly_budget_l:         "90000.0" # Monthly water budget (litres)
+  default_monthly_budget_l:         "10000.0" # Monthly water budget (litres)
+  min_monthly_budget_l:             "1000"    # Minimum settable water budget (litres)
+  max_monthly_budget_l:             "900000"  # Maximum settable water budget (litres)
   default_max_zone_runtime_min:     "60"     # Maximum minutes per zone per day
   default_stop_restart_delay_sec:   "8"      # Seconds between zone stop and next start
   default_valve_open_delay_sec:     "2"      # ESPHome sprinkler inter-zone delay (seconds)
@@ -246,6 +248,95 @@ substitutions:
   default_quick_run_min: "5"          # Default quick-run duration shown in HA (minutes)
   # Note: pause watchdog timeout is ${seconds_per_day} (24h) — see 30s watchdog interval
   
+
+  # ═══════════════════════════════════════════════════════════
+  # ZONE RUN DURATION SLIDER (sprinkler component)
+  # ═══════════════════════════════════════════════════════════
+  default_zone_run_min: "30"          # Default zone run time (minutes)
+  min_zone_run_min:     "1"           # Minimum zone run time (minutes)
+  max_zone_run_min:     "60"          # Maximum zone run time (minutes)
+
+  # ═══════════════════════════════════════════════════════════
+  # MULTIPLIER SLIDER
+  # ═══════════════════════════════════════════════════════════
+  min_multiplier:  "0.01"             # Minimum manual multiplier
+  max_multiplier:  "2.00"             # Maximum manual multiplier
+  step_multiplier: "0.01"             # Multiplier slider step
+
+  # ═══════════════════════════════════════════════════════════
+  # RAIN DELAY
+  # ═══════════════════════════════════════════════════════════
+  max_rain_delay_days: "14"           # Maximum settable rain delay (days)
+
+  # ═══════════════════════════════════════════════════════════
+  # QUICK RUN DURATION SLIDER
+  # ═══════════════════════════════════════════════════════════
+  min_quick_run_min: "1"              # Minimum quick run duration (minutes)
+  max_quick_run_min: "15"             # Maximum quick run duration (minutes)
+
+  # ═══════════════════════════════════════════════════════════
+  # ZONE FLOW RATE
+  # ═══════════════════════════════════════════════════════════
+  min_flow_rate_lpm:  "1"             # Minimum zone flow rate (L/min)
+  max_flow_rate_lpm:  "100"           # Maximum zone flow rate (L/min)
+  step_flow_rate_lpm: "0.5"           # Flow rate slider step
+
+  # ═══════════════════════════════════════════════════════════
+  # ET THRESHOLD SLIDER
+  # ═══════════════════════════════════════════════════════════
+  min_et_threshold_mm: "10"           # Minimum ET deficit trigger (mm)
+  max_et_threshold_mm: "50"           # Maximum ET deficit trigger (mm)
+
+  # ═══════════════════════════════════════════════════════════
+  # CYCLE & SOAK SLIDER RANGES
+  # ═══════════════════════════════════════════════════════════
+  min_cycle_duration_min: "3"         # Minimum cycle run time (minutes)
+  max_cycle_duration_min: "20"        # Maximum cycle run time (minutes)
+  min_soak_duration_min:  "1"         # Minimum soak wait time (minutes)
+  max_soak_duration_min:  "60"        # Maximum soak wait time (minutes)
+  max_station_delay_sec:  "60"        # Maximum inter-zone station delay (seconds)
+  step_station_delay_sec: "5"         # Station delay slider step
+
+  # ═══════════════════════════════════════════════════════════
+  # SEASONAL FACTOR SLIDER RANGES
+  # ═══════════════════════════════════════════════════════════
+  min_seasonal_factor:  "0.5"         # Minimum monthly seasonal factor
+  max_seasonal_factor:  "2.0"         # Maximum monthly seasonal factor
+  step_seasonal_factor: "0.1"         # Seasonal factor slider step
+
+  # ═══════════════════════════════════════════════════════════
+  # FREEZE THRESHOLD SLIDER
+  # ═══════════════════════════════════════════════════════════
+  min_freeze_threshold_c:  "-5"       # Minimum freeze threshold (°C)
+  max_freeze_threshold_c:  "10"       # Maximum freeze threshold (°C)
+  step_freeze_threshold_c: "0.5"      # Freeze threshold slider step
+
+  # ═══════════════════════════════════════════════════════════
+  # MONTHLY BUDGET SLIDER STEP
+  # ═══════════════════════════════════════════════════════════
+  step_monthly_budget_l: "100"        # Monthly budget slider step (litres)
+
+  # ═══════════════════════════════════════════════════════════
+  # ZONE RUNTIME LIMIT SLIDER
+  # ═══════════════════════════════════════════════════════════
+  min_zone_runtime_limit_min:  "30"   # Minimum daily zone runtime cap (minutes)
+  max_zone_runtime_limit_min:  "240"  # Maximum daily zone runtime cap (minutes)
+  step_zone_runtime_limit_min: "5"    # Runtime limit slider step
+
+  # ═══════════════════════════════════════════════════════════
+  # FORECAST THRESHOLD SLIDERS
+  # ═══════════════════════════════════════════════════════════
+  min_forecast_skip_mm:   "1.0"       # Minimum forecast skip threshold (mm)
+  max_forecast_skip_mm:   "10.0"      # Maximum forecast skip threshold (mm)
+  step_forecast_skip_mm:  "0.5"       # Forecast skip threshold step
+  min_forecast_delay_mm:  "5.0"       # Minimum forecast auto-delay threshold (mm)
+  max_forecast_delay_mm:  "20.0"      # Maximum forecast auto-delay threshold (mm)
+  step_forecast_delay_mm: "1.0"       # Forecast auto-delay threshold step
+
+  # ═══════════════════════════════════════════════════════════
+  # PER-ZONE PER-PROGRAM DURATION OVERRIDE
+  # ═══════════════════════════════════════════════════════════
+  max_zone_program_override_min: "90" # Maximum per-zone program duration override (minutes)
   # ═══════════════════════════════════════════════════════════
   # PROGRAM START TIME DEFAULTS (24-hour format)
   # ═══════════════════════════════════════════════════════════
@@ -8038,9 +8129,9 @@ number:
   - platform: template
     id: "${dev1_what}_multiplier"
     name: "${devicename1}_multiplier"
-    min_value: 0.01
-    max_value: 2.00
-    step: 0.01
+    min_value: ${min_multiplier}
+    max_value: ${max_multiplier}
+    step: ${step_multiplier}
     icon: "mdi:water-percent"
     mode: slider
     lambda: "return id($devicename1).multiplier();"
@@ -8055,7 +8146,7 @@ number:
     id: rain_delay_days_input
     name: "Rain Delay Days"
     min_value: 0
-    max_value: 14
+    max_value: ${max_rain_delay_days}
     step: 1
     icon: "mdi:weather-rainy"
     mode: box
@@ -8089,8 +8180,8 @@ number:
   - platform: template
     id: et_threshold_input
     name: "$dev1_what ET Water Threshold"
-    min_value: 10
-    max_value: 50
+    min_value: ${min_et_threshold_mm}
+    max_value: ${max_et_threshold_mm}
     step: 1
     icon: "mdi:water-alert"
 
@@ -8108,8 +8199,8 @@ number:
   - platform: template
     id: quick_run_duration
     name: "Quick Run Duration"
-    min_value: 1
-    max_value: 15
+    min_value: ${min_quick_run_min}
+    max_value: ${max_quick_run_min}
     step: 1
     initial_value: ${default_quick_run_min}
     icon: "mdi:timer"
@@ -8125,9 +8216,9 @@ number:
   - platform: template
     id: zone1_flow_rate_input
     name: "$dev1_zone1 Flow Rate"
-    min_value: 1
-    max_value: 100
-    step: 0.5
+    min_value: ${min_flow_rate_lpm}
+    max_value: ${max_flow_rate_lpm}
+    step: ${step_flow_rate_lpm}
     icon: "mdi:water-pump"
     mode: box
     unit_of_measurement: "L/min"
@@ -8140,9 +8231,9 @@ number:
   - platform: template
     id: zone2_flow_rate_input
     name: "$dev1_zone2 Flow Rate"
-    min_value: 1
-    max_value: 100
-    step: 0.5
+    min_value: ${min_flow_rate_lpm}
+    max_value: ${max_flow_rate_lpm}
+    step: ${step_flow_rate_lpm}
     icon: "mdi:water-pump"
     mode: box
     unit_of_measurement: "L/min"
@@ -8155,9 +8246,9 @@ number:
   - platform: template
     id: zone3_flow_rate_input
     name: "$dev1_zone3 Flow Rate"
-    min_value: 1
-    max_value: 100
-    step: 0.5
+    min_value: ${min_flow_rate_lpm}
+    max_value: ${max_flow_rate_lpm}
+    step: ${step_flow_rate_lpm}
     icon: "mdi:water-pump"
     mode: box
     unit_of_measurement: "L/min"
@@ -8170,9 +8261,9 @@ number:
   - platform: template
     id: zone4_flow_rate_input
     name: "$dev1_zone4 Flow Rate"
-    min_value: 1
-    max_value: 100
-    step: 0.5
+    min_value: ${min_flow_rate_lpm}
+    max_value: ${max_flow_rate_lpm}
+    step: ${step_flow_rate_lpm}
     icon: "mdi:water-pump"
     mode: box
     unit_of_measurement: "L/min"
@@ -8185,9 +8276,9 @@ number:
   - platform: template
     id: zone5_flow_rate_input
     name: "$dev1_zone5 Flow Rate"
-    min_value: 1
-    max_value: 100
-    step: 0.5
+    min_value: ${min_flow_rate_lpm}
+    max_value: ${max_flow_rate_lpm}
+    step: ${step_flow_rate_lpm}
     icon: "mdi:water-pump"
     mode: box
     unit_of_measurement: "L/min"
@@ -8200,9 +8291,9 @@ number:
   - platform: template
     id: zone6_flow_rate_input
     name: "$dev1_zone6 Flow Rate"
-    min_value: 1
-    max_value: 100
-    step: 0.5
+    min_value: ${min_flow_rate_lpm}
+    max_value: ${max_flow_rate_lpm}
+    step: ${step_flow_rate_lpm}
     icon: "mdi:water-pump"
     mode: box
     unit_of_measurement: "L/min"
@@ -8215,9 +8306,9 @@ number:
   - platform: template
     id: zone7_flow_rate_input
     name: "$dev1_zone7 Flow Rate"
-    min_value: 1
-    max_value: 100
-    step: 0.5
+    min_value: ${min_flow_rate_lpm}
+    max_value: ${max_flow_rate_lpm}
+    step: ${step_flow_rate_lpm}
     icon: "mdi:water-pump"
     mode: box
     unit_of_measurement: "L/min"
@@ -8230,9 +8321,9 @@ number:
   - platform: template
     id: zone8_flow_rate_input
     name: "$dev1_zone8 Flow Rate"
-    min_value: 1
-    max_value: 100
-    step: 0.5
+    min_value: ${min_flow_rate_lpm}
+    max_value: ${max_flow_rate_lpm}
+    step: ${step_flow_rate_lpm}
     icon: "mdi:water-pump"
     mode: box
     unit_of_measurement: "L/min"
@@ -8278,8 +8369,8 @@ number:
   - platform: template
     id: cycle_duration_input
     name: "Cycle Duration"
-    min_value: 3
-    max_value: 20
+    min_value: ${min_cycle_duration_min}
+    max_value: ${max_cycle_duration_min}
     step: 1
     icon: "mdi:timer-play"
     mode: slider
@@ -8294,8 +8385,8 @@ number:
   - platform: template
     id: soak_duration_input
     name: "Soak Duration"
-    min_value: 3         # Match cycle minimum
-    max_value: 20        # Match cycle maximum
+    min_value: ${min_soak_duration_min}
+    max_value: ${max_soak_duration_min}
     step: 1
     icon: "mdi:timer-pause"
     mode: slider
@@ -8311,8 +8402,8 @@ number:
     id: station_delay_input
     name: "Station Delay Between Zones"
     min_value: 0
-    max_value: 60
-    step: 5
+    max_value: ${max_station_delay_sec}
+    step: ${step_station_delay_sec}
     icon: "mdi:timer-cog"
     mode: slider
     unit_of_measurement: "sec"
@@ -9213,7 +9304,7 @@ number:
     id: zone1_program_a_duration_input
     name: "$dev1_zone1 → ${program_a_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9228,7 +9319,7 @@ number:
     id: zone1_program_b_duration_input
     name: "$dev1_zone1 → ${program_b_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9243,7 +9334,7 @@ number:
     id: zone1_program_c_duration_input
     name: "$dev1_zone1 → ${program_c_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9259,7 +9350,7 @@ number:
     id: zone2_program_a_duration_input
     name: "$dev1_zone2 → ${program_a_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9274,7 +9365,7 @@ number:
     id: zone2_program_b_duration_input
     name: "$dev1_zone2 → ${program_b_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9289,7 +9380,7 @@ number:
     id: zone2_program_c_duration_input
     name: "$dev1_zone2 → ${program_c_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9305,7 +9396,7 @@ number:
     id: zone3_program_a_duration_input
     name: "$dev1_zone3 → ${program_a_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9320,7 +9411,7 @@ number:
     id: zone3_program_b_duration_input
     name: "$dev1_zone3 → ${program_b_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9335,7 +9426,7 @@ number:
     id: zone3_program_c_duration_input
     name: "$dev1_zone3 → ${program_c_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9351,7 +9442,7 @@ number:
     id: zone4_program_a_duration_input
     name: "$dev1_zone4 → ${program_a_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9366,7 +9457,7 @@ number:
     id: zone4_program_b_duration_input
     name: "$dev1_zone4 → ${program_b_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9381,7 +9472,7 @@ number:
     id: zone4_program_c_duration_input
     name: "$dev1_zone4 → ${program_c_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9397,7 +9488,7 @@ number:
     id: zone5_program_a_duration_input
     name: "$dev1_zone5 → ${program_a_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9412,7 +9503,7 @@ number:
     id: zone5_program_b_duration_input
     name: "$dev1_zone5 → ${program_b_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9427,7 +9518,7 @@ number:
     id: zone5_program_c_duration_input
     name: "$dev1_zone5 → ${program_c_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9443,7 +9534,7 @@ number:
     id: zone6_program_a_duration_input
     name: "$dev1_zone6 → ${program_a_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9458,7 +9549,7 @@ number:
     id: zone6_program_b_duration_input
     name: "$dev1_zone6 → ${program_b_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9473,7 +9564,7 @@ number:
     id: zone6_program_c_duration_input
     name: "$dev1_zone6 → ${program_c_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9489,7 +9580,7 @@ number:
     id: zone7_program_a_duration_input
     name: "$dev1_zone7 → ${program_a_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9504,7 +9595,7 @@ number:
     id: zone7_program_b_duration_input
     name: "$dev1_zone7 → ${program_b_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9519,7 +9610,7 @@ number:
     id: zone7_program_c_duration_input
     name: "$dev1_zone7 → ${program_c_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9535,7 +9626,7 @@ number:
     id: zone8_program_a_duration_input
     name: "$dev1_zone8 → ${program_a_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9550,7 +9641,7 @@ number:
     id: zone8_program_b_duration_input
     name: "$dev1_zone8 → ${program_b_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9565,7 +9656,7 @@ number:
     id: zone8_program_c_duration_input
     name: "$dev1_zone8 → ${program_c_name} Duration (0=default)"
     min_value: 0
-    max_value: 90
+    max_value: ${max_zone_program_override_min}
     step: 1
     icon: "mdi:timer-sand"
     mode: box
@@ -9583,9 +9674,9 @@ number:
   - platform: template
     id: seasonal_jan_input
     name: "$dev1_what Seasonal Jan"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_jan);"
@@ -9597,9 +9688,9 @@ number:
   - platform: template
     id: seasonal_feb_input
     name: "$dev1_what Seasonal Feb"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_feb);"
@@ -9611,9 +9702,9 @@ number:
   - platform: template
     id: seasonal_mar_input
     name: "$dev1_what Seasonal Mar"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_mar);"
@@ -9625,9 +9716,9 @@ number:
   - platform: template
     id: seasonal_apr_input
     name: "$dev1_what Seasonal Apr"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_apr);"
@@ -9639,9 +9730,9 @@ number:
   - platform: template
     id: seasonal_may_input
     name: "$dev1_what Seasonal May"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_may);"
@@ -9653,9 +9744,9 @@ number:
   - platform: template
     id: seasonal_jun_input
     name: "$dev1_what Seasonal Jun"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_jun);"
@@ -9667,9 +9758,9 @@ number:
   - platform: template
     id: seasonal_jul_input
     name: "$dev1_what Seasonal Jul"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_jul);"
@@ -9681,9 +9772,9 @@ number:
   - platform: template
     id: seasonal_aug_input
     name: "$dev1_what Seasonal Aug"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_aug);"
@@ -9695,9 +9786,9 @@ number:
   - platform: template
     id: seasonal_sep_input
     name: "$dev1_what Seasonal Sep"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_sep);"
@@ -9709,9 +9800,9 @@ number:
   - platform: template
     id: seasonal_oct_input
     name: "$dev1_what Seasonal Oct"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_oct);"
@@ -9723,9 +9814,9 @@ number:
   - platform: template
     id: seasonal_nov_input
     name: "$dev1_what Seasonal Nov"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_nov);"
@@ -9737,9 +9828,9 @@ number:
   - platform: template
     id: seasonal_dec_input
     name: "$dev1_what Seasonal Dec"
-    min_value: 0.5
-    max_value: 2.0
-    step: 0.1
+    min_value: ${min_seasonal_factor}
+    max_value: ${max_seasonal_factor}
+    step: ${step_seasonal_factor}
     icon: "mdi:calendar-month"
     mode: slider
     lambda: "return id(seasonal_dec);"
@@ -9756,9 +9847,9 @@ number:
   - platform: template
     id: freeze_threshold_input
     name: "$dev1_what Freeze Threshold"
-    min_value: -5
-    max_value: 10
-    step: 0.5
+    min_value: ${min_freeze_threshold_c}
+    max_value: ${max_freeze_threshold_c}
+    step: ${step_freeze_threshold_c}
     icon: "mdi:snowflake-thermometer"
     mode: box
     unit_of_measurement: "°C"
@@ -9773,9 +9864,9 @@ number:
   - platform: template
     id: monthly_budget_input
     name: "$dev1_what Monthly Water Budget"
-    min_value: 1000
-    max_value: 100000
-    step: 100
+    min_value: ${min_monthly_budget_l}
+    max_value: ${max_monthly_budget_l}
+    step: ${step_monthly_budget_l}
     icon: "mdi:water-pump"
     mode: box
     unit_of_measurement: "L"
@@ -9790,9 +9881,9 @@ number:
   - platform: template
     id: zone_runtime_limit_input
     name: "$dev1_what Zone Runtime Limit"
-    min_value: 30
-    max_value: 240
-    step: 5
+    min_value: ${min_zone_runtime_limit_min}
+    max_value: ${max_zone_runtime_limit_min}
+    step: ${step_zone_runtime_limit_min}
     icon: "mdi:timer-sand"
     mode: slider
     unit_of_measurement: "min"
@@ -10139,9 +10230,9 @@ number:
   - platform: template
     name: "$dev1_what Forecast Skip Threshold"
     icon: "mdi:water-alert"
-    min_value: 1.0
-    max_value: 10.0
-    step: 0.5
+    min_value: ${min_forecast_skip_mm}
+    max_value: ${max_forecast_skip_mm}
+    step: ${step_forecast_skip_mm}
     unit_of_measurement: "mm"
     mode: box
     lambda: "return id(forecast_rain_threshold_significant);"
@@ -10157,9 +10248,9 @@ number:
   - platform: template
     name: "$dev1_what Forecast Auto-Delay Threshold"
     icon: "mdi:water-off"
-    min_value: 5.0
-    max_value: 20.0
-    step: 1.0
+    min_value: ${min_forecast_delay_mm}
+    max_value: ${max_forecast_delay_mm}
+    step: ${step_forecast_delay_mm}
     unit_of_measurement: "mm"
     mode: box
     lambda: "return id(forecast_rain_threshold_high);"
@@ -20857,11 +20948,11 @@ sprinkler:
         run_duration_number:
           id: "${devicename1}_1_duration"
           name: "${dev1_zone1} Run Duration"
-          initial_value: 30
+          initial_value: ${default_zone_run_min}
           unit_of_measurement: $uom
           mode: slider
-          min_value: 1
-          max_value: 60
+          min_value: ${min_zone_run_min}
+          max_value: ${max_zone_run_min}
           step: 1
           restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_1
@@ -20873,11 +20964,11 @@ sprinkler:
         run_duration_number:
           id: "${devicename1}_2_duration"
           name: "${dev1_zone2} Run Duration"
-          initial_value: 30
+          initial_value: ${default_zone_run_min}
           unit_of_measurement: $uom
           mode: slider
-          min_value: 1
-          max_value: 60
+          min_value: ${min_zone_run_min}
+          max_value: ${max_zone_run_min}
           step: 1
           restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_2
@@ -20889,11 +20980,11 @@ sprinkler:
         run_duration_number:
           id: "${devicename1}_3_duration"
           name: "${dev1_zone3} Run Duration"
-          initial_value: 30
+          initial_value: ${default_zone_run_min}
           unit_of_measurement: $uom
           mode: slider
-          min_value: 1
-          max_value: 60
+          min_value: ${min_zone_run_min}
+          max_value: ${max_zone_run_min}
           step: 1
           restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_3
@@ -20905,11 +20996,11 @@ sprinkler:
         run_duration_number:
           id: "${devicename1}_4_duration"
           name: "${dev1_zone4} Run Duration"
-          initial_value: 30
+          initial_value: ${default_zone_run_min}
           unit_of_measurement: $uom
           mode: slider
-          min_value: 1
-          max_value: 60
+          min_value: ${min_zone_run_min}
+          max_value: ${max_zone_run_min}
           step: 1
           restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_4
@@ -20921,11 +21012,11 @@ sprinkler:
         run_duration_number:
           id: "${devicename1}_5_duration"
           name: "${dev1_zone5} Run Duration"
-          initial_value: 30
+          initial_value: ${default_zone_run_min}
           unit_of_measurement: $uom
           mode: slider
-          min_value: 1
-          max_value: 60
+          min_value: ${min_zone_run_min}
+          max_value: ${max_zone_run_min}
           step: 1
           restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_5
@@ -20937,11 +21028,11 @@ sprinkler:
         run_duration_number:
           id: "${devicename1}_6_duration"
           name: "${dev1_zone6} Run Duration"
-          initial_value: 30
+          initial_value: ${default_zone_run_min}
           unit_of_measurement: $uom
           mode: slider
-          min_value: 1
-          max_value: 60
+          min_value: ${min_zone_run_min}
+          max_value: ${max_zone_run_min}
           step: 1
           restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_6
@@ -20953,11 +21044,11 @@ sprinkler:
         run_duration_number:
           id: "${devicename1}_7_duration"
           name: "${dev1_zone7} Run Duration"
-          initial_value: 30
+          initial_value: ${default_zone_run_min}
           unit_of_measurement: $uom
           mode: slider
-          min_value: 1
-          max_value: 60
+          min_value: ${min_zone_run_min}
+          max_value: ${max_zone_run_min}
           step: 1
           restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_7
@@ -20969,11 +21060,11 @@ sprinkler:
         run_duration_number:
           id: "${devicename1}_8_duration"
           name: "${dev1_zone8} Run Duration"
-          initial_value: 30
+          initial_value: ${default_zone_run_min}
           unit_of_measurement: $uom
           mode: slider
-          min_value: 1
-          max_value: 60
+          min_value: ${min_zone_run_min}
+          max_value: ${max_zone_run_min}
           step: 1
           restore_value: True  # USER SETTING - must persist across reboots
         valve_switch_id: ${devicename1}_8
