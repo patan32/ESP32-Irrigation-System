@@ -4697,6 +4697,13 @@ interval:
                   // Without this, the system stays locked indefinitely after a hard failure.
                   id(irrigation_busy) = false;
                   id(watering_trigger_source) = "Idle";
+                  id(valve_remaining_seconds).publish_state(0.0f);
+                  id(dev1_time_remaining).publish_state("0:00:00");
+                  id(dev1_progress_percent).publish_state("0%");
+                  id(cycle_soak_detailed_status).update();
+                  id(current_watering_trigger).publish_state("Idle");
+                  id(queue_status_display).update();
+                  id(drain_queue).execute();
                   return;
                 }
 
@@ -4778,7 +4785,10 @@ interval:
                   if (id(zone6_enable).state) { _t += (int)(id(${devicename1}_6_duration).state * 60 * _m); _n++; }
                   if (id(zone7_enable).state) { _t += (int)(id(${devicename1}_7_duration).state * 60 * _m); _n++; }
                   if (id(zone8_enable).state) { _t += (int)(id(${devicename1}_8_duration).state * 60 * _m); _n++; }
-                  if (_n > 1) _t += (_n - 1) * ${default_valve_open_delay_sec};
+                  // NOTE: valve_open_delay (2s × (n-1)) is NOT included — the elapsed
+                  // counter cannot advance during those inter-zone gaps because active_valve()
+                  // returns empty between zones in start_full_cycle. Including them left a
+                  // positive residual on the timer at the end of the run.
                   id(cycle_soak_total_duration) = _t;
                   id(cycle_soak_elapsed_time) = 0;
                   // Mark as All Zones Normal run so Pause/Resume restores the
@@ -4916,8 +4926,15 @@ interval:
             // Auto-extend total when elapsed reaches it but valve is still active.
             // Handles the case where deferred_zone_restart added time that wasn't in the
             // original grand total (e.g. full-cycle restart instead of remaining-cycle).
+            // Auto-extend: only fire when a C&S script is actively running.
+            // Guarding on irrigation_busy alone was too broad — busy stays true during
+            // the brief cleanup window after the last cycle, causing a spurious extend
+            // that inflated total_duration and left the timer showing stale minutes.
+            bool _cs_active = id(run_zone_with_cycles).is_running() ||
+                              id(run_all_zones_cycle_soak_script).is_running() ||
+                              id(continue_cycle_soak_after_resume).is_running();
             if (id(cycle_soak_elapsed_time) >= id(cycle_soak_total_duration) &&
-                id(cycle_soak_total_duration) > 0 && id(irrigation_busy)) {
+                id(cycle_soak_total_duration) > 0 && id(irrigation_busy) && _cs_active) {
               auto remaining_opt = id($devicename1).time_remaining_active_valve();
               if (remaining_opt.has_value() && remaining_opt.value() > 2) {
                 int ext = remaining_opt.value();
@@ -5134,6 +5151,12 @@ interval:
               }
               id(et_pending_irrigation) = false;
               id(push_et_sensors).execute();
+              id(valve_remaining_seconds).publish_state(0.0f);
+              id(dev1_time_remaining).publish_state("0:00:00");
+              id(dev1_progress_percent).publish_state("0%");
+              id(cycle_soak_detailed_status).update();
+              id(current_watering_trigger).publish_state("Idle");
+              id(queue_status_display).update();
               
               ESP_LOGW("irrigation", "❄️ ═══════════════════════════════════════════════");
               ESP_LOGW("irrigation", "");
@@ -5284,6 +5307,12 @@ interval:
               id(paused_was_all_zones_normal) = false;
               id(watering_trigger_source) = "Idle";
               id(dev1_valve_status).publish_state("Idle");
+              id(valve_remaining_seconds).publish_state(0.0f);
+              id(dev1_time_remaining).publish_state("0:00:00");
+              id(dev1_progress_percent).publish_state("0%");
+              id(cycle_soak_detailed_status).update();
+              id(current_watering_trigger).publish_state("Idle");
+              id(queue_status_display).update();
             }
           }
           
@@ -5389,6 +5418,12 @@ interval:
               id(dev1_valve_status).publish_state("Idle");
 
               id(watering_trigger_source) = "Idle";
+              id(valve_remaining_seconds).publish_state(0.0f);
+              id(dev1_time_remaining).publish_state("0:00:00");
+              id(dev1_progress_percent).publish_state("0%");
+              id(cycle_soak_detailed_status).update();
+              id(current_watering_trigger).publish_state("Idle");
+              id(queue_status_display).update();
               pause_start_time = 0;
               id(drain_queue).execute();
             }
@@ -5462,6 +5497,11 @@ interval:
             id(last_zone_start_epoch) = 0;
             id(watering_trigger_source) = "Idle";
             id(dev1_valve_status).publish_state("Idle");
+            // Zero the timer sensors — 1s interval stops updating after irrigation_busy
+            // is cleared, so without an explicit push the display freezes at last value.
+            id(valve_remaining_seconds).publish_state(0.0f);
+            id(dev1_time_remaining).publish_state("0:00:00");
+            id(dev1_progress_percent).publish_state("0%");
             // Ensure C&S switch and auto-advance are restored
             id(cycle_soak_switch).turn_off();
             id(dev1_auto_advance).turn_on();
@@ -5581,6 +5621,12 @@ interval:
               }
               id(et_pending_irrigation) = false;
               id(push_et_sensors).execute();
+              id(valve_remaining_seconds).publish_state(0.0f);
+              id(dev1_time_remaining).publish_state("0:00:00");
+              id(dev1_progress_percent).publish_state("0%");
+              id(cycle_soak_detailed_status).update();
+              id(current_watering_trigger).publish_state("Idle");
+              id(queue_status_display).update();
 
               id(drain_queue).execute();
             }
@@ -11498,7 +11544,10 @@ script:
           if (id(zone6_enable).state) { _rn_total += (int)(id(${devicename1}_6_duration).state * 60 * _rn_mult); _rn_n++; }
           if (id(zone7_enable).state) { _rn_total += (int)(id(${devicename1}_7_duration).state * 60 * _rn_mult); _rn_n++; }
           if (id(zone8_enable).state) { _rn_total += (int)(id(${devicename1}_8_duration).state * 60 * _rn_mult); _rn_n++; }
-          if (_rn_n > 1) _rn_total += (_rn_n - 1) * ${default_valve_open_delay_sec};
+          // NOTE: valve_open_delay (2s per zone gap) is NOT added to the total.
+          // The elapsed counter's should_advance guard (valve_active || soaking || station_delay)
+          // cannot advance during those 2s gaps because active_valve() returns empty between
+          // zones in start_full_cycle. Including (n-1)*2s left a stale residual on the timer.
           id(cycle_soak_total_duration) = _rn_total;
           id(cycle_soak_elapsed_time) = 0;
           // Mark as All Zones Normal run so Pause/Resume restores the
@@ -11897,8 +11946,9 @@ script:
                       if (id(zone6_enable).state) { total_secs += (int)(id(${devicename1}_6_duration).state * 60 * mult); n_enabled++; }
                       if (id(zone7_enable).state) { total_secs += (int)(id(${devicename1}_7_duration).state * 60 * mult); n_enabled++; }
                       if (id(zone8_enable).state) { total_secs += (int)(id(${devicename1}_8_duration).state * 60 * mult); n_enabled++; }
-                      // Add valve_open_delay gaps between zones
-                      if (n_enabled > 1) total_secs += (n_enabled - 1) * ${default_valve_open_delay_sec};
+                      // NOTE: valve_open_delay gaps (2s × (n-1)) are NOT included — the elapsed
+                      // counter cannot advance during those gaps (active_valve() returns empty
+                      // between zones in start_full_cycle). Including them left residual seconds.
                       id(cycle_soak_total_duration) = total_secs;
                       id(cycle_soak_elapsed_time) = 0;
                       ESP_LOGI("irrigation", "📊 Normal mode grand total: %d sec (%d zones enabled, mult=%.2f)",
@@ -12336,6 +12386,14 @@ script:
             ESP_LOGW("irrigation", "🚫 Zone %d BLOCKED (pre-relay) — %s", zone + 1, reason);
             if (!_in_prog) {
               id(irrigation_busy) = false;
+              id(watering_trigger_source) = "Idle";
+              id(dev1_valve_status).publish_state("Idle");
+              id(valve_remaining_seconds).publish_state(0.0f);
+              id(dev1_time_remaining).publish_state("0:00:00");
+              id(dev1_progress_percent).publish_state("0%");
+              id(cycle_soak_detailed_status).update();
+              id(current_watering_trigger).publish_state("Idle");
+              id(queue_status_display).update();
               id(drain_queue).execute();
             }
             // Flag subsequent steps to skip — do NOT call .stop() here
@@ -12491,11 +12549,12 @@ script:
             id(last_cycle_seconds) = last_cycle_sec;
             // Total time = exact watering time + soaks between cycles + optional station delay.
             // (actual watering = total_duration because last cycle is shortened)
-            // waits valve_open_delay before opening the relay. Without this, the elapsed
-            // counter would reach the total while the relay is still waiting to open on
-            // the last cycle, briefly showing "0s remaining" before the valve even opens.
-            int valve_open_d = ${default_valve_open_delay_sec};
-            int total_time = total_duration + ((cycles - 1) * soak_seconds) + (cycles * valve_open_d);
+            // NOTE: valve_open_delay (2s per cycle) is NOT included here because the
+            // elapsed counter's should_advance guard (valve_active || soaking || station_delay)
+            // cannot advance during those pre-open windows. Including it caused the timer
+            // to show "N_cycles × 2s remaining" after the run ended (never counted down).
+            // The 2s freeze per cycle start is imperceptible to the user.
+            int total_time = total_duration + ((cycles - 1) * soak_seconds);
             // and freeze while the inter-zone gap elapses.
             if (add_delay) total_time += id(station_delay_seconds);
             
@@ -12556,6 +12615,10 @@ script:
                   id(watering_trigger_source) = "Idle";
                   id(current_watering_trigger).publish_state("Idle");
                   id(cycle_soak_detailed_status).update();
+                  id(valve_remaining_seconds).publish_state(0.0f);
+                  id(dev1_time_remaining).publish_state("0:00:00");
+                  id(dev1_progress_percent).publish_state("0%");
+                  id(queue_status_display).update();
                   id(drain_queue).execute();
                 }
                 id(normal_run_duration_seconds) = 0;  // Run complete
@@ -12667,7 +12730,14 @@ script:
                   id(irrigation_busy) = false;
                   id(watering_trigger_source) = "Idle";
                   id(current_watering_trigger).publish_state("Idle");
+                  // Zero totals BEFORE calling .update() so the lambda sees
+                  // total_duration=0 and returns "Idle" instead of "C&S Running".
+                  id(cycle_soak_total_duration) = 0;
+                  id(cycle_soak_elapsed_time) = 0;
                   id(cycle_soak_detailed_status).update();
+                  id(valve_remaining_seconds).publish_state(0.0f);
+                  id(dev1_time_remaining).publish_state("0:00:00");
+                  id(dev1_progress_percent).publish_state("0%");
                   id(drain_queue).execute();
                 }
                 id(active_zone_number) = -1;
@@ -12676,13 +12746,12 @@ script:
                 id(last_cycle_seconds) = 0;
                 id(cycle_start_epoch) = 0;
                 id(station_delay_active) = false;
-                // do NOT clear cycle_soak_total_duration or cycle_soak_elapsed_time.
-                // The all-zones script set a grand total covering ALL zones; clearing
-                // it here after zone 1 completes would leave total_duration=0 when
-                // zone 2 starts, breaking the progress/time-remaining display.
-                if (!_from_all_zones) {
-                  id(cycle_soak_total_duration) = 0;
-                  id(cycle_soak_elapsed_time) = 0;
+                // do NOT clear cycle_soak_total_duration or cycle_soak_elapsed_time
+                // for all-zones runs — the grand total covers ALL zones; clearing here
+                // after zone N completes would reset progress for zone N+1.
+                if (_from_all_zones) {
+                  // all-zones script cleanup will clear these after the last zone.
+                  ;
                 }
       
       # Station delay — skipped if pre-flight blocked
@@ -12717,7 +12786,12 @@ script:
                   id(irrigation_busy) = false;
                   id(watering_trigger_source) = "Idle";
                   id(current_watering_trigger).publish_state("Idle");
+                  id(cycle_soak_total_duration) = 0;
+                  id(cycle_soak_elapsed_time) = 0;
                   id(cycle_soak_detailed_status).update();
+                  id(valve_remaining_seconds).publish_state(0.0f);
+                  id(dev1_time_remaining).publish_state("0:00:00");
+                  id(dev1_progress_percent).publish_state("0%");
                   id(drain_queue).execute();
                 }
                 id(active_zone_number) = -1;
@@ -12725,13 +12799,6 @@ script:
                 id(total_cycles) = 0;
                 id(last_cycle_seconds) = 0;
                 id(cycle_start_epoch) = 0;
-                // do NOT clear total_duration/elapsed here (station delay cleanup).
-                // Same reason as the C&S cleanup block above: grand total covers
-                // ALL zones; zeroing it after zone N's delay would break zone N+1.
-                if (!_from_all_zones_sd) {
-                  id(cycle_soak_total_duration) = 0;
-                  id(cycle_soak_elapsed_time) = 0;
-                }
       
   # Continue cycle & soak after a Pause/Resume
   - id: continue_cycle_soak_after_resume
@@ -12790,6 +12857,12 @@ script:
             id(last_active_zone) = -1;
             id(last_zone_start_epoch) = 0;
             id(deferred_zone_restart).stop();
+            id(valve_remaining_seconds).publish_state(0.0f);
+            id(dev1_time_remaining).publish_state("0:00:00");
+            id(dev1_progress_percent).publish_state("0%");
+            id(cycle_soak_detailed_status).update();
+            id(current_watering_trigger).publish_state("Idle");
+            id(queue_status_display).update();
             id(drain_queue).execute();
             id(resume_csa_blocked) = true;  // Signal all subsequent blocks to skip
           };
@@ -12927,6 +13000,12 @@ script:
                 id(dev1_auto_advance).turn_on();
                 id(watering_trigger_source) = "Idle";
                 id(dev1_valve_status).publish_state("Idle");
+                id(valve_remaining_seconds).publish_state(0.0f);
+                id(dev1_time_remaining).publish_state("0:00:00");
+                id(dev1_progress_percent).publish_state("0%");
+                id(cycle_soak_detailed_status).update();
+                id(current_watering_trigger).publish_state("Idle");
+                id(queue_status_display).update();
                 id(last_active_zone) = -1;
                 id(last_zone_start_epoch) = 0;
                 id(deferred_zone_restart).stop();
@@ -13005,6 +13084,12 @@ script:
           id(last_active_zone) = -1;
           id(last_zone_start_epoch) = 0;
           id(dev1_valve_status).publish_state("Idle");
+          id(valve_remaining_seconds).publish_state(0.0f);
+          id(dev1_time_remaining).publish_state("0:00:00");
+          id(dev1_progress_percent).publish_state("0%");
+          id(cycle_soak_detailed_status).update();
+          id(current_watering_trigger).publish_state("Idle");
+          id(queue_status_display).update();
           ESP_LOGI("irrigation", "Auto Advance restored — Cycle & Soak resume complete");
 
   # Deferred zone restart — used when a disabled zone's switch is pressed while another zone is running.
@@ -13160,6 +13245,12 @@ script:
                 id(in_program_run) = false;
                 id(watering_trigger_source) = "Idle";
                 id(dev1_valve_status).publish_state("Idle");
+                id(valve_remaining_seconds).publish_state(0.0f);
+                id(dev1_time_remaining).publish_state("0:00:00");
+                id(dev1_progress_percent).publish_state("0%");
+                id(cycle_soak_detailed_status).update();
+                id(current_watering_trigger).publish_state("Idle");
+                id(queue_status_display).update();
                 // BUG FIX: If this was a queued Smart ET run, drain_queue already set
                 // et_duration_multiplier to the ET value and called set_multiplier with the
                 // combined ET×PW value.  Now that the run is blocked the multiplier must be
@@ -13209,30 +13300,44 @@ script:
                 int cycle_sec  = id(cycle_duration_minutes) * 60;
                 int soak_sec   = id(soak_duration_minutes) * 60;
                 int delay_sec  = id(station_delay_seconds);
-                int vod_sec    = ${default_valve_open_delay_sec};  // valve_open_delay per cycle
                 float mult     = id($devicename1).multiplier();
                 int grand_total = 0;
                 // Sum total time for each ENABLED zone (all cycles + all soaks).
                 // Apply multiplier to zone duration — same as normal mode behaviour.
-                // so the countdown does not hit 0 and freeze during station delays.
-                // counter doesn't reach the grand total before the last relay has opened.
+                // NOTE: valve_open_delay (2s per cycle) is NOT included — the elapsed
+                // counter's should_advance guard cannot advance during those pre-open
+                // windows. Including vod caused the timer to show N_cycles×2s remaining
+                // after the run ended. The 2s freeze per cycle start is imperceptible.
                 auto zone_total = [&](float dur_sec) -> int {
                   int dur = (int)(dur_sec * mult);  // Apply multiplier
                   if (dur <= 0 || cycle_sec <= 0) return 0;
                   int n = (dur + cycle_sec - 1) / cycle_sec;
                   // Use exact adjusted duration (not n*cycle_sec) because the last cycle
                   // is shortened to hit dur exactly. Soaks: (n-1) full soaks between cycles.
-                  // valve_open_delay added once per cycle (n cycles total).
-                  return dur + ((n - 1) * soak_sec) + (n * vod_sec);
+                  return dur + ((n - 1) * soak_sec);
                 };
-                if (id(zone1_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_1_duration).state * 60) + delay_sec;
-                if (id(zone2_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_2_duration).state * 60) + delay_sec;
-                if (id(zone3_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_3_duration).state * 60) + delay_sec;
-                if (id(zone4_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_4_duration).state * 60) + delay_sec;
-                if (id(zone5_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_5_duration).state * 60) + delay_sec;
-                if (id(zone6_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_6_duration).state * 60) + delay_sec;
-                if (id(zone7_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_7_duration).state * 60) + delay_sec;
-                if (id(zone8_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_8_duration).state * 60);  // Zone 8: no station delay (add_delay=false)
+                // Determine the last enabled zone so we don't add a trailing station
+                // delay after the final zone (there is no next zone to delay into).
+                // Previously delay_sec was unconditionally added to zones 1-7, meaning a
+                // single enabled zone (e.g. only Zone 2) still got +delay_sec (the "5s
+                // remaining" the user observed). Now only inter-zone gaps are counted.
+                int _last_en = -1;
+                if (id(zone8_enable).state) _last_en = 8;
+                else if (id(zone7_enable).state) _last_en = 7;
+                else if (id(zone6_enable).state) _last_en = 6;
+                else if (id(zone5_enable).state) _last_en = 5;
+                else if (id(zone4_enable).state) _last_en = 4;
+                else if (id(zone3_enable).state) _last_en = 3;
+                else if (id(zone2_enable).state) _last_en = 2;
+                else if (id(zone1_enable).state) _last_en = 1;
+                if (id(zone1_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_1_duration).state * 60) + (_last_en != 1 ? delay_sec : 0);
+                if (id(zone2_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_2_duration).state * 60) + (_last_en != 2 ? delay_sec : 0);
+                if (id(zone3_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_3_duration).state * 60) + (_last_en != 3 ? delay_sec : 0);
+                if (id(zone4_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_4_duration).state * 60) + (_last_en != 4 ? delay_sec : 0);
+                if (id(zone5_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_5_duration).state * 60) + (_last_en != 5 ? delay_sec : 0);
+                if (id(zone6_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_6_duration).state * 60) + (_last_en != 6 ? delay_sec : 0);
+                if (id(zone7_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_7_duration).state * 60) + (_last_en != 7 ? delay_sec : 0);
+                if (id(zone8_enable).state) grand_total += zone_total(id(Lawn_irrigation_controller_8_duration).state * 60);  // Zone 8 always last, no trailing delay
                 id(cycle_soak_total_duration) = grand_total;
                 id(cycle_soak_elapsed_time) = 0;
                 ESP_LOGI("irrigation", "\U0001F4CA All-Zones C&S grand total: %d sec (%d enabled zones, %d sec/cycle, %d sec/soak, mult=%.2f)",
@@ -13385,8 +13490,24 @@ script:
                   id(restore_multiplier_after_run) = false;
                   id(saved_multiplier_for_base_run) = 1.0f;
                 }
+                // Clear elapsed/total and explicitly zero the timer sensors.
+                // The 1s interval stops updating once irrigation_busy=false; without
+                // these calls the timer freezes at the last positive remaining value.
+                id(cycle_soak_total_duration) = 0;
+                id(cycle_soak_elapsed_time) = 0;
+                id(valve_remaining_seconds).publish_state(0.0f);
+                id(dev1_time_remaining).publish_state("0:00:00");
+                id(dev1_progress_percent).publish_state("0%");
+                // Push Idle to C&S Detailed Status — sensor is update_interval:never so it
+                // stays frozen at "C&S Running" after completion unless explicitly updated.
+                // Must be called AFTER cycle_soak_switch is off and total_duration is 0,
+                // otherwise the lambda still sees cs_running=true and returns "C&S Running".
+                id(cycle_soak_detailed_status).update();
                 id(irrigation_busy) = false;
                 id(in_program_run) = false;
+                id(watering_trigger_source) = "Idle";
+                id(current_watering_trigger).publish_state("Idle");
+                id(queue_status_display).update();
             - script.execute: drain_queue
 
   # Run a specific program
@@ -13417,6 +13538,13 @@ script:
             id(irrigation_busy) = false;
             id(in_program_run) = false;
             id(watering_trigger_source) = "Idle";
+            id(dev1_valve_status).publish_state("Idle");
+            id(valve_remaining_seconds).publish_state(0.0f);
+            id(dev1_time_remaining).publish_state("0:00:00");
+            id(dev1_progress_percent).publish_state("0%");
+            id(cycle_soak_detailed_status).update();
+            id(current_watering_trigger).publish_state("Idle");
+            id(queue_status_display).update();
             // Signal all subsequent lambdas/actions in this then: block to skip.
             id(zone_run_blocked) = true;
           };
@@ -13545,12 +13673,60 @@ script:
                          (int)(id(${devicename1}_8_duration).state * 60),
                          id(zone8_program_a_duration), id(zone8_program_b_duration), id(zone8_program_c_duration));
           if (_d > 0) { _pg_total += (int)(_d * _pg_mult); _pg_n++; }
-          // Add station delays between zones (one per zone boundary)
+          // If Cycle & Soak is active, add inter-cycle soak durations for each zone.
+          // Each zone with N cycles has (N-1) soak periods; we mirror the zone_total
+          // lambda used by run_all_zones_cycle_soak_script so totals always agree.
+          if (id(cycle_soak_switch).state) {
+            int _cs_cycle_sec = id(cycle_duration_minutes) * 60;
+            int _cs_soak_sec  = id(soak_duration_minutes)  * 60;
+            // Recompute _pg_total with C&S soaks included (discard plain-duration sum)
+            _pg_total = 0;
+            _pg_n = 0;
+            auto _cs_zone_total = [&](int dur_sec) -> int {
+              if (dur_sec <= 0 || _cs_cycle_sec <= 0) return 0;
+              int n = (dur_sec + _cs_cycle_sec - 1) / _cs_cycle_sec;
+              return dur_sec + ((n - 1) * _cs_soak_sec);
+            };
+            int _d2;
+            _d2 = _prog_dur(id(zone1_program), id(zone1_enable).state,
+                           (int)(id(${devicename1}_1_duration).state * 60),
+                           id(zone1_program_a_duration), id(zone1_program_b_duration), id(zone1_program_c_duration));
+            if (_d2 > 0) { _pg_total += _cs_zone_total((int)(_d2 * _pg_mult)); _pg_n++; }
+            _d2 = _prog_dur(id(zone2_program), id(zone2_enable).state,
+                           (int)(id(${devicename1}_2_duration).state * 60),
+                           id(zone2_program_a_duration), id(zone2_program_b_duration), id(zone2_program_c_duration));
+            if (_d2 > 0) { _pg_total += _cs_zone_total((int)(_d2 * _pg_mult)); _pg_n++; }
+            _d2 = _prog_dur(id(zone3_program), id(zone3_enable).state,
+                           (int)(id(${devicename1}_3_duration).state * 60),
+                           id(zone3_program_a_duration), id(zone3_program_b_duration), id(zone3_program_c_duration));
+            if (_d2 > 0) { _pg_total += _cs_zone_total((int)(_d2 * _pg_mult)); _pg_n++; }
+            _d2 = _prog_dur(id(zone4_program), id(zone4_enable).state,
+                           (int)(id(${devicename1}_4_duration).state * 60),
+                           id(zone4_program_a_duration), id(zone4_program_b_duration), id(zone4_program_c_duration));
+            if (_d2 > 0) { _pg_total += _cs_zone_total((int)(_d2 * _pg_mult)); _pg_n++; }
+            _d2 = _prog_dur(id(zone5_program), id(zone5_enable).state,
+                           (int)(id(${devicename1}_5_duration).state * 60),
+                           id(zone5_program_a_duration), id(zone5_program_b_duration), id(zone5_program_c_duration));
+            if (_d2 > 0) { _pg_total += _cs_zone_total((int)(_d2 * _pg_mult)); _pg_n++; }
+            _d2 = _prog_dur(id(zone6_program), id(zone6_enable).state,
+                           (int)(id(${devicename1}_6_duration).state * 60),
+                           id(zone6_program_a_duration), id(zone6_program_b_duration), id(zone6_program_c_duration));
+            if (_d2 > 0) { _pg_total += _cs_zone_total((int)(_d2 * _pg_mult)); _pg_n++; }
+            _d2 = _prog_dur(id(zone7_program), id(zone7_enable).state,
+                           (int)(id(${devicename1}_7_duration).state * 60),
+                           id(zone7_program_a_duration), id(zone7_program_b_duration), id(zone7_program_c_duration));
+            if (_d2 > 0) { _pg_total += _cs_zone_total((int)(_d2 * _pg_mult)); _pg_n++; }
+            _d2 = _prog_dur(id(zone8_program), id(zone8_enable).state,
+                           (int)(id(${devicename1}_8_duration).state * 60),
+                           id(zone8_program_a_duration), id(zone8_program_b_duration), id(zone8_program_c_duration));
+            if (_d2 > 0) { _pg_total += _cs_zone_total((int)(_d2 * _pg_mult)); _pg_n++; }
+          }
+          // Add station delays between zones (one per zone boundary, last zone has no trailing delay)
           if (_pg_n > 1) _pg_total += (_pg_n - 1) * id(station_delay_seconds);
           id(cycle_soak_total_duration) = _pg_total;
           id(cycle_soak_elapsed_time)   = 0;
-          ESP_LOGI("irrigation", "📊 Program %d grand total: %ds (%d zones, mult=%.2f)",
-                   program, _pg_total, _pg_n, _pg_mult);
+          ESP_LOGI("irrigation", "📊 Program %d grand total: %ds (%d zones, mult=%.2f, C&S=%s)",
+                   program, _pg_total, _pg_n, _pg_mult, id(cycle_soak_switch).state ? "ON" : "OFF");
 
       # Run each zone in the program
       - if:
@@ -13750,6 +13926,13 @@ script:
           
           id(in_program_run) = false;
           id(irrigation_busy) = false;
+          id(watering_trigger_source) = "Idle";
+          id(valve_remaining_seconds).publish_state(0.0f);
+          id(dev1_time_remaining).publish_state("0:00:00");
+          id(dev1_progress_percent).publish_state("0%");
+          id(cycle_soak_detailed_status).update();
+          id(current_watering_trigger).publish_state("Idle");
+          id(queue_status_display).update();
       
       # Reset valve status, restore Auto Advance, and drain queue
       - if:
@@ -17530,6 +17713,12 @@ switch:
           }
           id(et_pending_irrigation) = false;
           id(push_et_sensors).execute();
+          id(valve_remaining_seconds).publish_state(0.0f);
+          id(dev1_time_remaining).publish_state("0:00:00");
+          id(dev1_progress_percent).publish_state("0%");
+          id(cycle_soak_detailed_status).update();
+          id(current_watering_trigger).publish_state("Idle");
+          id(queue_status_display).update();
           ESP_LOGI("irrigation", "Irrigation system DISABLED — all scripts stopped, state cleared");
       - text_sensor.template.publish:
           id: dev1_valve_status
@@ -20864,8 +21053,19 @@ sprinkler:
             }
 
             // Don't stop run_zone_with_cycles during cycle/soak mode with multiple cycles
-            // Only stop if we're in normal mode or if it's a manual stop
-            bool in_cycle_soak = (id(total_cycles) > 0 && id(current_cycle) > 0);
+            // Only stop if we're in normal mode or if it's a manual stop.
+            //
+            // CRITICAL: Also check run_all_zones_cycle_soak_script.is_running().
+            // When a zone finishes its last cycle (1-cycle C&S), the cleanup lambda
+            // zeros current_cycle and total_cycles BEFORE the valve physically closes.
+            // The valve close fires this on_turn_off handler, which then sees
+            // total_cycles=0 && current_cycle=0 → in_cycle_soak=false → wrongly
+            // restores the multiplier and clears watering_trigger_source mid-run,
+            // so every subsequent zone starts with the wrong multiplier and "Idle" trigger.
+            // Checking is_running() catches this case: the all-zones script is still
+            // active during the station delay between zones even after per-zone cleanup.
+            bool in_cycle_soak = (id(total_cycles) > 0 && id(current_cycle) > 0) ||
+                                 id(run_all_zones_cycle_soak_script).is_running();
             
             if (!in_cycle_soak) {
               ESP_LOGI("irrigation", "Main switch OFF - stopping run_zone_with_cycles (normal mode)");
@@ -20934,6 +21134,13 @@ sprinkler:
               }
               id(watering_trigger_source) = "Idle";
               id(current_watering_trigger).publish_state("Idle");
+              // Normal-mode natural completion: zero the timer sensors here.
+              // The 1s interval already set irrigation_busy=false (via run_zone_with_cycles
+              // cleanup), so it won't push again — we must push explicitly or the display
+              // freezes at whatever remaining time was shown when the valve closed.
+              id(valve_remaining_seconds).publish_state(0.0f);
+              id(dev1_time_remaining).publish_state("0:00:00");
+              id(dev1_progress_percent).publish_state("0%");
             }
             // Always re-evaluate C&S detailed status (update_interval:never needs a push).
             // Lambda returns "Idle" when no valve is active, correct for both normal and C&S.
@@ -21804,6 +22011,13 @@ button:
                 id(cycle_soak_is_soaking) = false;
                 id(cycle_soak_soak_end_time) = 0;
                 id(watering_trigger_source) = "Idle";
+                id(dev1_valve_status).publish_state("Idle");
+                id(valve_remaining_seconds).publish_state(0.0f);
+                id(dev1_time_remaining).publish_state("0:00:00");
+                id(dev1_progress_percent).publish_state("0%");
+                id(cycle_soak_detailed_status).update();
+                id(current_watering_trigger).publish_state("Idle");
+                id(queue_status_display).update();
                 // up to 30s for the watchdog to notice irrigation_busy was cleared.
                 id(drain_queue).execute();
               }
@@ -21875,6 +22089,12 @@ button:
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
                     id(dev1_valve_status).publish_state("Idle");
+                    id(valve_remaining_seconds).publish_state(0.0f);
+                    id(dev1_time_remaining).publish_state("0:00:00");
+                    id(dev1_progress_percent).publish_state("0%");
+                    id(cycle_soak_detailed_status).update();
+                    id(current_watering_trigger).publish_state("Idle");
+                    id(queue_status_display).update();
                     return;
                   }
                   if (id(freeze_protection_active)) {
@@ -21899,6 +22119,12 @@ button:
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
                     id(dev1_valve_status).publish_state("Idle");
+                    id(valve_remaining_seconds).publish_state(0.0f);
+                    id(dev1_time_remaining).publish_state("0:00:00");
+                    id(dev1_progress_percent).publish_state("0%");
+                    id(cycle_soak_detailed_status).update();
+                    id(current_watering_trigger).publish_state("Idle");
+                    id(queue_status_display).update();
                     return;
                   }
                   if (id(budget_exceeded) && !id(budget_override_active)) {
@@ -21923,6 +22149,12 @@ button:
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
                     id(dev1_valve_status).publish_state("Idle");
+                    id(valve_remaining_seconds).publish_state(0.0f);
+                    id(dev1_time_remaining).publish_state("0:00:00");
+                    id(dev1_progress_percent).publish_state("0%");
+                    id(cycle_soak_detailed_status).update();
+                    id(current_watering_trigger).publish_state("Idle");
+                    id(queue_status_display).update();
                     return;
                   }
                   // BLACKOUT DATE CHECK — independent of rain_delay_override (always enforced)
@@ -21949,6 +22181,12 @@ button:
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
                     id(dev1_valve_status).publish_state("Idle");
+                    id(valve_remaining_seconds).publish_state(0.0f);
+                    id(dev1_time_remaining).publish_state("0:00:00");
+                    id(dev1_progress_percent).publish_state("0%");
+                    id(cycle_soak_detailed_status).update();
+                    id(current_watering_trigger).publish_state("Idle");
+                    id(queue_status_display).update();
                     return;
                   }
                   // RAIN DELAY CHECK (respects manual_rain_delay_override — resume = manual action)
@@ -21977,6 +22215,12 @@ button:
                       id(dev1_auto_advance).turn_on();
                       id(drain_queue).execute();
                       id(dev1_valve_status).publish_state("Idle");
+                      id(valve_remaining_seconds).publish_state(0.0f);
+                      id(dev1_time_remaining).publish_state("0:00:00");
+                      id(dev1_progress_percent).publish_state("0%");
+                      id(cycle_soak_detailed_status).update();
+                      id(current_watering_trigger).publish_state("Idle");
+                      id(queue_status_display).update();
                       return;
                     }
                   }
@@ -22006,6 +22250,12 @@ button:
                         id(dev1_auto_advance).turn_on();
                         id(drain_queue).execute();
                         id(dev1_valve_status).publish_state("Idle");
+                        id(valve_remaining_seconds).publish_state(0.0f);
+                        id(dev1_time_remaining).publish_state("0:00:00");
+                        id(dev1_progress_percent).publish_state("0%");
+                        id(cycle_soak_detailed_status).update();
+                        id(current_watering_trigger).publish_state("Idle");
+                        id(queue_status_display).update();
                         return;
                       }
                     }
@@ -22093,12 +22343,15 @@ button:
                               if (saved_zone < 5 && id(zone6_enable).state) { total_remaining += (int)(id(${devicename1}_6_duration).state * 60 * mult); n_subsequent++; }
                               if (saved_zone < 6 && id(zone7_enable).state) { total_remaining += (int)(id(${devicename1}_7_duration).state * 60 * mult); n_subsequent++; }
                               if (saved_zone < 7 && id(zone8_enable).state) { total_remaining += (int)(id(${devicename1}_8_duration).state * 60 * mult); n_subsequent++; }
-                              // Add inter-zone delay gaps for subsequent zones
-                              if (n_subsequent > 0) total_remaining += n_subsequent * ${default_valve_open_delay_sec};
+                              // NOTE: valve_open_delay (2s × n_subsequent) is NOT added here.
+                              // The elapsed counter cannot advance during those gaps (active_valve()
+                              // returns empty between zones), so including them leaves a positive
+                              // residual on the timer at the end of the run.
                               // Restore grand total so valve_remaining_seconds and Time Remaining
                               // show the correct total across all remaining zones (not just one zone).
                               // cycle_soak_elapsed_time was already restored from paused snapshot above.
                               id(cycle_soak_total_duration) = total_remaining;
+                              id(cycle_soak_elapsed_time) = 0;  // Reset: total is now "remaining" not "original"
                               id(normal_run_duration_seconds) = 0;  // Not a single-zone run
                               id(active_zone_number) = saved_zone;
                               id(irrigation_busy) = true;
@@ -22150,6 +22403,7 @@ button:
                               // Divide out multiplier so run_zone_with_cycles produces saved_remaining
                               float m = id($devicename1).multiplier();
                               int base_duration = (m > 0.01f) ? (int)((float)saved_remaining / m) : saved_remaining;
+                              if (base_duration < 1) base_duration = 1;  // Safety: never resume for 0s
                               ESP_LOGI("irrigation", "Single zone normal resume: zone=%d remaining=%ds base_duration=%ds (mult=%.2f)",
                                        saved_zone, saved_remaining, base_duration, m);
                               id(resume_zone_param) = saved_zone;
