@@ -12454,8 +12454,14 @@ script:
             ESP_LOGI("irrigation", "==> NORMAL MODE - running %d seconds (base=%d, multiplier=%.2f)",
                      adjusted_duration, duration, multiplier);
             
-            id(cycle_soak_total_duration) = 0;
-            id(cycle_soak_elapsed_time) = 0;
+            // Preserve the program grand total when run_program calls us —
+            // it set cycle_soak_total_duration to the full multi-zone sum before
+            // the first zone started. Zeroing it here would reset Time Remaining
+            // to only the current zone on every zone transition.
+            if (!id(in_program_run)) {
+              id(cycle_soak_total_duration) = 0;
+              id(cycle_soak_elapsed_time) = 0;
+            }
             id(active_zone_number) = zone;
             id(total_cycles) = 0;
             id(last_cycle_seconds) = 0;
@@ -13490,6 +13496,61 @@ script:
           if (id(zone7_program) == program && id(zone7_enable).state) zone_count++;
           if (id(zone8_program) == program && id(zone8_enable).state) zone_count++;
           ESP_LOGI("irrigation", "Program %d has %d enabled zones", program, zone_count);
+          
+          // Compute grand total duration across all program zones so Time Remaining
+          // shows the full multi-zone countdown (not just the current zone).
+          // Mirrors the logic in run_all_zones_normal_script. Station delay is added
+          // between zones (zone_count - 1 gaps) since add_delay: true is used per zone.
+          float _pg_mult = id($devicename1).multiplier();
+          int _pg_total  = 0;
+          int _pg_n      = 0;
+          // Helper lambda to pick per-program override or zone default duration (seconds)
+          auto _prog_dur = [&](int zone_prog, bool zone_en,
+                               int default_sec,
+                               int ov_a, int ov_b, int ov_c) -> int {
+            if (!zone_en || zone_prog != program) return 0;
+            int ov = (program == 1) ? ov_a : (program == 2) ? ov_b : ov_c;
+            return (ov > 0) ? (ov * 60) : default_sec;
+          };
+          int _d;
+          _d = _prog_dur(id(zone1_program), id(zone1_enable).state,
+                         (int)(id(${devicename1}_1_duration).state * 60),
+                         id(zone1_program_a_duration), id(zone1_program_b_duration), id(zone1_program_c_duration));
+          if (_d > 0) { _pg_total += (int)(_d * _pg_mult); _pg_n++; }
+          _d = _prog_dur(id(zone2_program), id(zone2_enable).state,
+                         (int)(id(${devicename1}_2_duration).state * 60),
+                         id(zone2_program_a_duration), id(zone2_program_b_duration), id(zone2_program_c_duration));
+          if (_d > 0) { _pg_total += (int)(_d * _pg_mult); _pg_n++; }
+          _d = _prog_dur(id(zone3_program), id(zone3_enable).state,
+                         (int)(id(${devicename1}_3_duration).state * 60),
+                         id(zone3_program_a_duration), id(zone3_program_b_duration), id(zone3_program_c_duration));
+          if (_d > 0) { _pg_total += (int)(_d * _pg_mult); _pg_n++; }
+          _d = _prog_dur(id(zone4_program), id(zone4_enable).state,
+                         (int)(id(${devicename1}_4_duration).state * 60),
+                         id(zone4_program_a_duration), id(zone4_program_b_duration), id(zone4_program_c_duration));
+          if (_d > 0) { _pg_total += (int)(_d * _pg_mult); _pg_n++; }
+          _d = _prog_dur(id(zone5_program), id(zone5_enable).state,
+                         (int)(id(${devicename1}_5_duration).state * 60),
+                         id(zone5_program_a_duration), id(zone5_program_b_duration), id(zone5_program_c_duration));
+          if (_d > 0) { _pg_total += (int)(_d * _pg_mult); _pg_n++; }
+          _d = _prog_dur(id(zone6_program), id(zone6_enable).state,
+                         (int)(id(${devicename1}_6_duration).state * 60),
+                         id(zone6_program_a_duration), id(zone6_program_b_duration), id(zone6_program_c_duration));
+          if (_d > 0) { _pg_total += (int)(_d * _pg_mult); _pg_n++; }
+          _d = _prog_dur(id(zone7_program), id(zone7_enable).state,
+                         (int)(id(${devicename1}_7_duration).state * 60),
+                         id(zone7_program_a_duration), id(zone7_program_b_duration), id(zone7_program_c_duration));
+          if (_d > 0) { _pg_total += (int)(_d * _pg_mult); _pg_n++; }
+          _d = _prog_dur(id(zone8_program), id(zone8_enable).state,
+                         (int)(id(${devicename1}_8_duration).state * 60),
+                         id(zone8_program_a_duration), id(zone8_program_b_duration), id(zone8_program_c_duration));
+          if (_d > 0) { _pg_total += (int)(_d * _pg_mult); _pg_n++; }
+          // Add station delays between zones (one per zone boundary)
+          if (_pg_n > 1) _pg_total += (_pg_n - 1) * id(station_delay_seconds);
+          id(cycle_soak_total_duration) = _pg_total;
+          id(cycle_soak_elapsed_time)   = 0;
+          ESP_LOGI("irrigation", "📊 Program %d grand total: %ds (%d zones, mult=%.2f)",
+                   program, _pg_total, _pg_n, _pg_mult);
 
       # Run each zone in the program
       - if:
@@ -18137,9 +18198,13 @@ switch:
           id(zone1_last_watered) = now_ts.timestamp;
           id(zone1_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
-          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
-          // Immediately push updated trigger to HA (sensor uses update_interval: never)
-          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          // Guard: main switch on_turn_off may have already cleared watering_trigger_source
+          // to "Idle" before this fires. Only record if we still have a real trigger value.
+          if (id(watering_trigger_source) != "Idle") {
+            id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+            // Immediately push updated trigger to HA (sensor uses update_interval: never)
+            id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          }
           // Push zone last watered text immediately — no need to wait 300s
           id(zone1_last_watered_text).update();
 
@@ -18490,9 +18555,13 @@ switch:
           id(zone2_last_watered) = now_ts.timestamp;
           id(zone2_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
-          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
-          // Immediately push updated trigger to HA (sensor uses update_interval: never)
-          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          // Guard: main switch on_turn_off may have already cleared watering_trigger_source
+          // to "Idle" before this fires. Only record if we still have a real trigger value.
+          if (id(watering_trigger_source) != "Idle") {
+            id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+            // Immediately push updated trigger to HA (sensor uses update_interval: never)
+            id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          }
           // Push zone last watered text immediately
           id(zone2_last_watered_text).update();
           id(zone2_runtime_today) += (int)duration;
@@ -18841,9 +18910,13 @@ switch:
           id(zone3_last_watered) = now_ts.timestamp;
           id(zone3_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
-          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
-          // Immediately push updated trigger to HA (sensor uses update_interval: never)
-          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          // Guard: main switch on_turn_off may have already cleared watering_trigger_source
+          // to "Idle" before this fires. Only record if we still have a real trigger value.
+          if (id(watering_trigger_source) != "Idle") {
+            id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+            // Immediately push updated trigger to HA (sensor uses update_interval: never)
+            id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          }
           // Push zone last watered text immediately
           id(zone3_last_watered_text).update();
           id(zone3_runtime_today) += (int)duration;
@@ -19192,9 +19265,13 @@ switch:
           id(zone4_last_watered) = now_ts.timestamp;
           id(zone4_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
-          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
-          // Immediately push updated trigger to HA (sensor uses update_interval: never)
-          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          // Guard: main switch on_turn_off may have already cleared watering_trigger_source
+          // to "Idle" before this fires. Only record if we still have a real trigger value.
+          if (id(watering_trigger_source) != "Idle") {
+            id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+            // Immediately push updated trigger to HA (sensor uses update_interval: never)
+            id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          }
           // Push zone last watered text immediately
           id(zone4_last_watered_text).update();
           id(zone4_runtime_today) += (int)duration;
@@ -19543,9 +19620,13 @@ switch:
           id(zone5_last_watered) = now_ts.timestamp;
           id(zone5_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
-          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
-          // Immediately push updated trigger to HA (sensor uses update_interval: never)
-          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          // Guard: main switch on_turn_off may have already cleared watering_trigger_source
+          // to "Idle" before this fires. Only record if we still have a real trigger value.
+          if (id(watering_trigger_source) != "Idle") {
+            id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+            // Immediately push updated trigger to HA (sensor uses update_interval: never)
+            id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          }
           // Push zone last watered text immediately
           id(zone5_last_watered_text).update();
           id(zone5_runtime_today) += (int)duration;
@@ -19894,9 +19975,13 @@ switch:
           id(zone6_last_watered) = now_ts.timestamp;
           id(zone6_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
-          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
-          // Immediately push updated trigger to HA (sensor uses update_interval: never)
-          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          // Guard: main switch on_turn_off may have already cleared watering_trigger_source
+          // to "Idle" before this fires. Only record if we still have a real trigger value.
+          if (id(watering_trigger_source) != "Idle") {
+            id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+            // Immediately push updated trigger to HA (sensor uses update_interval: never)
+            id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          }
           // Push zone last watered text immediately
           id(zone6_last_watered_text).update();
           id(zone6_runtime_today) += (int)duration;
@@ -20245,9 +20330,13 @@ switch:
           id(zone7_last_watered) = now_ts.timestamp;
           id(zone7_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
-          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
-          // Immediately push updated trigger to HA (sensor uses update_interval: never)
-          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          // Guard: main switch on_turn_off may have already cleared watering_trigger_source
+          // to "Idle" before this fires. Only record if we still have a real trigger value.
+          if (id(watering_trigger_source) != "Idle") {
+            id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+            // Immediately push updated trigger to HA (sensor uses update_interval: never)
+            id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          }
           // Push zone last watered text immediately
           id(zone7_last_watered_text).update();
           id(zone7_runtime_today) += (int)duration;
@@ -20596,9 +20685,13 @@ switch:
           id(zone8_last_watered) = now_ts.timestamp;
           id(zone8_last_trigger) = id(watering_trigger_source);
           id(last_watering_timestamp) = now_ts.timestamp;
-          id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
-          // Immediately push updated trigger to HA (sensor uses update_interval: never)
-          id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          // Guard: main switch on_turn_off may have already cleared watering_trigger_source
+          // to "Idle" before this fires. Only record if we still have a real trigger value.
+          if (id(watering_trigger_source) != "Idle") {
+            id(last_watering_trigger_text) = id(watering_trigger_source);  // Global: feeds 'Last Watering Trigger' sensor
+            // Immediately push updated trigger to HA (sensor uses update_interval: never)
+            id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          }
           // Push zone last watered text immediately
           id(zone8_last_watered_text).update();
           id(zone8_runtime_today) += (int)duration;
@@ -20831,6 +20924,14 @@ sprinkler:
             // run_zone_with_cycles reaches its own completion lambda). Without this,
             // watering_trigger_source stays stale and current_watering_trigger never clears.
             if (!in_cycle_soak) {
+              // Pre-save the trigger BEFORE clearing watering_trigger_source.
+              // main switch on_turn_off fires before zone on_turn_off, so if we clear
+              // watering_trigger_source first the zone on_turn_off records "Idle" as the
+              // last trigger instead of the real one (e.g. "Scheduled: Lawn Zone1").
+              if (id(watering_trigger_source) != "Idle") {
+                id(last_watering_trigger_text) = id(watering_trigger_source);
+                id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+              }
               id(watering_trigger_source) = "Idle";
               id(current_watering_trigger).publish_state("Idle");
             }
