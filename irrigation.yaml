@@ -3144,6 +3144,7 @@ time:
                       if (_rt_effective < threshold_chk) {
                         ESP_LOGW("irrigation", "🌧️ Smart ET retry SKIPPED — rain covers deficit (eff=%.1fmm < thr=%.1fmm, expected=%.1fmm)",
                                  _rt_effective, threshold_chk, _rt_expected);
+                        id(push_et_sensors).execute();
                         return;  // Stay pending; retry next minute — fire when rain doesn't materialise
                       }
                     deficit = _rt_effective;
@@ -3199,13 +3200,16 @@ time:
                     // Leaving it as "Smart ET" while a non-ET run is completing would make
                     // those callbacks incorrectly zero the deficit before the queued ET run fires.
                     std::string _prev_trigger = id(watering_trigger_source);
-                    id(et_duration_multiplier) = et_multiplier;
+                    // NOTE: et_duration_multiplier is set AFTER the press in the success branch
+                    // only — not here. Setting it before the press and then resetting to 1.0f
+                    // in the queued/blocked branches without a matching set_multiplier() call
+                    // leaves the sprinkler at PW×ET while the 5-min cron sees 1.0f and skips
+                    // the restore permanently. Defer to the success branch below.
                     id(watering_trigger_source) = "Smart ET (" + active_window + ")";
 
                     bool _et_was_idle = !id(irrigation_busy);
                     id(start_all_zones_cycle_soak).press();
                     if (!_et_was_idle) {
-                      id(et_duration_multiplier) = 1.0f;
                       // Restore previous trigger — current run's on_turn_off must still see
                       // the original trigger (e.g. "Weekly Schedule") so it does NOT clear
                       // et_soil_moisture_deficit prematurely. drain_queue will set
@@ -3214,11 +3218,7 @@ time:
                       ESP_LOGI("irrigation", "   ℹ️ Smart ET: Run queued (system busy) — deficit preserved (%.1fmm), trigger restored to: %s", id(et_soil_moisture_deficit), _prev_trigger.c_str());
                       id(push_et_sensors).execute();
                     } else if (!id(irrigation_busy)) {
-                      // BUG FIX: press was blocked, system is idle. et_duration_multiplier
-                      // was just written with et_multiplier above (overwriting whatever was
-                      // there). If a previous ET run left a stale multiplier on the sprinkler
-                      // before the 5-min cron cleaned it up, resetting to 1.0f without
-                      // set_multiplier would let the cron skip restore permanently.
+                      // BUG FIX: press was blocked, system is idle.
                       // Since the press didn't start anything, it's always safe to restore PW.
                       id(et_duration_multiplier) = 1.0f;
                       {
@@ -4660,6 +4660,12 @@ interval:
               }
               id(et_pending_irrigation) = false;
               id(push_et_sensors).execute();
+              id(valve_remaining_seconds).publish_state(0.0f);
+              id(dev1_time_remaining).publish_state("0:00:00");
+              id(dev1_progress_percent).publish_state("0%");
+              id(cycle_soak_detailed_status).update();
+              id(current_watering_trigger).publish_state("Idle");
+              id(queue_status_display).update();
             }
           }
   
@@ -4966,8 +4972,15 @@ interval:
             float rem = 0.0f;
             if (id(cycle_soak_total_duration) > 0
                 && (id(irrigation_busy) || id($devicename1).active_valve().has_value())) {
+              // C&S or all-zones normal: use elapsed counter (frozen while paused).
               rem = (float)(id(cycle_soak_total_duration) - id(cycle_soak_elapsed_time));
               if (rem < 0.0f) rem = 0.0f;
+            } else if (id(is_paused) && id(time_remaining_when_paused) > 0) {
+              // BUG FIX: Single-zone normal-mode pause.
+              // When paused: valve is stopped (active_valve() empty), cycle_soak_total_duration=0,
+              // so neither branch above fires and rem stays 0 → timer shows "0:00:00" while paused.
+              // Use the snapshot taken at pause time so the display stays frozen at the correct value.
+              rem = (float)id(time_remaining_when_paused);
             } else if (id($devicename1).active_valve().has_value()) {
               if (id(normal_run_duration_seconds) > 0 && id(last_zone_start_epoch) > 0) {
                 auto _tr_now = id(homeassistant_time).now();
@@ -5212,7 +5225,7 @@ interval:
             if (current_month != id(last_reset_month)) {
               ESP_LOGI("irrigation", "📅 New month — resetting monthly budget (lifetime totals kept)");
               ESP_LOGI("irrigation", "   Previous month usage: %.1fL", id(current_month_usage));
-              id(current_month_usage) = 0;
+              id(current_month_usage) = 0.0f;
               id(last_reset_month) = current_month;
               id(budget_warning_sent) = false;
               id(budget_exceeded) = false;
@@ -5539,6 +5552,12 @@ interval:
               ESP_LOGI("irrigation", "🔄 ET multiplier reset to 1.0, PW %.2fx restored (watchdog clean-completion)", _wcc_r);
               id(push_et_sensors).execute();
             }
+            // Push sensors that use update_interval:never — without these they
+            // freeze at the last active-run value when the watchdog catches a
+            // clean completion that the script's own cleanup path missed.
+            id(cycle_soak_detailed_status).update();
+            id(current_watering_trigger).publish_state("Idle");
+            id(queue_status_display).update();
 
             id(drain_queue).execute();
             return;
@@ -6453,7 +6472,9 @@ text_sensor:
       if (days) result += std::to_string(days) + "d ";
       if (hours) result += std::to_string(hours) + "h ";
       if (minutes) result += std::to_string(minutes) + "m ";
-      result += std::to_string(seconds) + "s";
+      // Only append seconds if non-zero, OR if no higher units were added (avoid "1m 0s", show "1m").
+      // Always show seconds when they are the only unit (e.g. "45s" or "0s").
+      if (seconds > 0 || result.empty()) result += std::to_string(seconds) + "s";
       return result;
           
 # Expose Progress Percent as a sensor
@@ -7199,31 +7220,31 @@ text_sensor:
         snprintf(buf, sizeof(buf), "Waiting for forecast data...");
       } else if (isnan(f1h)) {
         // Only have today's forecast
-        if (f0d >= 5.0) {
+        if (f0d >= 5.0f) {
           snprintf(buf, sizeof(buf), "Heavy rain today: %.1fmm", f0d);
-        } else if (f0d >= 2.0) {
+        } else if (f0d >= 2.0f) {
           snprintf(buf, sizeof(buf), "Rain today: %.1fmm", f0d);
         } else {
           snprintf(buf, sizeof(buf), "Light/no rain: %.1fmm today", f0d);
         }
       } else if (isnan(f0d)) {
         // Only have 1h forecast
-        if (f1h >= 5.0) {
+        if (f1h >= 5.0f) {
           snprintf(buf, sizeof(buf), "Heavy rain soon: %.1fmm in 1h", f1h);
-        } else if (f1h >= 2.0) {
+        } else if (f1h >= 2.0f) {
           snprintf(buf, sizeof(buf), "Rain soon: %.1fmm in 1h", f1h);
         } else {
           snprintf(buf, sizeof(buf), "Light: %.1fmm in 1h", f1h);
         }
       } else {
         // Have BOTH forecasts - show smartest summary
-        if (f1h >= 5.0) {
+        if (f1h >= 5.0f) {
           snprintf(buf, sizeof(buf), "Heavy rain NOW: %.1fmm/1h, %.1fmm/day", f1h, f0d);
-        } else if (f1h >= 2.0) {
+        } else if (f1h >= 2.0f) {
           snprintf(buf, sizeof(buf), "Rain soon: %.1fmm/1h, %.1fmm/day", f1h, f0d);
-        } else if (f0d >= 5.0) {
+        } else if (f0d >= 5.0f) {
           snprintf(buf, sizeof(buf), "Heavy later: %.1fmm/day (%.1fmm/1h now)", f0d, f1h);
-        } else if (f0d >= 2.0 || f1h >= 0.5) {
+        } else if (f0d >= 2.0f || f1h >= 0.5f) {
           snprintf(buf, sizeof(buf), "Light rain: %.1fmm/1h, %.1fmm/day", f1h, f0d);
         } else {
           snprintf(buf, sizeof(buf), "Minimal rain: %.1fmm/1h, %.1fmm/day", f1h, f0d);
@@ -7274,7 +7295,7 @@ text_sensor:
       }
       // COMBINED LOW RAIN: use rest-of-day to avoid double-counting rain_1h (which is
       // already included in f0d). Only reaches here when both are below the thresholds above.
-      else if (!isnan(f1h) && !isnan(f0d) && (f1h + fmaxf(0.0f, f0d - f1h)) >= 2.0) {
+      else if (!isnan(f1h) && !isnan(f0d) && (f1h + fmaxf(0.0f, f0d - f1h)) >= 2.0f) {
         snprintf(buf, sizeof(buf), "REDUCE 20%% - Light rain (%.1fmm/1h, %.1fmm/day)", f1h, f0d);
       }
       // ALL CLEAR
@@ -10382,8 +10403,10 @@ script:
                     "Very heavy rain today (%dmm)", (int)forecast_0d);
           }
           // PRIORITY 3: Combined moderate amounts.
-          // Use rest-of-day only to avoid double-counting the imminent portion
-          // (forecast_0d already includes forecast_1h).
+          // Use rest-of-day only to avoid double-counting the imminent portion —
+          // forecast_0d is the full-day total which already includes forecast_1h.
+          // The old formula used forecast_0d directly, overcounting the 1h amount twice
+          // and triggering delays too eagerly on days with light but extended rain.
           else if ((forecast_1h + fmaxf(0.0f, forecast_0d - forecast_1h)) >= (threshold_high * 1.2)) {
             should_delay = true;
             delay_days = 1;
@@ -11045,7 +11068,7 @@ script:
               
               float expected_rain;
               float _rest_0d = fmaxf(0.0f, forecast_0d - forecast_1h);
-              if (forecast_1h >= 2.0) {
+              if (forecast_1h >= 2.0f) {
                 expected_rain = forecast_1h + (_rest_0d * 0.5);
                 ESP_LOGI("irrigation", "   Using imminent forecast (%.1f) + 50%% of rest-of-day (%.1f)", forecast_1h, _rest_0d);
               } else {
@@ -13136,8 +13159,8 @@ script:
           // deferred restart that occurs. Add the delay now so Time Remaining never
           // shows 0 while the valve is still running due to restart overhead.
           if (id(cycle_soak_total_duration) > 0) {
-            id(cycle_soak_total_duration) += 2;  // valve_open_delay compensation
-            ESP_LOGD("irrigation", "⏱️ Extended C&S total +2s for valve_open_delay (total=%ds)",
+            id(cycle_soak_total_duration) += ${default_valve_open_delay_sec};  // valve_open_delay compensation
+            ESP_LOGD("irrigation", "⏱️ Extended C&S total +${default_valve_open_delay_sec}s for valve_open_delay (total=%ds)",
                      id(cycle_soak_total_duration));
           }
           ESP_LOGI("irrigation", "⏱️ Deferred restart: Zone %d (run_sec=%d) — calling start_single_valve", target_zone + 1, run_sec);
@@ -17447,14 +17470,8 @@ switch:
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
       - lambda: |-
-          // publish_state directly with switch treated as enabled.
+          // Switch is being turned ON — publish enabled status.
           {
-            // weekly_schedule_switch is being turned ON — treat as enabled
-            bool _ws_enabled = true;
-            if (!_ws_enabled) {
-              id(weekly_schedule_status).publish_state("Disabled");
-              id(next_watering_day).publish_state("None scheduled");
-            } else {
               std::string _days = "";
               if (id(schedule_monday).state) _days += "Mon ";
               if (id(schedule_tuesday).state) _days += "Tue ";
@@ -17495,7 +17512,6 @@ switch:
                 }
                 if (!_found) id(next_watering_day).publish_state("None scheduled");
               }
-            }
           }
     turn_off_action:
       - lambda: |-
@@ -18675,7 +18691,7 @@ switch:
       - lambda: |-
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
-          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
+          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone2 Active".
           // That final publish sticks because no further on_turn_off follows. Guard here prevents it.
           if (!id(zone2_enable).state && !id(test_mode_active)) return;
           // All safety checks run in turn_on_action before the relay fired.
@@ -19030,7 +19046,7 @@ switch:
       - lambda: |-
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
-          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
+          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone3 Active".
           // That final publish sticks because no further on_turn_off follows. Guard here prevents it.
           if (!id(zone3_enable).state && !id(test_mode_active)) return;
           // All safety checks run in turn_on_action before the relay fired.
@@ -19385,7 +19401,7 @@ switch:
       - lambda: |-
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
-          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
+          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone4 Active".
           // That final publish sticks because no further on_turn_off follows. Guard here prevents it.
           if (!id(zone4_enable).state && !id(test_mode_active)) return;
           // All safety checks run in turn_on_action before the relay fired.
@@ -19740,7 +19756,7 @@ switch:
       - lambda: |-
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
-          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
+          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone5 Active".
           // That final publish sticks because no further on_turn_off follows. Guard here prevents it.
           if (!id(zone5_enable).state && !id(test_mode_active)) return;
           // All safety checks run in turn_on_action before the relay fired.
@@ -20095,7 +20111,7 @@ switch:
       - lambda: |-
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
-          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
+          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone6 Active".
           // That final publish sticks because no further on_turn_off follows. Guard here prevents it.
           if (!id(zone6_enable).state && !id(test_mode_active)) return;
           // All safety checks run in turn_on_action before the relay fired.
@@ -20450,7 +20466,7 @@ switch:
       - lambda: |-
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
-          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
+          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone7 Active".
           // That final publish sticks because no further on_turn_off follows. Guard here prevents it.
           if (!id(zone7_enable).state && !id(test_mode_active)) return;
           // All safety checks run in turn_on_action before the relay fired.
@@ -20805,7 +20821,7 @@ switch:
       - lambda: |-
           // ESPHome optimistic switches fire on_turn_on AFTER turn_on_action returns.
           // This means: turn_on_action detects disabled → calls turn_off() → on_turn_off fires ("Idle")
-          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone1 Active".
+          // → turn_on_action returns → publish_state(true) fires on_turn_on → would publish "Zone8 Active".
           // That final publish sticks because no further on_turn_off follows. Guard here prevents it.
           if (!id(zone8_enable).state && !id(test_mode_active)) return;
           // All safety checks run in turn_on_action before the relay fired.
@@ -21145,6 +21161,10 @@ sprinkler:
             // Always re-evaluate C&S detailed status (update_interval:never needs a push).
             // Lambda returns "Idle" when no valve is active, correct for both normal and C&S.
             id(cycle_soak_detailed_status).update();
+            // Always push queue display — update_interval:never needs an explicit push.
+            // In the C&S multi-zone path the !in_cycle_soak branch is skipped entirely,
+            // so without this call the queue widget stays stale between zones.
+            id(queue_status_display).update();
 
       on_turn_on:
         - lambda: |-
@@ -21829,11 +21849,20 @@ button:
                               format: "⛈️ BLOCKED: Rain delay is active"
                               level: WARN
                         else:
-                          - script.execute:
-                              id: request_program_start
-                              program: 1
-                              allow_queue: true
-                              trigger_source: "Manual: ${program_a_name}"
+                          - lambda: |-
+                              if (id(freeze_protection_active)) {
+                                ESP_LOGW("irrigation", "❄️ BLOCKED: ${program_a_name} — freeze protection active (%.1f°C)", id(outside_temperature).state);
+                                return;
+                              }
+                              if (id(budget_exceeded) && !id(budget_override_active)) {
+                                ESP_LOGW("irrigation", "🚫 BLOCKED: ${program_a_name} — monthly budget exceeded (%.0fL/%.0fL)", id(current_month_usage), id(monthly_water_budget));
+                                return;
+                              }
+                              if (id(is_time_restricted)) {
+                                ESP_LOGW("irrigation", "⏰ BLOCKED: ${program_a_name} — time restriction active");
+                                return;
+                              }
+                              id(request_program_start).execute(1, true, std::string("Manual: ${program_a_name}"));
                         
   - platform: template
     name: "Run ${program_b_name} Now"
@@ -21874,11 +21903,20 @@ button:
                               format: "⛈️ BLOCKED: Rain delay is active"
                               level: WARN
                         else:
-                          - script.execute:
-                              id: request_program_start
-                              program: 2
-                              allow_queue: true
-                              trigger_source: "Manual: ${program_b_name}"
+                          - lambda: |-
+                              if (id(freeze_protection_active)) {
+                                ESP_LOGW("irrigation", "❄️ BLOCKED: ${program_b_name} — freeze protection active (%.1f°C)", id(outside_temperature).state);
+                                return;
+                              }
+                              if (id(budget_exceeded) && !id(budget_override_active)) {
+                                ESP_LOGW("irrigation", "🚫 BLOCKED: ${program_b_name} — monthly budget exceeded (%.0fL/%.0fL)", id(current_month_usage), id(monthly_water_budget));
+                                return;
+                              }
+                              if (id(is_time_restricted)) {
+                                ESP_LOGW("irrigation", "⏰ BLOCKED: ${program_b_name} — time restriction active");
+                                return;
+                              }
+                              id(request_program_start).execute(2, true, std::string("Manual: ${program_b_name}"));
 
   - platform: template
     name: "Run ${program_c_name} Now"
@@ -21919,11 +21957,20 @@ button:
                               format: "⛈️ BLOCKED: Rain delay is active"
                               level: WARN
                         else:
-                          - script.execute:
-                              id: request_program_start
-                              program: 3
-                              allow_queue: true
-                              trigger_source: "Manual: ${program_c_name}"
+                          - lambda: |-
+                              if (id(freeze_protection_active)) {
+                                ESP_LOGW("irrigation", "❄️ BLOCKED: ${program_c_name} — freeze protection active (%.1f°C)", id(outside_temperature).state);
+                                return;
+                              }
+                              if (id(budget_exceeded) && !id(budget_override_active)) {
+                                ESP_LOGW("irrigation", "🚫 BLOCKED: ${program_c_name} — monthly budget exceeded (%.0fL/%.0fL)", id(current_month_usage), id(monthly_water_budget));
+                                return;
+                              }
+                              if (id(is_time_restricted)) {
+                                ESP_LOGW("irrigation", "⏰ BLOCKED: ${program_c_name} — time restriction active");
+                                return;
+                              }
+                              id(request_program_start).execute(3, true, std::string("Manual: ${program_c_name}"));
 
 # Pause button - Actually stops the valve
   - platform: template
@@ -22564,6 +22611,7 @@ button:
               // pushes it while irrigation_busy is true, so without this the
               // "Stopped" state would persist for up to 60s until the per-minute cron.
               id(dev1_valve_status).publish_state("Idle");
+              id(current_watering_trigger).publish_state("Idle");
               // Also push queue status immediately so dashboard shows Empty
               id(queue_status_display).update();
             }
@@ -22599,7 +22647,6 @@ button:
         - if:
             condition:
               lambda: |-
-                auto now = id(homeassistant_time).now();
                 // Blackout check (incl. NZ public holidays via is_blackout_date sensor)
                 if (id(is_blackout_date).state) {
                   ESP_LOGW("irrigation", "\U0001F6AB BLOCKED: Cycle & Soak Mode - Blackout date active");
@@ -22743,7 +22790,6 @@ button:
         - if:
             condition:
               lambda: |-
-                auto now = id(homeassistant_time).now();
                 // Blackout check (incl. NZ public holidays via is_blackout_date sensor)
                 if (id(is_blackout_date).state) {
                   ESP_LOGW("irrigation", "\U0001F6AB BLOCKED: Cycle & Soak (Base) - Blackout date active");
@@ -23023,7 +23069,7 @@ button:
           // Reset monthly usage counter and budget flags
           // system blocked even after a full water-usage reset. Both flags must be cleared
           // so watering is immediately unblocked and budget warnings re-arm correctly.
-          id(current_month_usage) = 0;
+          id(current_month_usage) = 0.0f;
           id(budget_exceeded) = false;
           id(budget_warning_sent) = false;
           
