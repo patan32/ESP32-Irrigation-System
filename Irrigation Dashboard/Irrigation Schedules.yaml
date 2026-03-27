@@ -1,0 +1,2279 @@
+type: sections
+max_columns: 3
+title: Schedules
+path: schedules
+sections:
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: ET Weekly Schedule Days
+        heading_style: title
+        icon: mdi:calendar-week
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_et_schedule_1_monday
+        primary: Monday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'teal' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: teal
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_et_schedule_2_tuesday
+        primary: Tuesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'teal' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: teal
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_et_schedule_3_wednesday
+        primary: Wednesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'teal' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: teal
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_et_schedule_4_thursday
+        primary: Thursday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'teal' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: teal
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_et_schedule_5_friday
+        primary: Friday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'teal' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: teal
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_et_schedule_6_saturday
+        primary: Saturday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'teal' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: teal
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_et_schedule_7_sunday
+        primary: Sunday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'teal' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: teal
+        tap_action:
+          action: toggle
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: ET Window 1 Schedule
+        heading_style: title
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_et_watering_window_1_enable
+        primary: Window 1 Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_window_1_start_am_pm
+        name: Start AM/PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_window_1_end_am_pm
+        name: End AM/PM
+        icon: mdi:weather-sunset-down
+        icon_color: indigo
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_1_start_hour
+        name: Start Hour
+        icon: mdi:clock-start
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_1_end_hour
+        name: End Hour
+        icon: mdi:clock-end
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_1_start_minute
+        name: Start Min
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_1_end_minute
+        name: End Min
+        icon: mdi:timer-off-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: ET Window 2 Schedule
+        heading_style: title
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_et_watering_window_2_enable
+        primary: Window 2 Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_window_2_start_am_pm
+        name: Start AM/PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_window_2_end_am_pm
+        name: End AM/PM
+        icon: mdi:weather-sunset-down
+        icon_color: indigo
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_2_start_hour
+        name: Start Hour
+        icon: mdi:clock-start
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_2_end_hour
+        name: End Hour
+        icon: mdi:clock-end
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_2_start_minute
+        name: Start Min
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_2_end_minute
+        name: End Min
+        icon: mdi:timer-off-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: ET Window 3 Schedule
+        heading_style: title
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_et_watering_window_3_enable
+        primary: Window 3 Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_window_3_start_am_pm
+        name: Start AM/PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_window_3_end_am_pm
+        name: End AM/PM
+        icon: mdi:weather-sunset-down
+        icon_color: indigo
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_3_start_hour
+        name: Start Hour
+        icon: mdi:clock-start
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_3_end_hour
+        name: End Hour
+        icon: mdi:clock-end
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_3_start_minute
+        name: Start Min
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_window_3_end_minute
+        name: End Min
+        icon: mdi:timer-off-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 1 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_lawn_zone1_schedule_enable
+        primary: Schedule Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_zone1_schedule_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone1_schedule_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone1_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Program Durations
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone1_program_1_duration_0_default
+        name: Program 1
+        icon: mdi:numeric-1-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone1_program_2_duration_0_default
+        name: Program 2
+        icon: mdi:numeric-2-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone1_program_3_duration_0_default
+        name: Program 3
+        icon: mdi:numeric-3-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 2 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_lawn_zone2_schedule_enable
+        primary: Schedule Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_zone2_schedule_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone2_schedule_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone2_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Program Durations
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone2_program_1_duration_0_default
+        name: Program 1
+        icon: mdi:numeric-1-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone2_program_2_duration_0_default
+        name: Program 2
+        icon: mdi:numeric-2-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone2_program_3_duration_0_default
+        name: Program 3
+        icon: mdi:numeric-3-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 3 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_lawn_zone3_schedule_enable
+        primary: Schedule Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_zone3_schedule_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone3_schedule_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone3_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Program Durations
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone3_program_1_duration_0_default
+        name: Program 1
+        icon: mdi:numeric-1-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone3_program_2_duration_0_default
+        name: Program 2
+        icon: mdi:numeric-2-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone3_program_3_duration_0_default
+        name: Program 3
+        icon: mdi:numeric-3-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 4 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_lawn_zone4_schedule_enable
+        primary: Schedule Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_zone4_schedule_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone4_schedule_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone4_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Program Durations
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone4_program_1_duration_0_default
+        name: Program 1
+        icon: mdi:numeric-1-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone4_program_2_duration_0_default
+        name: Program 2
+        icon: mdi:numeric-2-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone4_program_3_duration_0_default
+        name: Program 3
+        icon: mdi:numeric-3-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 5 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_lawn_zone5_schedule_enable
+        primary: Schedule Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_zone5_schedule_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone5_schedule_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone5_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Program Durations
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone5_program_1_duration_0_default
+        name: Program 1
+        icon: mdi:numeric-1-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone5_program_2_duration_0_default
+        name: Program 2
+        icon: mdi:numeric-2-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone5_program_3_duration_0_default
+        name: Program 3
+        icon: mdi:numeric-3-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 6 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_lawn_zone6_schedule_enable
+        primary: Schedule Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_zone6_schedule_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone6_schedule_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone6_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Program Durations
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone6_program_1_duration_0_default
+        name: Program 1
+        icon: mdi:numeric-1-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone6_program_2_duration_0_default
+        name: Program 2
+        icon: mdi:numeric-2-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone6_program_3_duration_0_default
+        name: Program 3
+        icon: mdi:numeric-3-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 7 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_lawn_zone7_schedule_enable
+        primary: Schedule Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_zone7_schedule_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone7_schedule_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone7_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Program Durations
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone7_program_1_duration_0_default
+        name: Program 1
+        icon: mdi:numeric-1-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone7_program_2_duration_0_default
+        name: Program 2
+        icon: mdi:numeric-2-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone7_program_3_duration_0_default
+        name: Program 3
+        icon: mdi:numeric-3-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Zone 8 Schedule
+        heading_style: title
+        icon: mdi:sprinkler
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_lawn_zone8_schedule_enable
+        primary: Schedule Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-check
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_lawn_zone8_schedule_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone8_schedule_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_lawn_zone8_schedule_minute
+        name: Minute
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Program Durations
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone8_program_1_duration_0_default
+        name: Program 1
+        icon: mdi:numeric-1-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone8_program_2_duration_0_default
+        name: Program 2
+        icon: mdi:numeric-2-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: >-
+          number.irrigation_controller_lawn_zone8_program_3_duration_0_default
+        name: Program 3
+        icon: mdi:numeric-3-circle-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    columns: 4
+    cards:
+      - type: heading
+        heading: Program 1 Schedule
+        heading_style: title
+        icon: mdi:calendar-clock
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_1_enabled
+        primary: Program 1 Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-clock
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: button.irrigation_controller_run_program_1_now
+        primary: Run Program 1 Now
+        secondary: Tap to run program
+        icon: mdi:play-circle
+        icon_color: green
+        badge_icon: mdi:play
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_controller_run_program_1_now
+      - type: heading
+        heading: Settings
+        heading_style: subtitle
+        icon: mdi:cog-outline
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: select.irrigation_controller_program_1_schedule_type
+        name: Schedule Type
+        icon: mdi:calendar-multiselect
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: number.irrigation_controller_program_1_interval_days
+        name: Interval Days
+        icon: mdi:calendar-multiselect
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Active Days
+        heading_style: subtitle
+        icon: mdi:calendar-week
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_1_1_monday
+        primary: Monday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-m-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_1_2_tuesday
+        primary: Tuesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-t-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_1_3_wednesday
+        primary: Wednesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-w-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_1_4_thursday
+        primary: Thursday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-t-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_1_5_friday
+        primary: Friday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-f-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_1_6_saturday
+        primary: Saturday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-s-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_1_7_sunday
+        primary: Sunday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-s-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: heading
+        heading: Start Time 1
+        heading_style: subtitle
+        icon: mdi:clock-time-one-outline
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_1_start_1_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_1_start_1_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_1_start_1_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Start Time 2
+        heading_style: subtitle
+        icon: mdi:clock-time-two-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_1_enable_start_2
+        primary: Enable Start Time 2
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:clock-time-two-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_1_start_2_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: teal
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_1_start_2_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_1_start_2_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Start Time 3
+        heading_style: subtitle
+        icon: mdi:clock-time-three-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_1_enable_start_3
+        primary: Enable Start Time 3
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:clock-time-three-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_1_start_3_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_1_start_3_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_1_start_3_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Start Time 4
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_1_enable_start_4
+        primary: Enable Start Time 4
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:clock-time-four-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_1_start_4_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: teal
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_1_start_4_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_1_start_4_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    columns: 4
+    cards:
+      - type: heading
+        heading: Program 2 Schedule
+        heading_style: title
+        icon: mdi:calendar-clock
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_2_enabled
+        primary: Program 2 Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-clock
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: button.irrigation_controller_run_program_2_now
+        primary: Run Program 2 Now
+        secondary: Tap to run program
+        icon: mdi:play-circle
+        icon_color: green
+        badge_icon: mdi:play
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_controller_run_program_2_now
+      - type: heading
+        heading: Settings
+        heading_style: subtitle
+        icon: mdi:cog-outline
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: select.irrigation_controller_program_2_schedule_type
+        name: Schedule Type
+        icon: mdi:calendar-multiselect
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: number.irrigation_controller_program_2_interval_days
+        name: Interval Days
+        icon: mdi:calendar-multiselect
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Active Days
+        heading_style: subtitle
+        icon: mdi:calendar-week
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_2_1_monday
+        primary: Monday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-m-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_2_2_tuesday
+        primary: Tuesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-t-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_2_3_wednesday
+        primary: Wednesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-w-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_2_4_thursday
+        primary: Thursday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-t-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_2_5_friday
+        primary: Friday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-f-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_2_6_saturday
+        primary: Saturday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-s-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_2_7_sunday
+        primary: Sunday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-s-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: heading
+        heading: Start Time 1
+        heading_style: subtitle
+        icon: mdi:clock-time-one-outline
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_2_start_1_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_2_start_1_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_2_start_1_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Start Time 2
+        heading_style: subtitle
+        icon: mdi:clock-time-two-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_2_enable_start_2
+        primary: Enable Start Time 2
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:clock-time-two-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_2_start_2_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: teal
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_2_start_2_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_2_start_2_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Start Time 3
+        heading_style: subtitle
+        icon: mdi:clock-time-three-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_2_enable_start_3
+        primary: Enable Start Time 3
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:clock-time-three-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_2_start_3_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_2_start_3_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_2_start_3_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Start Time 4
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_2_enable_start_4
+        primary: Enable Start Time 4
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:clock-time-four-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_2_start_4_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: teal
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_2_start_4_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_2_start_4_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    columns: 4
+    cards:
+      - type: heading
+        heading: Program 3 Schedule
+        heading_style: title
+        icon: mdi:calendar-clock
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_3_enabled
+        primary: Program 3 Enabled
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-clock
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: button.irrigation_controller_run_program_3_now
+        primary: Run Program 3 Now
+        secondary: Tap to run program
+        icon: mdi:play-circle
+        icon_color: green
+        badge_icon: mdi:play
+        badge_color: green
+        tap_action:
+          action: call-service
+          service: button.press
+          target:
+            entity_id: button.irrigation_controller_run_program_3_now
+      - type: heading
+        heading: Settings
+        heading_style: subtitle
+        icon: mdi:cog-outline
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: select.irrigation_controller_program_3_schedule_type
+        name: Schedule Type
+        icon: mdi:calendar-multiselect
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: number.irrigation_controller_program_3_interval_days
+        name: Interval Days
+        icon: mdi:calendar-multiselect
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Active Days
+        heading_style: subtitle
+        icon: mdi:calendar-week
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_3_1_monday
+        primary: Monday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-m-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_3_2_tuesday
+        primary: Tuesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-t-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_3_3_wednesday
+        primary: Wednesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-w-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_3_4_thursday
+        primary: Thursday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-t-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_3_5_friday
+        primary: Friday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-f-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_program_3_6_saturday
+        primary: Saturday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-s-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_3_7_sunday
+        primary: Sunday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:alpha-s-circle-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: heading
+        heading: Start Time 1
+        heading_style: subtitle
+        icon: mdi:clock-time-one-outline
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_3_start_1_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_3_start_1_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_3_start_1_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Start Time 2
+        heading_style: subtitle
+        icon: mdi:clock-time-two-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_3_enable_start_2
+        primary: Enable Start Time 2
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:clock-time-two-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_3_start_2_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: teal
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_3_start_2_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_3_start_2_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Start Time 3
+        heading_style: subtitle
+        icon: mdi:clock-time-three-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_3_enable_start_3
+        primary: Enable Start Time 3
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:clock-time-three-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_3_start_3_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_3_start_3_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_3_start_3_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: cyan
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: heading
+        heading: Start Time 4
+        heading_style: subtitle
+        icon: mdi:clock-time-four-outline
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_program_3_enable_start_4
+        primary: Enable Start Time 4
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:clock-time-four-outline
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'cyan' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-select-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: select.irrigation_controller_program_3_start_4_am_pm
+        name: AM / PM
+        icon: mdi:weather-sunset-up
+        icon_color: teal
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_3_start_4_hour
+        name: Hour
+        icon: mdi:clock-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 4
+          rows: 1
+        entity: number.irrigation_controller_program_3_start_4_minute
+        name: Min
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+  - type: grid
+    column_span: 1
+    columns: 4
+    cards:
+      - type: heading
+        heading: Weekly Schedule
+        heading_style: title
+        icon: mdi:calendar-week
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_enable_weekly_schedule
+        primary: Weekly Schedule
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-week
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'teal' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_weekly_schedule_1_monday
+        primary: Monday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'teal' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_weekly_schedule_2_tuesday
+        primary: Tuesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'teal' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_weekly_schedule_3_wednesday
+        primary: Wednesday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'teal' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_weekly_schedule_4_thursday
+        primary: Thursday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'teal' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_weekly_schedule_5_friday
+        primary: Friday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'teal' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: switch.irrigation_controller_weekly_schedule_6_saturday
+        primary: Saturday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        icon_color: "{{ 'green' if is_state(entity, 'on') else 'teal' }}"
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+      - type: custom:mushroom-template-card
+        grid_options:
+          columns: 12
+          rows: 1
+        entity: switch.irrigation_controller_weekly_schedule_7_sunday
+        primary: Sunday
+        secondary: "{{ 'Enabled' if is_state(entity, 'on') else 'Disabled' }}"
+        icon: mdi:calendar-today
+        badge_icon: "{{ 'mdi:check-circle' if is_state(entity, 'on') else '' }}"
+        badge_color: green
+        tap_action:
+          action: toggle
+        color: "{{ 'green' if is_state(entity, 'on') else 'teal' }}"
+        features_position: bottom
+      - type: custom:mushroom-select-card
+        entity: select.irrigation_controller_weekly_schedule_am_or_pm
+        name: AM/PM
+        icon: mdi:weather-sunset-up
+        icon_color: cyan
+        tap_action:
+          action: more-info
+        layout: horizontal
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: number.irrigation_controller_weekly_schedule_start_hour
+        name: Hour
+        icon: mdi:clock-start
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+        layout: horizontal
+        fill_container: true
+      - type: custom:mushroom-number-card
+        grid_options:
+          columns: 6
+          rows: 1
+        entity: number.irrigation_controller_weekly_schedule_start_minute
+        name: Minute
+        icon: mdi:timer-outline
+        icon_color: teal
+        display_mode: buttons
+        tap_action:
+          action: more-info
+        layout: horizontal
+header:
+  layout: center
+  badges_position: bottom
+  badges_wrap: wrap
+  card:
+    type: markdown
+    text_only: true
+    content: |-
+      # 🌿 Irrigation Schedules
+      Irrigation Control System
+dense_section_placement: true
+cards: []
+icon: mdi:calendar
