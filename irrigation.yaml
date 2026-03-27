@@ -222,6 +222,11 @@ substitutions:
   # SMART ET (Evapotranspiration) DEFAULTS
   # ═══════════════════════════════════════════════════════════
   default_et_threshold_mm: "25.0"     # Soil water deficit trigger (millimeters)
+  # Minimum cumulative valve-open seconds before an ET run clears the soil deficit.
+  # 600s (10 min) = one full default zone (30 min) is ≫ threshold, so deficit clears
+  # after the first zone completes normally. Prevents clearing on power blips / early
+  # freeze-shutoffs (< 10 min total). Raise to 1800s (30 min) for stricter protection.
+  et_reset_min_run_sec: "1800"         # Seconds of actual watering before ET deficit resets (1800 = one full 30-min default zone)
   max_et_multiplier: "2.0"            # Maximum watering multiplier (200%)
   min_et_multiplier: "1.0"            # Minimum watering multiplier (100%)
   
@@ -504,6 +509,7 @@ esphome:
             // Initialize Smart ET variables
             id(et_last_calculation_time) = 0;
             id(et_pending_irrigation) = false;
+            id(et_session_watered_seconds) = 0;
             if (isnan(id(et_soil_moisture_deficit)) || std::isinf(id(et_soil_moisture_deficit)) ||
                 id(et_soil_moisture_deficit) < 0.0f  || id(et_soil_moisture_deficit) > 5000.0f) {
               ESP_LOGW("irrigation", "⚠️ ET: et_soil_moisture_deficit invalid (%.2f) — resetting to 0",
@@ -1237,6 +1243,11 @@ globals:
     restore_value: False  # Runtime state — set by base duration C&S button
     initial_value: 'false'
 
+  - id: valve_start_in_progress
+    type: bool
+    restore_value: False  # Runtime state — transient flag during start_single_valve restart
+    initial_value: 'false'
+
   # ─────────────────────────────────────────────────────────
   # PER-ZONE QUICK RUN BASE DURATION (disable multiplier per zone)
   # When true, the Quick Run for that zone ignores the multiplier
@@ -1329,6 +1340,13 @@ globals:
     type: float
     restore_value: False
     initial_value: '0.0'
+
+  # Cumulative valve-open seconds for the current ET-triggered run.
+  # Deficit is cleared only after this reaches et_reset_min_run_sec.
+  - id: et_session_watered_seconds
+    type: int
+    restore_value: False  # Runtime counter — reset when each new ET run fires
+    initial_value: '0'
   
   # NOTE: Smart ET automatically checks at Window 1 start time (no separate schedule time needed)
 
@@ -3236,9 +3254,12 @@ time:
                       // System started successfully — commit trigger source permanently
                       ESP_LOGI("irrigation", "📍 TRIGGER: Smart ET via %s", active_window.c_str());
                       id($devicename1).set_multiplier(combined_final);
-                      id(et_soil_moisture_deficit) = 0.0f;
+                      id(et_duration_multiplier) = et_multiplier;
+                      id(et_session_watered_seconds) = 0;
+                      // ET-A FIX: stamp calculation time so PW status "Next: Xm" stays accurate
+                      // ET-B FIX: stamp water time at run-start so "ET Last Watered" is current
+                      { auto _et_fab = id(homeassistant_time).now(); if (_et_fab.is_valid()) { id(et_last_calculation_time) = _et_fab.timestamp; id(et_last_water_time) = _et_fab.timestamp; } }
                       id(et_pending_irrigation) = false;
-                      { auto _t2b = id(homeassistant_time).now(); if (_t2b.is_valid()) id(et_last_water_time) = _t2b.timestamp; }
                       id(push_et_sensors).execute();
                     }
                   }
@@ -4591,12 +4612,14 @@ interval:
     then:
       - lambda: |-
           if (id(is_blackout_date).state) {
-            bool is_running = id($devicename1).active_valve().has_value() ||
+            bool is_running = id(irrigation_busy) ||
+                              id($devicename1).active_valve().has_value() ||
                               id(run_zone_with_cycles).is_running() ||
                               id(run_program).is_running() ||
                               id(run_all_zones_normal_script).is_running() ||
                               id(run_all_zones_cycle_soak_script).is_running() ||
                               id(continue_cycle_soak_after_resume).is_running() ||
+                              id(deferred_zone_restart).is_running() ||
                               id(pending_normal_start);
             if (is_running) {
               ESP_LOGE("irrigation", "🛑 EMERGENCY STOP - Blackout date detected while irrigating!");
@@ -4659,6 +4682,7 @@ interval:
                 id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
               }
               id(et_pending_irrigation) = false;
+              id(et_session_watered_seconds) = 0;  // BUG FIX ET-4: reset session on blackout-cron abort
               id(push_et_sensors).execute();
               id(valve_remaining_seconds).publish_state(0.0f);
               id(dev1_time_remaining).publish_state("0:00:00");
@@ -4666,9 +4690,10 @@ interval:
               id(cycle_soak_detailed_status).update();
               id(current_watering_trigger).publish_state("Idle");
               id(queue_status_display).update();
+              id(drain_queue).execute();
             }
           }
-  
+
   - interval: 500ms
     then:
       - if:
@@ -4699,10 +4724,26 @@ interval:
                   ESP_LOGE("irrigation", "❌ Normal start failed after 30 attempts - giving up");
                   id(pending_normal_start) = false;
                   id(normal_start_attempts) = 0;
+                  // ET cleanup — if ET triggered this run, the multiplier is still elevated
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                    id(et_duration_multiplier) = 1.0f;
+                    float _r = id(pw_current_multiplier);
+                    id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                  }
+                  id(et_session_watered_seconds) = 0;
+                  id(et_pending_irrigation) = false;
+                  id(push_et_sensors).execute();
                   // Must clear irrigation_busy — it was set before the failed start_full_cycle call.
                   // Without this, the system stays locked indefinitely after a hard failure.
                   id(irrigation_busy) = false;
                   id(watering_trigger_source) = "Idle";
+                  // Restore base-duration multiplier if it was saved before this failed start
+                  if (id(restore_multiplier_after_run)) {
+                    float _sm = id(saved_multiplier_for_base_run);
+                    id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm);
+                    id(restore_multiplier_after_run) = false;
+                    id(saved_multiplier_for_base_run) = 1.0f;
+                  }
                   id(valve_remaining_seconds).publish_state(0.0f);
                   id(dev1_time_remaining).publish_state("0:00:00");
                   id(dev1_progress_percent).publish_state("0%");
@@ -4723,6 +4764,9 @@ interval:
                 if (!id(irrigation_system_enable).state) {
                   ESP_LOGW("irrigation", "🚫 NORMAL start BLOCKED — system disabled");
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
+                  if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                  id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
                   id(drain_queue).execute();
                   return;
@@ -4730,6 +4774,9 @@ interval:
                 if (id(freeze_protection_active)) {
                   ESP_LOGW("irrigation", "❄️ NORMAL start BLOCKED — freeze protection active (%.1f°C)", id(outside_temperature).state);
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
+                  if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                  id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
                   id(drain_queue).execute();
                   return;
@@ -4737,6 +4784,9 @@ interval:
                 if (id(budget_exceeded) && !id(budget_override_active)) {
                   ESP_LOGW("irrigation", "🚫 NORMAL start BLOCKED — monthly budget exceeded (%.0fL / %.0fL)", id(current_month_usage), id(monthly_water_budget));
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
+                  if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                  id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
                   id(drain_queue).execute();
                   return;
@@ -4745,6 +4795,9 @@ interval:
                   int64_t _rd = (id(rain_delay_end_time) - _ns_time.timestamp) / ${seconds_per_day};
                   ESP_LOGW("irrigation", "🌧️ NORMAL start BLOCKED — rain delay active (%lld day(s) remaining)", _rd);
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
+                  if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                  id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
                   id(drain_queue).execute();
                   return;
@@ -4752,6 +4805,9 @@ interval:
                 if (id(is_blackout_date).state) {
                   ESP_LOGW("irrigation", "🚫 NORMAL start BLOCKED — blackout date active");
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
+                  if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                  id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
                   id(drain_queue).execute();
                   return;
@@ -4759,6 +4815,9 @@ interval:
                 if (id(is_time_restricted)) {
                   ESP_LOGW("irrigation", "⏰ NORMAL start BLOCKED — outside allowed watering window");
                   id(pending_normal_start) = false; id(normal_start_attempts) = 0;
+                  if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                  id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                   id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
                   id(drain_queue).execute();
                   return;
@@ -4769,6 +4828,9 @@ interval:
                     if (_w == "rainy" || _w == "pouring" || _w == "snowy" || _w == "snowy-rainy") {
                       ESP_LOGW("irrigation", "⛈️ NORMAL start BLOCKED — bad weather: %s", _w.c_str());
                       id(pending_normal_start) = false; id(normal_start_attempts) = 0;
+                      if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                      if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                      id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                       id(irrigation_busy) = false; id(watering_trigger_source) = "Idle";
                       id(drain_queue).execute();
                       return;
@@ -5163,6 +5225,7 @@ interval:
                 id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
               }
               id(et_pending_irrigation) = false;
+              id(et_session_watered_seconds) = 0;  // BUG FIX ET-2: reset session on freeze-abort
               id(push_et_sensors).execute();
               id(valve_remaining_seconds).publish_state(0.0f);
               id(dev1_time_remaining).publish_state("0:00:00");
@@ -5320,6 +5383,18 @@ interval:
               id(paused_was_all_zones_normal) = false;
               id(watering_trigger_source) = "Idle";
               id(dev1_valve_status).publish_state("Idle");
+              // BUG FIX ET-3: reset session on budget-abort
+              // BUG FIX ET-10: budget abort must also reset et_duration_multiplier — without this,
+              // the sprinkler stays at PW×ET and the 5-min cron may not fire for up to 5 minutes.
+              if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                id(et_duration_multiplier) = 1.0f;
+                float _r = id(pw_current_multiplier);
+                id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                ESP_LOGW("irrigation", "WATCHDOG: Budget exceeded — ET multiplier reset to 1.0, PW %.2fx restored", _r);
+              }
+              id(et_pending_irrigation) = false;
+              id(et_session_watered_seconds) = 0;
+              id(push_et_sensors).execute();
               id(valve_remaining_seconds).publish_state(0.0f);
               id(dev1_time_remaining).publish_state("0:00:00");
               id(dev1_progress_percent).publish_state("0%");
@@ -5431,6 +5506,18 @@ interval:
               id(dev1_valve_status).publish_state("Idle");
 
               id(watering_trigger_source) = "Idle";
+              // BUG FIX ET-9: 24h stale pause timeout must clean up ET state — without this,
+              // et_duration_multiplier stays elevated and the sprinkler runs at PW×ET for any
+              // subsequent manual or scheduled run until the 5-min cron catches it.
+              if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                id(et_duration_multiplier) = 1.0f;
+                float _r = id(pw_current_multiplier);
+                id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                ESP_LOGW("irrigation", "WATCHDOG: 24h pause — ET multiplier reset to 1.0, PW %.2fx restored", _r);
+              }
+              id(et_pending_irrigation) = false;
+              id(et_session_watered_seconds) = 0;
+              id(push_et_sensors).execute();
               id(valve_remaining_seconds).publish_state(0.0f);
               id(dev1_time_remaining).publish_state("0:00:00");
               id(dev1_progress_percent).publish_state("0%");
@@ -5550,8 +5637,10 @@ interval:
               float _wcc_r = id(pw_current_multiplier);
               id($devicename1).set_multiplier(id(vacation_mode_active) ? _wcc_r * 0.5f : _wcc_r);
               ESP_LOGI("irrigation", "🔄 ET multiplier reset to 1.0, PW %.2fx restored (watchdog clean-completion)", _wcc_r);
-              id(push_et_sensors).execute();
             }
+            id(et_pending_irrigation) = false;
+            id(et_session_watered_seconds) = 0;
+            id(push_et_sensors).execute();
             // Push sensors that use update_interval:never — without these they
             // freeze at the last active-run value when the watchdog catches a
             // clean completion that the script's own cleanup path missed.
@@ -5639,6 +5728,7 @@ interval:
                 ESP_LOGW("irrigation", "WATCHDOG: ET multiplier reset to 1.0 and PW multiplier %.2fx restored", _wdog_r);
               }
               id(et_pending_irrigation) = false;
+              id(et_session_watered_seconds) = 0;  // BUG FIX ET-5: reset session on watchdog stuck-state clear
               id(push_et_sensors).execute();
               id(valve_remaining_seconds).publish_state(0.0f);
               id(dev1_time_remaining).publish_state("0:00:00");
@@ -5646,6 +5736,11 @@ interval:
               id(cycle_soak_detailed_status).update();
               id(current_watering_trigger).publish_state("Idle");
               id(queue_status_display).update();
+
+              // Reset watchdog timestamp so the next run doesn't see a stale
+              // epoch and false-positive escalate during the brief gap between
+              // irrigation_busy=true and the first valve/script becoming active.
+              id(watchdog_last_activity) = now;
 
               id(drain_queue).execute();
             }
@@ -6503,29 +6598,36 @@ text_sensor:
         return {std::to_string(progress) + "%"};
       }
       
-      // NORMAL MODE: use stored actual run duration (not the UI slider value)
+      // NORMAL MODE: use epoch-based elapsed time for accurate progress.
+      // time_remaining_active_valve() returns the COMPONENT's internal timer,
+      // which differs from the intended duration when base-duration mode changed
+      // the multiplier AFTER the component auto-started the valve (e.g. multiplier
+      // was 1.29x at auto-start → timer=77s, but intended duration is 60s at 1.0x).
       if (!id($devicename1).active_valve().has_value()) {
         return {"0%"};
       }
-      
-      auto remaining = id($devicename1).time_remaining_active_valve().value_or(0);
-      // Use actual started duration; fall back to valve_run_duration_adjusted
-      // only if normal_run_duration_seconds was never set (edge case).
-      auto valve_num = id($devicename1).active_valve().value();
-      float duration = (id(normal_run_duration_seconds) > 0)
-          ? (float)id(normal_run_duration_seconds)
-          : (float)id($devicename1).valve_run_duration_adjusted(valve_num);
-      
-      if (duration <= 0 || remaining < 0) {
-        return {"0%"};
+
+      // Primary path: epoch-based (matches the timer display calculation)
+      if (id(normal_run_duration_seconds) > 0 && id(last_zone_start_epoch) > 0) {
+        auto _pn = id(homeassistant_time).now();
+        if (_pn.is_valid()) {
+          int _el = (int)(_pn.timestamp - id(last_zone_start_epoch));
+          int progress = (int)((_el / (float)id(normal_run_duration_seconds)) * 100.0f);
+          if (progress < 0) progress = 0;
+          if (progress > 100) progress = 100;
+          return {std::to_string(progress) + "%"};
+        }
       }
-      
+
+      // Fallback: component timer (when epoch not available — e.g. start_full_cycle)
+      auto remaining = id($devicename1).time_remaining_active_valve().value_or(0);
+      auto valve_num = id($devicename1).active_valve().value();
+      float duration = (float)id($devicename1).valve_run_duration_adjusted(valve_num);
+      if (duration <= 0 || remaining < 0) return {"0%"};
       float elapsed_n = duration - (float)remaining;
       int progress = (int)((elapsed_n / duration) * 100.0f);
-      
       if (progress < 0) progress = 0;
       if (progress > 100) progress = 100;
-      
       return {std::to_string(progress) + "%"};
       
   # Expose Valve Status as a sensor
@@ -7736,6 +7838,22 @@ sensor:
       }
       return {};
     
+  # Smart ET Session Progress — how many seconds have been watered toward the
+  # et_reset_min_run_sec threshold for the current (or most recent) run.
+  # Resets to 0 at run-start, on stop/abort, and on manual deficit reset.
+  - platform: template
+    name: "$dev1_what ET Session Watered"
+    id: et_session_watered_display
+    icon: "mdi:timer-play-outline"
+    unit_of_measurement: "s"
+    accuracy_decimals: 0
+    update_interval: never
+    lambda: |-
+      if (id(smart_et_enabled)) {
+        return (float)id(et_session_watered_seconds);
+      }
+      return {};
+
   # Rain delay countdown
   - platform: template
     id: rain_delay_remaining
@@ -10796,6 +10914,7 @@ script:
           id(et_duration_mult_display).update();
           id(et_effective_deficit).update();
           id(et_last_water_time_display).update();
+          id(et_session_watered_display).update();  // BUG FIX ET-8: expose session progress to HA
           id(dev1_smart_et_status).update();
 
   - id: restore_pw_multiplier
@@ -10806,11 +10925,12 @@ script:
           ESP_LOGI("irrigation", "🔄 Restoring Predictive Watering multiplier...");
           
           id(et_duration_multiplier) = 1.0f;
-          
+          id(et_session_watered_seconds) = 0;
+
           float pw_mult = id(pw_current_multiplier);
           float _restore_final = id(vacation_mode_active) ? pw_mult * 0.5f : pw_mult;
           id($devicename1).set_multiplier(_restore_final);
-          
+
           ESP_LOGI("irrigation", "   ✅ Multiplier restored to %.2fx (Predictive Watering%s)",
                    _restore_final, id(vacation_mode_active) ? ", ×0.5 vacation" : "");
           id(push_et_sensors).execute();
@@ -11322,9 +11442,11 @@ script:
                   // Started successfully — commit trigger source permanently
                   id($devicename1).set_multiplier(combined_vac);
                   id(et_duration_multiplier) = et_multiplier;
-                  id(et_soil_moisture_deficit) = 0.0f;
+                  id(et_session_watered_seconds) = 0;
+                  // ET-C FIX: stamp water time at run-start so "ET Last Watered" reflects
+                  // the current run immediately, not the previous one
+                  { auto _et_fc = id(homeassistant_time).now(); if (_et_fc.is_valid()) id(et_last_water_time) = _et_fc.timestamp; }
                   id(et_pending_irrigation) = false;
-                  { auto _t2b2 = id(homeassistant_time).now(); if (_t2b2.is_valid()) id(et_last_water_time) = _t2b2.timestamp; }
                   id(push_et_sensors).execute();
                 } else if (id(irrigation_busy) && !_main_et_was_idle) {
                   // System was already busy — run queued. Restore trigger so the currently-running
@@ -11358,8 +11480,12 @@ script:
                     id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
                     ESP_LOGI("irrigation", "💧 ET: Unexpected press state (not watering) — stale ET multiplier reset, PW %.2fx restored", _r);
                   } else if (id(irrigation_busy)) {
-                    // System is watering — leave et_duration_multiplier for 5-min cron to clean up
-                    id(et_duration_multiplier) = 1.0f;  // safe: 5-min cron only runs restore when !watering
+                    // System is watering — leave et_duration_multiplier for 5-min cron to clean up.
+                    // Do NOT reset to 1.0f here: the 5-min cron checks (et_duration_multiplier != 1.0f
+                    // && !watering) to trigger restore_pw_multiplier. A bare reset to 1.0f while busy
+                    // means the cron sees 1.0f after the run ends, skips the restore, and the sprinkler
+                    // stays at the combined PW×ET value indefinitely.
+                    ESP_LOGI("irrigation", "💧 ET: Unexpected state (busy=%d) — leaving et_duration_multiplier for 5-min cron", (int)id(irrigation_busy));
                   }
                   id(watering_trigger_source) = _prev_trigger_main;
                   ESP_LOGI("irrigation", "   ℹ️ Smart ET: Unexpected state after press (was_idle=%d, busy=%d) — deficit preserved, trigger restored", _main_et_was_idle, (int)id(irrigation_busy));
@@ -12066,11 +12192,7 @@ script:
                 ESP_LOGI("irrigation", "📋 QUEUED Program %d → Slot %d/3 | Queue: [%s]",
                          program, pos + 1, q_status.c_str());
               } else {
-                if (!id(queue_system_enabled)) {
-                  ESP_LOGW("irrigation", "⚠️ QUEUE DISABLED - Program %d will NOT run (system busy)!", program);
-                } else {
-                  ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Program %d will NOT run!", program);
-                }
+                ESP_LOGW("irrigation", "⚠️ QUEUE FULL (3/3) - Program %d will NOT run!", program);
               }
             } else {
               if (allow_queue && !id(queue_system_enabled)) {
@@ -12411,6 +12533,23 @@ script:
               id(irrigation_busy) = false;
               id(watering_trigger_source) = "Idle";
               id(dev1_valve_status).publish_state("Idle");
+              // BUG FIX: Restore base-duration multiplier if saved before this blocked start
+              if (id(restore_multiplier_after_run)) {
+                float _sm = id(saved_multiplier_for_base_run);
+                id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm);
+                id(restore_multiplier_after_run) = false;
+                id(saved_multiplier_for_base_run) = 1.0f;
+              }
+              // BUG FIX ET-11: If this was a queued ET run, drain_queue already set
+              // et_duration_multiplier. Now blocked — must restore immediately.
+              if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                id(et_duration_multiplier) = 1.0f;
+                float _r = id(pw_current_multiplier);
+                id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                ESP_LOGW("irrigation", "🚫 Zone block: ET multiplier reset, PW %.2fx restored", _r);
+              }
+              id(et_session_watered_seconds) = 0;
+              id(push_et_sensors).execute();
               id(valve_remaining_seconds).publish_state(0.0f);
               id(dev1_time_remaining).publish_state("0:00:00");
               id(dev1_progress_percent).publish_state("0%");
@@ -12517,10 +12656,32 @@ script:
             case 6: _qr_base = id(zone7_quick_run_base); break;
             case 7: _qr_base = id(zone8_quick_run_base); break;
           }
-          float multiplier = _qr_base ? 1.0f : id($devicename1).multiplier();
+          float multiplier = id($devicename1).multiplier();
           if (_qr_base) {
-            ESP_LOGI("irrigation", "💡 Zone %d: Quick Run BASE DURATION mode — using 1.0x (system multiplier %.2fx ignored)",
-                     zone + 1, id($devicename1).multiplier());
+            // BASE DURATION: Force the sprinkler component's multiplier to 1.0 so
+            // valve_run_duration_adjusted() (slider × multiplier) returns the raw
+            // slider value. Without this, the component applies its own multiplier
+            // on top and the valve physically runs longer than intended.
+            // Save/restore so the multiplier returns to PW value after the run.
+            if (!id(restore_multiplier_after_run)) {
+              float current_mult;
+              if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                current_mult = id(pw_current_multiplier);
+              } else {
+                current_mult = multiplier;
+                if (id(vacation_mode_active)) {
+                  current_mult = current_mult * 2.0f;  // Reverse the 0.5x vacation discount
+                }
+              }
+              id(saved_multiplier_for_base_run) = current_mult;
+              id(restore_multiplier_after_run) = true;
+              ESP_LOGI("irrigation", "💾 SAVED multiplier: %.2fx (will restore after run)", current_mult);
+            }
+            float base_mult = id(vacation_mode_active) ? 0.5f : 1.0f;
+            id($devicename1).set_multiplier(base_mult);
+            multiplier = base_mult;
+            ESP_LOGI("irrigation", "💡 Zone %d: Quick Run BASE DURATION mode — component multiplier set to %.2fx (was %.2fx)",
+                     zone + 1, base_mult, id(saved_multiplier_for_base_run));
           }
           
           ESP_LOGI("irrigation", "🌊 %s (Zone %d) START | Mode: %s | Duration: %ds | Multiplier: %.2f",
@@ -12552,8 +12713,16 @@ script:
             // actual run duration when a Quick Run button is used.
             id(normal_run_duration_seconds) = adjusted_duration;
             
-            // Start valve — relay fires here, all checks already passed above
+            // Start valve — relay fires here, all checks already passed above.
+            id(valve_start_in_progress) = true;
+            // Set epoch BEFORE start_single_valve so the 1s timer's epoch-based path
+            // has a valid timestamp from the very first tick.
+            {
+              auto _ep = id(homeassistant_time).now();
+              if (_ep.is_valid()) id(last_zone_start_epoch) = _ep.timestamp;
+            }
             id($devicename1).start_single_valve(zone, adjusted_duration);
+            id(valve_start_in_progress) = false;
             
           } else {
             // CYCLE & SOAK MODE — apply multiplier to total duration (same as normal mode)
@@ -12587,8 +12756,8 @@ script:
             // and elapsed counter are already set to span ALL zones. Do NOT reset them
             // per-zone or progress would restart at 0% for each zone instead of
             // advancing continuously from 0% to 100% across the entire run.
-            if (id(run_all_zones_cycle_soak_script).is_running()) {
-              // Grand total already set; just update per-zone tracking
+            if (id(run_all_zones_cycle_soak_script).is_running() || id(in_program_run)) {
+              // Grand total already set (by all-zones-C&S or run_program); just update per-zone tracking
               id(active_zone_number) = zone;
               id(total_cycles) = cycles;
               id(current_cycle) = 1;
@@ -12621,7 +12790,19 @@ script:
             - delay: !lambda 'return (id(normal_run_duration_seconds) + 2) * 1000;'
             - lambda: |-
                 ESP_LOGI("irrigation", "Zone %d COMPLETE (normal mode)", zone);
-                
+
+                // Stop valve if still running — the component's auto-start timer may
+                // exceed our intended duration when base-duration mode lowered the
+                // multiplier AFTER auto-start (e.g. 1.29x → 1.0x means component
+                // runs 77s instead of 60s). Without this the valve over-runs with
+                // the master valve already closed (irrigation_busy cleared below).
+                if (id($devicename1).active_valve().has_value() &&
+                    id($devicename1).active_valve().value() == (uint8_t)zone) {
+                  ESP_LOGD("irrigation", "Zone %d still active after intended duration — stopping valve (base-duration timer correction)", zone + 1);
+                  id(valve_start_in_progress) = true;
+                  id($devicename1).shutdown();
+                }
+
                 // ── Water accounting handled by on_turn_off (no duplicate here) ──
                 // on_turn_off is the single source for: water_used, zone_water_used,
                 // total_water_litres, current_month_usage, runtime_today, last_watering_timestamp
@@ -12634,6 +12815,9 @@ script:
                 id(active_zone_number) = -1;
                 
                 if (!id(in_program_run)) {
+                  if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                  id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                   id(irrigation_busy) = false;
                   id(watering_trigger_source) = "Idle";
                   id(current_watering_trigger).publish_state("Idle");
@@ -12645,7 +12829,13 @@ script:
                   id(drain_queue).execute();
                 }
                 id(normal_run_duration_seconds) = 0;  // Run complete
-      
+            # Allow shutdown callbacks to process before clearing the guard flag.
+            # valve_start_in_progress was set in the lambda above when an over-running
+            # valve needed stopping; the 200ms lets on_turn_off fire (and return early)
+            # before we clear it. Harmless no-op when no shutdown was needed.
+            - delay: 200ms
+            - lambda: 'id(valve_start_in_progress) = false;'
+
       # CYCLE & SOAK MODE EXECUTION — skipped if pre-flight blocked
       - if:
           condition:
@@ -12750,6 +12940,9 @@ script:
                 // and drains the queue itself after all zones complete.
                 bool _from_all_zones = id(run_all_zones_cycle_soak_script).is_running();
                 if (!id(in_program_run) && !_from_all_zones) {
+                  if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                  id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                   id(irrigation_busy) = false;
                   id(watering_trigger_source) = "Idle";
                   id(current_watering_trigger).publish_state("Idle");
@@ -12806,6 +12999,9 @@ script:
                 // or drain queue if we're inside run_all_zones_cycle_soak_script.
                 bool _from_all_zones_sd = id(run_all_zones_cycle_soak_script).is_running();
                 if (!id(in_program_run) && !_from_all_zones_sd) {
+                  if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                  if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                  id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                   id(irrigation_busy) = false;
                   id(watering_trigger_source) = "Idle";
                   id(current_watering_trigger).publish_state("Idle");
@@ -12875,11 +13071,28 @@ script:
             id(paused_cycle_soak_elapsed_time) = 0;
             id(cycle_soak_switch).turn_off();
             id(dev1_auto_advance).turn_on();
+            // BUG FIX: Restore base-duration multiplier if saved before this blocked resume
+            if (id(restore_multiplier_after_run)) {
+              float _sm = id(saved_multiplier_for_base_run);
+              id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm);
+              id(restore_multiplier_after_run) = false;
+              id(saved_multiplier_for_base_run) = 1.0f;
+            }
             id(watering_trigger_source) = "Idle";
             id(dev1_valve_status).publish_state("Idle");
             id(last_active_zone) = -1;
             id(last_zone_start_epoch) = 0;
             id(deferred_zone_restart).stop();
+            // BUG FIX ET-13: Resume blocked — if this was an ET run, the multiplier is still
+            // elevated from the original fire. Must restore immediately.
+            if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+              id(et_duration_multiplier) = 1.0f;
+              float _r = id(pw_current_multiplier);
+              id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+              ESP_LOGW("irrigation", "🚫 Resume-CSA block: ET multiplier reset, PW %.2fx restored", _r);
+            }
+            id(et_session_watered_seconds) = 0;
+            id(push_et_sensors).execute();
             id(valve_remaining_seconds).publish_state(0.0f);
             id(dev1_time_remaining).publish_state("0:00:00");
             id(dev1_progress_percent).publish_state("0%");
@@ -13021,6 +13234,13 @@ script:
                 id(paused_cycle_soak_elapsed_time) = 0;
                 id(cycle_soak_switch).turn_off();
                 id(dev1_auto_advance).turn_on();
+                // BUG FIX: Restore base-duration multiplier if saved before this aborted resume
+                if (id(restore_multiplier_after_run)) {
+                  float _sm = id(saved_multiplier_for_base_run);
+                  id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm);
+                  id(restore_multiplier_after_run) = false;
+                  id(saved_multiplier_for_base_run) = 1.0f;
+                }
                 id(watering_trigger_source) = "Idle";
                 id(dev1_valve_status).publish_state("Idle");
                 id(valve_remaining_seconds).publish_state(0.0f);
@@ -13032,6 +13252,15 @@ script:
                 id(last_active_zone) = -1;
                 id(last_zone_start_epoch) = 0;
                 id(deferred_zone_restart).stop();
+                // BUG FIX ET-14: Resume loop safety abort must clean up ET state.
+                if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  id(et_duration_multiplier) = 1.0f;
+                  float _r = id(pw_current_multiplier);
+                  id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                  ESP_LOGW("irrigation", "🚫 Resume loop abort: ET multiplier reset, PW %.2fx restored", _r);
+                }
+                id(et_session_watered_seconds) = 0;
+                id(push_et_sensors).execute();
                 id(drain_queue).execute();
                 return false;
               }
@@ -13097,6 +13326,10 @@ script:
           id(paused_cycle_soak_total_duration) = 0;
           id(paused_cycle_soak_elapsed_time) = 0;
           id(in_program_run) = false;
+          // ET + multiplier cleanup
+          if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+          if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+          id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
           id(irrigation_busy) = false;
           id(drain_queue).execute();
           // Restore Auto Advance and turn off C&S switch
@@ -13285,8 +13518,9 @@ script:
                   id($devicename1).set_multiplier(id(vacation_mode_active) ? _cs_blk_r * 0.5f : _cs_blk_r);
                   id(et_pending_irrigation) = true;  // Deficit still present — retry on next window
                   ESP_LOGW("irrigation", "🚫 C&S blocked: ET multiplier reset, PW %.2fx restored, ET pending preserved", _cs_blk_r);
-                  id(push_et_sensors).execute();
                 }
+                id(et_session_watered_seconds) = 0;
+                id(push_et_sensors).execute();
                 id(drain_queue).execute();
 
       # All remaining steps guarded by !cycle_soak_script_blocked
@@ -13383,7 +13617,8 @@ script:
                 add_delay: true
                 force_normal: false
             - script.wait: run_zone_with_cycles
-      
+            - lambda: 'if (id(zone_run_blocked)) id(cycle_soak_script_blocked) = true;'
+
       # Zone 2
       - if:
           condition:
@@ -13396,7 +13631,8 @@ script:
                 add_delay: true
                 force_normal: false
             - script.wait: run_zone_with_cycles
-      
+            - lambda: 'if (id(zone_run_blocked)) id(cycle_soak_script_blocked) = true;'
+
       # Zone 3
       - if:
           condition:
@@ -13409,7 +13645,8 @@ script:
                 add_delay: true
                 force_normal: false
             - script.wait: run_zone_with_cycles
-      
+            - lambda: 'if (id(zone_run_blocked)) id(cycle_soak_script_blocked) = true;'
+
       # Zone 4
       - if:
           condition:
@@ -13422,7 +13659,8 @@ script:
                 add_delay: true
                 force_normal: false
             - script.wait: run_zone_with_cycles
-      
+            - lambda: 'if (id(zone_run_blocked)) id(cycle_soak_script_blocked) = true;'
+
       # Zone 5
       - if:
           condition:
@@ -13435,7 +13673,8 @@ script:
                 add_delay: true
                 force_normal: false
             - script.wait: run_zone_with_cycles
-      
+            - lambda: 'if (id(zone_run_blocked)) id(cycle_soak_script_blocked) = true;'
+
       # Zone 6
       - if:
           condition:
@@ -13448,7 +13687,8 @@ script:
                 add_delay: true
                 force_normal: false
             - script.wait: run_zone_with_cycles
-      
+            - lambda: 'if (id(zone_run_blocked)) id(cycle_soak_script_blocked) = true;'
+
       # Zone 7
       - if:
           condition:
@@ -13461,7 +13701,8 @@ script:
                 add_delay: true
                 force_normal: false
             - script.wait: run_zone_with_cycles
-      
+            - lambda: 'if (id(zone_run_blocked)) id(cycle_soak_script_blocked) = true;'
+
       # Zone 8
       - if:
           condition:
@@ -13474,7 +13715,8 @@ script:
                 add_delay: false
                 force_normal: false
             - script.wait: run_zone_with_cycles
-      
+            - lambda: 'if (id(zone_run_blocked)) id(cycle_soak_script_blocked) = true;'
+
       - if:
           condition:
             lambda: 'return !id(cycle_soak_script_blocked);'
@@ -13503,6 +13745,15 @@ script:
             - switch.turn_on: dev1_auto_advance
             - logger.log: "Auto Advance restored to ON"
             - lambda: |-
+                // ET cleanup — zone on_turn_off clears per-zone deficit but the
+                // session multiplier and watered-seconds counter need resetting here.
+                if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  id(et_duration_multiplier) = 1.0f;
+                  float _r = id(pw_current_multiplier);
+                  id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                }
+                id(et_session_watered_seconds) = 0;
+                id(push_et_sensors).execute();
                 // BASE DURATION C&S: Restore multiplier if it was temporarily set to 1.0
                 if (id(restore_multiplier_after_run)) {
                   float saved_mult = id(saved_multiplier_for_base_run);
@@ -13562,6 +13813,25 @@ script:
             id(in_program_run) = false;
             id(watering_trigger_source) = "Idle";
             id(dev1_valve_status).publish_state("Idle");
+            // BUG FIX: Restore base-duration multiplier if saved before this blocked program
+            if (id(restore_multiplier_after_run)) {
+              float _sm = id(saved_multiplier_for_base_run);
+              id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm);
+              id(restore_multiplier_after_run) = false;
+              id(saved_multiplier_for_base_run) = 1.0f;
+            }
+            // BUG FIX ET-12: If this was a queued ET-triggered program, drain_queue already
+            // set et_duration_multiplier. Now blocked — must restore immediately.
+            if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+              id(et_duration_multiplier) = 1.0f;
+              float _r = id(pw_current_multiplier);
+              id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+              ESP_LOGW("irrigation", "🚫 Program block: ET multiplier reset, PW %.2fx restored", _r);
+            }
+            id(et_session_watered_seconds) = 0;
+            id(push_et_sensors).execute();
+            id(cycle_soak_total_duration) = 0;
+            id(cycle_soak_elapsed_time) = 0;
             id(valve_remaining_seconds).publish_state(0.0f);
             id(dev1_time_remaining).publish_state("0:00:00");
             id(dev1_progress_percent).publish_state("0%");
@@ -13744,7 +14014,10 @@ script:
                            id(zone8_program_a_duration), id(zone8_program_b_duration), id(zone8_program_c_duration));
             if (_d2 > 0) { _pg_total += _cs_zone_total((int)(_d2 * _pg_mult)); _pg_n++; }
           }
-          // Add station delays between zones (one per zone boundary, last zone has no trailing delay)
+          // Add station delays between zones (one per zone boundary, last zone has no trailing delay).
+          // run_zone_with_cycles always executes the station delay block when add_delay=true,
+          // regardless of normal vs C&S mode. The elapsed counter advances during station delays
+          // (station_delay_active=true), so the grand total MUST include them for all modes.
           if (_pg_n > 1) _pg_total += (_pg_n - 1) * id(station_delay_seconds);
           id(cycle_soak_total_duration) = _pg_total;
           id(cycle_soak_elapsed_time)   = 0;
@@ -13926,15 +14199,54 @@ script:
       # program on a 1-day interval recorded last_run=8AM, so the 6AM cron next day
       # computed days_since=0 and skipped). Recording at start is now the authoritative path.
       - lambda: |-
-          if (id(zone_run_blocked)) return;  // Pre-flight blocked — skip completion logging
-          
+          if (id(zone_run_blocked)) {
+            // Mid-run safety abort: a zone was blocked DURING program execution.
+            // Pre-flight blocks are handled by _prog_block which already cleaned up.
+            // But mid-run blocks leave in_program_run=true and irrigation_busy=true
+            // — we MUST clean up here or the system locks up permanently.
+            ESP_LOGW("irrigation", "⚠️ Program aborted mid-run (zone blocked by safety check)");
+            id(in_program_run) = false;
+            // ET cleanup
+            if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+              id(et_duration_multiplier) = 1.0f;
+              float _r = id(pw_current_multiplier);
+              id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+            }
+            id(et_session_watered_seconds) = 0;
+            id(push_et_sensors).execute();
+            // Restore base-duration multiplier
+            if (id(restore_multiplier_after_run)) {
+              float _sm = id(saved_multiplier_for_base_run);
+              id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm);
+              id(restore_multiplier_after_run) = false;
+              id(saved_multiplier_for_base_run) = 1.0f;
+            }
+            if (id(watering_trigger_source) != "Idle") {
+              id(last_watering_trigger_text) = id(watering_trigger_source);
+              id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+            }
+            id(watering_trigger_source) = "Idle";
+            id(cycle_soak_total_duration) = 0;
+            id(cycle_soak_elapsed_time) = 0;
+            id(valve_remaining_seconds).publish_state(0.0f);
+            id(dev1_time_remaining).publish_state("0:00:00");
+            id(dev1_progress_percent).publish_state("0%");
+            id(current_watering_trigger).publish_state("Idle");
+            id(dev1_valve_status).publish_state("Idle");
+            id(cycle_soak_detailed_status).update();
+            id(queue_status_display).update();
+            id(irrigation_busy) = false;
+            id(drain_queue).execute();
+            return;
+          }
+
           // Get program name from substitutions
           std::string prog_name = "Program ";
           prog_name += std::to_string(program);
           if (program == 1) prog_name = "${program_a_name}";
           else if (program == 2) prog_name = "${program_b_name}";
           else if (program == 3) prog_name = "${program_c_name}";
-          
+
           ESP_LOGI("irrigation", "");
           ESP_LOGI("irrigation", "🎉 ═══════════════════════════════════════════════");
           ESP_LOGI("irrigation", "🎉 %s COMPLETE!", prog_name.c_str());
@@ -13946,32 +14258,52 @@ script:
                    id(monthly_water_budget) > 0 ? (id(current_month_usage) / id(monthly_water_budget)) * 100.0 : 0.0);
           ESP_LOGI("irrigation", "🎉 ═══════════════════════════════════════════════");
           ESP_LOGI("irrigation", "");
-          
+
+          // ET cleanup
+          if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+            id(et_duration_multiplier) = 1.0f;
+            float _r = id(pw_current_multiplier);
+            id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+          }
+          id(et_session_watered_seconds) = 0;
+          id(push_et_sensors).execute();
+
           id(in_program_run) = false;
           id(irrigation_busy) = false;
+          // Save trigger before clearing (matches on_turn_off pattern)
+          if (id(watering_trigger_source) != "Idle") {
+            id(last_watering_trigger_text) = id(watering_trigger_source);
+            id(last_watering_trigger_sensor).publish_state(id(last_watering_trigger_text));
+          }
           id(watering_trigger_source) = "Idle";
+          // Restore base-duration multiplier — on_turn_off skips this during
+          // program runs so all zones use the same multiplier. Restore now.
+          if (id(restore_multiplier_after_run)) {
+            float saved_mult = id(saved_multiplier_for_base_run);
+            float vac_mult = id(vacation_mode_active) ? saved_mult * 0.5f : saved_mult;
+            id($devicename1).set_multiplier(vac_mult);
+            ESP_LOGI("irrigation", "🔄 MULTIPLIER RESTORED: %.2fx (program complete)", vac_mult);
+            id(restore_multiplier_after_run) = false;
+            id(saved_multiplier_for_base_run) = 1.0f;
+          }
+          // Zero grand total timer (preserved through zone transitions by on_turn_off guard)
+          id(cycle_soak_total_duration) = 0;
+          id(cycle_soak_elapsed_time) = 0;
           id(valve_remaining_seconds).publish_state(0.0f);
           id(dev1_time_remaining).publish_state("0:00:00");
           id(dev1_progress_percent).publish_state("0%");
           id(cycle_soak_detailed_status).update();
           id(current_watering_trigger).publish_state("Idle");
           id(queue_status_display).update();
-      
+
       # Reset valve status, restore Auto Advance, and drain queue
-      - if:
-          condition:
-            lambda: 'return !id(zone_run_blocked);'
-          then:
-            - text_sensor.template.publish:
-                id: dev1_valve_status
-                state: "Idle"
-            - logger.log: "Valve status reset to Idle"
-            # by 500ms + 100ms delays. During those 600ms the watchdog could fire its own
-            # clean-completion path and call drain_queue concurrently (mode:restart → one
-            # cancels the other). Execute both immediately: no yield gap, no race.
-            - switch.turn_on: dev1_auto_advance
-            - logger.log: "Auto Advance ON"
-            - script.execute: drain_queue
+      - text_sensor.template.publish:
+          id: dev1_valve_status
+          state: "Idle"
+      - logger.log: "Valve status reset to Idle"
+      - switch.turn_on: dev1_auto_advance
+      - logger.log: "Auto Advance ON"
+      - script.execute: drain_queue
 
   # ═══════════════════════════════════════════════════════════════════════════
   # DIAGNOSTICS ZONE TEST (non-blocking)
@@ -16419,6 +16751,7 @@ switch:
       - lambda: |-
           id(smart_et_enabled) = false;
           id(et_pending_irrigation) = false;
+          id(et_session_watered_seconds) = 0;  // BUG FIX ET-6: reset session when ET disabled
           ESP_LOGI("irrigation", "");
           ESP_LOGI("irrigation", "❌ ═══════════════════════════════════════════════");
           ESP_LOGI("irrigation", "❌ SMART ET WATERING DISABLED");
@@ -17728,6 +18061,7 @@ switch:
             id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
           }
           id(et_pending_irrigation) = false;
+          id(et_session_watered_seconds) = 0;  // ET-D FIX: reset session on system-disable abort
           id(push_et_sensors).execute();
           id(valve_remaining_seconds).publish_state(0.0f);
           id(dev1_time_remaining).publish_state("0:00:00");
@@ -18313,8 +18647,30 @@ switch:
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           {
             int _dur = (int)(id(Lawn_irrigation_controller_1_duration).state * 60);
+            // Bug 49 fix: Set multiplier SYNCHRONOUSLY before async request_zone_start
+            // to prevent sprinkler component using old multiplier for valve_run_duration_adjusted().
+            if (id(zone1_quick_run_base)) {
+              if (!id(restore_multiplier_after_run)) {
+                float cm;
+                if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  cm = id(pw_current_multiplier);
+                } else {
+                  cm = id($devicename1).multiplier();
+                  if (id(vacation_mode_active)) cm *= 2.0f;
+                }
+                id(saved_multiplier_for_base_run) = cm;
+                id(restore_multiplier_after_run) = true;
+              }
+              float bm = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(bm);
+              ESP_LOGI("irrigation", "🔧 Zone 1: Base duration ON — multiplier set to %.2fx BEFORE request_zone_start", bm);
+            }
             ESP_LOGI("irrigation", "💡 Zone 1 switch duration: %ds (%s)", _dur,
                      id(zone1_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            // Non-optimistic: do NOT publish_state(true) here. Let start_single_valve()
+            // in run_zone_with_cycles be the sole timer authority. Publishing here would
+            // trigger a sprinkler auto-start with its own timer, creating a dual-timer
+            // race (script delay vs sprinkler timer) that desynchronizes master/zone off.
             id(request_zone_start).execute(0, _dur, false, false, std::string("Manual: ${dev1_zone1}"));
           }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
@@ -18454,21 +18810,34 @@ switch:
             }
             if (id(smart_et_enabled) && id(et_soil_moisture_deficit) > 0.0f) {
               std::string _trig = id(watering_trigger_source);
-              bool _is_single_zone = (_trig.rfind("Scheduled: ", 0) == 0) ||  // individual zone schedule
-                                      (_trig.rfind("Manual: ", 0) == 0 && _trig.find("All Zones") == std::string::npos && _trig.find("Cycle & Soak All") == std::string::npos);  // manual single-zone run
+              // All run types (schedules, programs, manual, Smart ET) credit watering time and
+              // clear the deficit once enough water has been delivered. Only diagnostics are
+              // excluded — a valve test delivers no meaningful irrigation.
               bool _is_diagnostic  = (_trig == "Diagnostics");
-              if (!_is_single_zone && !_is_diagnostic) {  // Includes Smart ET runs (queued ET needs zone callback to clear deficit)
-                ESP_LOGI("irrigation", "🌱 ET: All-zone run complete (%s) — clearing soil deficit (was %.1fmm)", _trig.c_str(), id(et_soil_moisture_deficit));
-                id(et_soil_moisture_deficit) = 0.0f;
-                id(et_pending_irrigation) = false;
-                // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
-                // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
-                // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
-                // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
-                // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
-                // every subsequent manual or scheduled run in that window.
-                { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
-                id(push_et_sensors).execute();
+              if (!_is_diagnostic) {
+                // Accumulate actual valve-open seconds for this ET session.
+                // Deficit is cleared only once cumulative watered time meets the threshold
+                // (et_reset_min_run_sec). This prevents premature deficit-clearing when a
+                // run is aborted early (freeze, budget, power blip) before meaningful water
+                // was delivered — the system then retries rather than thinking it's done.
+                id(et_session_watered_seconds) += (int)duration;
+                if (id(et_session_watered_seconds) >= ${et_reset_min_run_sec}) {
+                  ESP_LOGI("irrigation", "🌱 ET: Deficit cleared — %ds watered (≥%ds threshold, deficit was %.1fmm)",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                  id(et_soil_moisture_deficit) = 0.0f;
+                  id(et_pending_irrigation) = false;
+                  // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
+                  // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
+                  // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
+                  // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
+                  // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
+                  // every subsequent manual or scheduled run in that window.
+                  { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
+                  id(push_et_sensors).execute();
+                } else {
+                  ESP_LOGI("irrigation", "🌱 ET: %ds watered so far — need %ds to clear deficit of %.1fmm",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                }
               }
             }
           } else {
@@ -18675,8 +19044,27 @@ switch:
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           {
             int _dur = (int)(id(Lawn_irrigation_controller_2_duration).state * 60);
+            // Bug 49 fix: Set multiplier SYNCHRONOUSLY before async request_zone_start
+            if (id(zone2_quick_run_base)) {
+              if (!id(restore_multiplier_after_run)) {
+                float cm;
+                if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  cm = id(pw_current_multiplier);
+                } else {
+                  cm = id($devicename1).multiplier();
+                  if (id(vacation_mode_active)) cm *= 2.0f;
+                }
+                id(saved_multiplier_for_base_run) = cm;
+                id(restore_multiplier_after_run) = true;
+              }
+              float bm = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(bm);
+              ESP_LOGI("irrigation", "🔧 Zone 2: Base duration ON — multiplier set to %.2fx BEFORE request_zone_start", bm);
+            }
             ESP_LOGI("irrigation", "💡 Zone 2 switch duration: %ds (%s)", _dur,
                      id(zone2_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            // Non-optimistic: do NOT publish_state(true) here — let start_single_valve()
+            // be the sole timer authority (avoids dual-timer race).
             id(request_zone_start).execute(1, _dur, false, false, std::string("Manual: ${dev1_zone2}"));
           }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
@@ -18809,21 +19197,34 @@ switch:
             // should NOT clear the system-wide deficit — the rest of the soil is still dry.
             if (id(smart_et_enabled) && id(et_soil_moisture_deficit) > 0.0f) {
               std::string _trig = id(watering_trigger_source);
-              bool _is_single_zone = (_trig.rfind("Scheduled: ", 0) == 0) ||  // individual zone schedule
-                                      (_trig.rfind("Manual: ", 0) == 0 && _trig.find("All Zones") == std::string::npos && _trig.find("Cycle & Soak All") == std::string::npos);  // manual single-zone run
+              // All run types (schedules, programs, manual, Smart ET) credit watering time and
+              // clear the deficit once enough water has been delivered. Only diagnostics are
+              // excluded — a valve test delivers no meaningful irrigation.
               bool _is_diagnostic  = (_trig == "Diagnostics");
-              if (!_is_single_zone && !_is_diagnostic) {  // Includes Smart ET runs (queued ET needs zone callback to clear deficit)
-                ESP_LOGI("irrigation", "🌱 ET: All-zone run complete (%s) — clearing soil deficit (was %.1fmm)", _trig.c_str(), id(et_soil_moisture_deficit));
-                id(et_soil_moisture_deficit) = 0.0f;
-                id(et_pending_irrigation) = false;
-                // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
-                // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
-                // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
-                // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
-                // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
-                // every subsequent manual or scheduled run in that window.
-                { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
-                id(push_et_sensors).execute();
+              if (!_is_diagnostic) {
+                // Accumulate actual valve-open seconds for this ET session.
+                // Deficit is cleared only once cumulative watered time meets the threshold
+                // (et_reset_min_run_sec). This prevents premature deficit-clearing when a
+                // run is aborted early (freeze, budget, power blip) before meaningful water
+                // was delivered — the system then retries rather than thinking it's done.
+                id(et_session_watered_seconds) += (int)duration;
+                if (id(et_session_watered_seconds) >= ${et_reset_min_run_sec}) {
+                  ESP_LOGI("irrigation", "🌱 ET: Deficit cleared — %ds watered (≥%ds threshold, deficit was %.1fmm)",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                  id(et_soil_moisture_deficit) = 0.0f;
+                  id(et_pending_irrigation) = false;
+                  // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
+                  // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
+                  // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
+                  // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
+                  // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
+                  // every subsequent manual or scheduled run in that window.
+                  { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
+                  id(push_et_sensors).execute();
+                } else {
+                  ESP_LOGI("irrigation", "🌱 ET: %ds watered so far — need %ds to clear deficit of %.1fmm",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                }
               }
             }
           } else {
@@ -19030,8 +19431,27 @@ switch:
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           {
             int _dur = (int)(id(Lawn_irrigation_controller_3_duration).state * 60);
+            // Bug 49 fix: Set multiplier SYNCHRONOUSLY before async request_zone_start
+            if (id(zone3_quick_run_base)) {
+              if (!id(restore_multiplier_after_run)) {
+                float cm;
+                if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  cm = id(pw_current_multiplier);
+                } else {
+                  cm = id($devicename1).multiplier();
+                  if (id(vacation_mode_active)) cm *= 2.0f;
+                }
+                id(saved_multiplier_for_base_run) = cm;
+                id(restore_multiplier_after_run) = true;
+              }
+              float bm = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(bm);
+              ESP_LOGI("irrigation", "🔧 Zone 3: Base duration ON — multiplier set to %.2fx BEFORE request_zone_start", bm);
+            }
             ESP_LOGI("irrigation", "💡 Zone 3 switch duration: %ds (%s)", _dur,
                      id(zone3_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            // Non-optimistic: do NOT publish_state(true) here — let start_single_valve()
+            // be the sole timer authority (avoids dual-timer race).
             id(request_zone_start).execute(2, _dur, false, false, std::string("Manual: ${dev1_zone3}"));
           }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
@@ -19164,21 +19584,34 @@ switch:
             // should NOT clear the system-wide deficit — the rest of the soil is still dry.
             if (id(smart_et_enabled) && id(et_soil_moisture_deficit) > 0.0f) {
               std::string _trig = id(watering_trigger_source);
-              bool _is_single_zone = (_trig.rfind("Scheduled: ", 0) == 0) ||  // individual zone schedule
-                                      (_trig.rfind("Manual: ", 0) == 0 && _trig.find("All Zones") == std::string::npos && _trig.find("Cycle & Soak All") == std::string::npos);  // manual single-zone run
+              // All run types (schedules, programs, manual, Smart ET) credit watering time and
+              // clear the deficit once enough water has been delivered. Only diagnostics are
+              // excluded — a valve test delivers no meaningful irrigation.
               bool _is_diagnostic  = (_trig == "Diagnostics");
-              if (!_is_single_zone && !_is_diagnostic) {  // Includes Smart ET runs (queued ET needs zone callback to clear deficit)
-                ESP_LOGI("irrigation", "🌱 ET: All-zone run complete (%s) — clearing soil deficit (was %.1fmm)", _trig.c_str(), id(et_soil_moisture_deficit));
-                id(et_soil_moisture_deficit) = 0.0f;
-                id(et_pending_irrigation) = false;
-                // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
-                // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
-                // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
-                // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
-                // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
-                // every subsequent manual or scheduled run in that window.
-                { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
-                id(push_et_sensors).execute();
+              if (!_is_diagnostic) {
+                // Accumulate actual valve-open seconds for this ET session.
+                // Deficit is cleared only once cumulative watered time meets the threshold
+                // (et_reset_min_run_sec). This prevents premature deficit-clearing when a
+                // run is aborted early (freeze, budget, power blip) before meaningful water
+                // was delivered — the system then retries rather than thinking it's done.
+                id(et_session_watered_seconds) += (int)duration;
+                if (id(et_session_watered_seconds) >= ${et_reset_min_run_sec}) {
+                  ESP_LOGI("irrigation", "🌱 ET: Deficit cleared — %ds watered (≥%ds threshold, deficit was %.1fmm)",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                  id(et_soil_moisture_deficit) = 0.0f;
+                  id(et_pending_irrigation) = false;
+                  // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
+                  // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
+                  // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
+                  // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
+                  // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
+                  // every subsequent manual or scheduled run in that window.
+                  { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
+                  id(push_et_sensors).execute();
+                } else {
+                  ESP_LOGI("irrigation", "🌱 ET: %ds watered so far — need %ds to clear deficit of %.1fmm",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                }
               }
             }
           } else {
@@ -19385,8 +19818,27 @@ switch:
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           {
             int _dur = (int)(id(Lawn_irrigation_controller_4_duration).state * 60);
+            // Bug 49 fix: Set multiplier SYNCHRONOUSLY before async request_zone_start
+            if (id(zone4_quick_run_base)) {
+              if (!id(restore_multiplier_after_run)) {
+                float cm;
+                if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  cm = id(pw_current_multiplier);
+                } else {
+                  cm = id($devicename1).multiplier();
+                  if (id(vacation_mode_active)) cm *= 2.0f;
+                }
+                id(saved_multiplier_for_base_run) = cm;
+                id(restore_multiplier_after_run) = true;
+              }
+              float bm = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(bm);
+              ESP_LOGI("irrigation", "🔧 Zone 4: Base duration ON — multiplier set to %.2fx BEFORE request_zone_start", bm);
+            }
             ESP_LOGI("irrigation", "💡 Zone 4 switch duration: %ds (%s)", _dur,
                      id(zone4_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            // Non-optimistic: do NOT publish_state(true) here — let start_single_valve()
+            // be the sole timer authority (avoids dual-timer race).
             id(request_zone_start).execute(3, _dur, false, false, std::string("Manual: ${dev1_zone4}"));
           }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
@@ -19519,21 +19971,34 @@ switch:
             // should NOT clear the system-wide deficit — the rest of the soil is still dry.
             if (id(smart_et_enabled) && id(et_soil_moisture_deficit) > 0.0f) {
               std::string _trig = id(watering_trigger_source);
-              bool _is_single_zone = (_trig.rfind("Scheduled: ", 0) == 0) ||  // individual zone schedule
-                                      (_trig.rfind("Manual: ", 0) == 0 && _trig.find("All Zones") == std::string::npos && _trig.find("Cycle & Soak All") == std::string::npos);  // manual single-zone run
+              // All run types (schedules, programs, manual, Smart ET) credit watering time and
+              // clear the deficit once enough water has been delivered. Only diagnostics are
+              // excluded — a valve test delivers no meaningful irrigation.
               bool _is_diagnostic  = (_trig == "Diagnostics");
-              if (!_is_single_zone && !_is_diagnostic) {  // Includes Smart ET runs (queued ET needs zone callback to clear deficit)
-                ESP_LOGI("irrigation", "🌱 ET: All-zone run complete (%s) — clearing soil deficit (was %.1fmm)", _trig.c_str(), id(et_soil_moisture_deficit));
-                id(et_soil_moisture_deficit) = 0.0f;
-                id(et_pending_irrigation) = false;
-                // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
-                // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
-                // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
-                // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
-                // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
-                // every subsequent manual or scheduled run in that window.
-                { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
-                id(push_et_sensors).execute();
+              if (!_is_diagnostic) {
+                // Accumulate actual valve-open seconds for this ET session.
+                // Deficit is cleared only once cumulative watered time meets the threshold
+                // (et_reset_min_run_sec). This prevents premature deficit-clearing when a
+                // run is aborted early (freeze, budget, power blip) before meaningful water
+                // was delivered — the system then retries rather than thinking it's done.
+                id(et_session_watered_seconds) += (int)duration;
+                if (id(et_session_watered_seconds) >= ${et_reset_min_run_sec}) {
+                  ESP_LOGI("irrigation", "🌱 ET: Deficit cleared — %ds watered (≥%ds threshold, deficit was %.1fmm)",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                  id(et_soil_moisture_deficit) = 0.0f;
+                  id(et_pending_irrigation) = false;
+                  // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
+                  // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
+                  // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
+                  // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
+                  // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
+                  // every subsequent manual or scheduled run in that window.
+                  { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
+                  id(push_et_sensors).execute();
+                } else {
+                  ESP_LOGI("irrigation", "🌱 ET: %ds watered so far — need %ds to clear deficit of %.1fmm",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                }
               }
             }
           } else {
@@ -19740,8 +20205,27 @@ switch:
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           {
             int _dur = (int)(id(Lawn_irrigation_controller_5_duration).state * 60);
+            // Bug 49 fix: Set multiplier SYNCHRONOUSLY before async request_zone_start
+            if (id(zone5_quick_run_base)) {
+              if (!id(restore_multiplier_after_run)) {
+                float cm;
+                if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  cm = id(pw_current_multiplier);
+                } else {
+                  cm = id($devicename1).multiplier();
+                  if (id(vacation_mode_active)) cm *= 2.0f;
+                }
+                id(saved_multiplier_for_base_run) = cm;
+                id(restore_multiplier_after_run) = true;
+              }
+              float bm = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(bm);
+              ESP_LOGI("irrigation", "🔧 Zone 5: Base duration ON — multiplier set to %.2fx BEFORE request_zone_start", bm);
+            }
             ESP_LOGI("irrigation", "💡 Zone 5 switch duration: %ds (%s)", _dur,
                      id(zone5_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            // Non-optimistic: do NOT publish_state(true) here — let start_single_valve()
+            // be the sole timer authority (avoids dual-timer race).
             id(request_zone_start).execute(4, _dur, false, false, std::string("Manual: ${dev1_zone5}"));
           }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
@@ -19874,21 +20358,34 @@ switch:
             // should NOT clear the system-wide deficit — the rest of the soil is still dry.
             if (id(smart_et_enabled) && id(et_soil_moisture_deficit) > 0.0f) {
               std::string _trig = id(watering_trigger_source);
-              bool _is_single_zone = (_trig.rfind("Scheduled: ", 0) == 0) ||  // individual zone schedule
-                                      (_trig.rfind("Manual: ", 0) == 0 && _trig.find("All Zones") == std::string::npos && _trig.find("Cycle & Soak All") == std::string::npos);  // manual single-zone run
+              // All run types (schedules, programs, manual, Smart ET) credit watering time and
+              // clear the deficit once enough water has been delivered. Only diagnostics are
+              // excluded — a valve test delivers no meaningful irrigation.
               bool _is_diagnostic  = (_trig == "Diagnostics");
-              if (!_is_single_zone && !_is_diagnostic) {  // Includes Smart ET runs (queued ET needs zone callback to clear deficit)
-                ESP_LOGI("irrigation", "🌱 ET: All-zone run complete (%s) — clearing soil deficit (was %.1fmm)", _trig.c_str(), id(et_soil_moisture_deficit));
-                id(et_soil_moisture_deficit) = 0.0f;
-                id(et_pending_irrigation) = false;
-                // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
-                // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
-                // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
-                // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
-                // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
-                // every subsequent manual or scheduled run in that window.
-                { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
-                id(push_et_sensors).execute();
+              if (!_is_diagnostic) {
+                // Accumulate actual valve-open seconds for this ET session.
+                // Deficit is cleared only once cumulative watered time meets the threshold
+                // (et_reset_min_run_sec). This prevents premature deficit-clearing when a
+                // run is aborted early (freeze, budget, power blip) before meaningful water
+                // was delivered — the system then retries rather than thinking it's done.
+                id(et_session_watered_seconds) += (int)duration;
+                if (id(et_session_watered_seconds) >= ${et_reset_min_run_sec}) {
+                  ESP_LOGI("irrigation", "🌱 ET: Deficit cleared — %ds watered (≥%ds threshold, deficit was %.1fmm)",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                  id(et_soil_moisture_deficit) = 0.0f;
+                  id(et_pending_irrigation) = false;
+                  // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
+                  // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
+                  // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
+                  // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
+                  // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
+                  // every subsequent manual or scheduled run in that window.
+                  { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
+                  id(push_et_sensors).execute();
+                } else {
+                  ESP_LOGI("irrigation", "🌱 ET: %ds watered so far — need %ds to clear deficit of %.1fmm",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                }
               }
             }
           } else {
@@ -20095,8 +20592,27 @@ switch:
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           {
             int _dur = (int)(id(Lawn_irrigation_controller_6_duration).state * 60);
+            // Bug 49 fix: Set multiplier SYNCHRONOUSLY before async request_zone_start
+            if (id(zone6_quick_run_base)) {
+              if (!id(restore_multiplier_after_run)) {
+                float cm;
+                if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  cm = id(pw_current_multiplier);
+                } else {
+                  cm = id($devicename1).multiplier();
+                  if (id(vacation_mode_active)) cm *= 2.0f;
+                }
+                id(saved_multiplier_for_base_run) = cm;
+                id(restore_multiplier_after_run) = true;
+              }
+              float bm = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(bm);
+              ESP_LOGI("irrigation", "🔧 Zone 6: Base duration ON — multiplier set to %.2fx BEFORE request_zone_start", bm);
+            }
             ESP_LOGI("irrigation", "💡 Zone 6 switch duration: %ds (%s)", _dur,
                      id(zone6_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            // Non-optimistic: do NOT publish_state(true) here — let start_single_valve()
+            // be the sole timer authority (avoids dual-timer race).
             id(request_zone_start).execute(5, _dur, false, false, std::string("Manual: ${dev1_zone6}"));
           }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
@@ -20229,21 +20745,34 @@ switch:
             // should NOT clear the system-wide deficit — the rest of the soil is still dry.
             if (id(smart_et_enabled) && id(et_soil_moisture_deficit) > 0.0f) {
               std::string _trig = id(watering_trigger_source);
-              bool _is_single_zone = (_trig.rfind("Scheduled: ", 0) == 0) ||  // individual zone schedule
-                                      (_trig.rfind("Manual: ", 0) == 0 && _trig.find("All Zones") == std::string::npos && _trig.find("Cycle & Soak All") == std::string::npos);  // manual single-zone run
+              // All run types (schedules, programs, manual, Smart ET) credit watering time and
+              // clear the deficit once enough water has been delivered. Only diagnostics are
+              // excluded — a valve test delivers no meaningful irrigation.
               bool _is_diagnostic  = (_trig == "Diagnostics");
-              if (!_is_single_zone && !_is_diagnostic) {  // Includes Smart ET runs (queued ET needs zone callback to clear deficit)
-                ESP_LOGI("irrigation", "🌱 ET: All-zone run complete (%s) — clearing soil deficit (was %.1fmm)", _trig.c_str(), id(et_soil_moisture_deficit));
-                id(et_soil_moisture_deficit) = 0.0f;
-                id(et_pending_irrigation) = false;
-                // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
-                // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
-                // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
-                // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
-                // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
-                // every subsequent manual or scheduled run in that window.
-                { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
-                id(push_et_sensors).execute();
+              if (!_is_diagnostic) {
+                // Accumulate actual valve-open seconds for this ET session.
+                // Deficit is cleared only once cumulative watered time meets the threshold
+                // (et_reset_min_run_sec). This prevents premature deficit-clearing when a
+                // run is aborted early (freeze, budget, power blip) before meaningful water
+                // was delivered — the system then retries rather than thinking it's done.
+                id(et_session_watered_seconds) += (int)duration;
+                if (id(et_session_watered_seconds) >= ${et_reset_min_run_sec}) {
+                  ESP_LOGI("irrigation", "🌱 ET: Deficit cleared — %ds watered (≥%ds threshold, deficit was %.1fmm)",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                  id(et_soil_moisture_deficit) = 0.0f;
+                  id(et_pending_irrigation) = false;
+                  // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
+                  // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
+                  // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
+                  // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
+                  // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
+                  // every subsequent manual or scheduled run in that window.
+                  { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
+                  id(push_et_sensors).execute();
+                } else {
+                  ESP_LOGI("irrigation", "🌱 ET: %ds watered so far — need %ds to clear deficit of %.1fmm",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                }
               }
             }
           } else {
@@ -20450,8 +20979,27 @@ switch:
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           {
             int _dur = (int)(id(Lawn_irrigation_controller_7_duration).state * 60);
+            // Bug 49 fix: Set multiplier SYNCHRONOUSLY before async request_zone_start
+            if (id(zone7_quick_run_base)) {
+              if (!id(restore_multiplier_after_run)) {
+                float cm;
+                if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  cm = id(pw_current_multiplier);
+                } else {
+                  cm = id($devicename1).multiplier();
+                  if (id(vacation_mode_active)) cm *= 2.0f;
+                }
+                id(saved_multiplier_for_base_run) = cm;
+                id(restore_multiplier_after_run) = true;
+              }
+              float bm = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(bm);
+              ESP_LOGI("irrigation", "🔧 Zone 7: Base duration ON — multiplier set to %.2fx BEFORE request_zone_start", bm);
+            }
             ESP_LOGI("irrigation", "💡 Zone 7 switch duration: %ds (%s)", _dur,
                      id(zone7_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            // Non-optimistic: do NOT publish_state(true) here — let start_single_valve()
+            // be the sole timer authority (avoids dual-timer race).
             id(request_zone_start).execute(6, _dur, false, false, std::string("Manual: ${dev1_zone7}"));
           }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
@@ -20584,21 +21132,34 @@ switch:
             // should NOT clear the system-wide deficit — the rest of the soil is still dry.
             if (id(smart_et_enabled) && id(et_soil_moisture_deficit) > 0.0f) {
               std::string _trig = id(watering_trigger_source);
-              bool _is_single_zone = (_trig.rfind("Scheduled: ", 0) == 0) ||  // individual zone schedule
-                                      (_trig.rfind("Manual: ", 0) == 0 && _trig.find("All Zones") == std::string::npos && _trig.find("Cycle & Soak All") == std::string::npos);  // manual single-zone run
+              // All run types (schedules, programs, manual, Smart ET) credit watering time and
+              // clear the deficit once enough water has been delivered. Only diagnostics are
+              // excluded — a valve test delivers no meaningful irrigation.
               bool _is_diagnostic  = (_trig == "Diagnostics");
-              if (!_is_single_zone && !_is_diagnostic) {  // Includes Smart ET runs (queued ET needs zone callback to clear deficit)
-                ESP_LOGI("irrigation", "🌱 ET: All-zone run complete (%s) — clearing soil deficit (was %.1fmm)", _trig.c_str(), id(et_soil_moisture_deficit));
-                id(et_soil_moisture_deficit) = 0.0f;
-                id(et_pending_irrigation) = false;
-                // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
-                // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
-                // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
-                // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
-                // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
-                // every subsequent manual or scheduled run in that window.
-                { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
-                id(push_et_sensors).execute();
+              if (!_is_diagnostic) {
+                // Accumulate actual valve-open seconds for this ET session.
+                // Deficit is cleared only once cumulative watered time meets the threshold
+                // (et_reset_min_run_sec). This prevents premature deficit-clearing when a
+                // run is aborted early (freeze, budget, power blip) before meaningful water
+                // was delivered — the system then retries rather than thinking it's done.
+                id(et_session_watered_seconds) += (int)duration;
+                if (id(et_session_watered_seconds) >= ${et_reset_min_run_sec}) {
+                  ESP_LOGI("irrigation", "🌱 ET: Deficit cleared — %ds watered (≥%ds threshold, deficit was %.1fmm)",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                  id(et_soil_moisture_deficit) = 0.0f;
+                  id(et_pending_irrigation) = false;
+                  // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
+                  // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
+                  // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
+                  // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
+                  // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
+                  // every subsequent manual or scheduled run in that window.
+                  { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
+                  id(push_et_sensors).execute();
+                } else {
+                  ESP_LOGI("irrigation", "🌱 ET: %ds watered so far — need %ds to clear deficit of %.1fmm",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                }
               }
             }
           } else {
@@ -20805,8 +21366,27 @@ switch:
           // The if: block below will fire output.turn_on once irrigation_busy=true (harmless double-on).
           {
             int _dur = (int)(id(Lawn_irrigation_controller_8_duration).state * 60);
+            // Bug 49 fix: Set multiplier SYNCHRONOUSLY before async request_zone_start
+            if (id(zone8_quick_run_base)) {
+              if (!id(restore_multiplier_after_run)) {
+                float cm;
+                if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  cm = id(pw_current_multiplier);
+                } else {
+                  cm = id($devicename1).multiplier();
+                  if (id(vacation_mode_active)) cm *= 2.0f;
+                }
+                id(saved_multiplier_for_base_run) = cm;
+                id(restore_multiplier_after_run) = true;
+              }
+              float bm = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(bm);
+              ESP_LOGI("irrigation", "🔧 Zone 8: Base duration ON — multiplier set to %.2fx BEFORE request_zone_start", bm);
+            }
             ESP_LOGI("irrigation", "💡 Zone 8 switch duration: %ds (%s)", _dur,
                      id(zone8_quick_run_base) ? "Zone slider — multiplier ignored" : "Zone slider × multiplier");
+            // Non-optimistic: do NOT publish_state(true) here — let start_single_valve()
+            // be the sole timer authority (avoids dual-timer race).
             id(request_zone_start).execute(7, _dur, false, false, std::string("Manual: ${dev1_zone8}"));
           }
           // DON'T set irrigation_busy here — request_zone_start will set it once all checks pass.
@@ -20939,21 +21519,34 @@ switch:
             // should NOT clear the system-wide deficit — the rest of the soil is still dry.
             if (id(smart_et_enabled) && id(et_soil_moisture_deficit) > 0.0f) {
               std::string _trig = id(watering_trigger_source);
-              bool _is_single_zone = (_trig.rfind("Scheduled: ", 0) == 0) ||  // individual zone schedule
-                                      (_trig.rfind("Manual: ", 0) == 0 && _trig.find("All Zones") == std::string::npos && _trig.find("Cycle & Soak All") == std::string::npos);  // manual single-zone run
+              // All run types (schedules, programs, manual, Smart ET) credit watering time and
+              // clear the deficit once enough water has been delivered. Only diagnostics are
+              // excluded — a valve test delivers no meaningful irrigation.
               bool _is_diagnostic  = (_trig == "Diagnostics");
-              if (!_is_single_zone && !_is_diagnostic) {  // Includes Smart ET runs (queued ET needs zone callback to clear deficit)
-                ESP_LOGI("irrigation", "🌱 ET: All-zone run complete (%s) — clearing soil deficit (was %.1fmm)", _trig.c_str(), id(et_soil_moisture_deficit));
-                id(et_soil_moisture_deficit) = 0.0f;
-                id(et_pending_irrigation) = false;
-                // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
-                // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
-                // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
-                // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
-                // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
-                // every subsequent manual or scheduled run in that window.
-                { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
-                id(push_et_sensors).execute();
+              if (!_is_diagnostic) {
+                // Accumulate actual valve-open seconds for this ET session.
+                // Deficit is cleared only once cumulative watered time meets the threshold
+                // (et_reset_min_run_sec). This prevents premature deficit-clearing when a
+                // run is aborted early (freeze, budget, power blip) before meaningful water
+                // was delivered — the system then retries rather than thinking it's done.
+                id(et_session_watered_seconds) += (int)duration;
+                if (id(et_session_watered_seconds) >= ${et_reset_min_run_sec}) {
+                  ESP_LOGI("irrigation", "🌱 ET: Deficit cleared — %ds watered (≥%ds threshold, deficit was %.1fmm)",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                  id(et_soil_moisture_deficit) = 0.0f;
+                  id(et_pending_irrigation) = false;
+                  // BUG FIX: Do NOT reset et_duration_multiplier here. The 5-min cron restores the
+                  // sprinkler multiplier to PW-only by checking (et_duration_multiplier != 1.0f &&
+                  // !is_watering). Resetting to 1.0f here (after the first zone callback fires)
+                  // defeats that check — the cron sees 1.0f, skips restore_pw_multiplier, and
+                  // the sprinkler stays at combined_vac (PW × ET) for up to 1 hour, over-watering
+                  // every subsequent manual or scheduled run in that window.
+                  { auto _et_wt = id(homeassistant_time).now(); if (_et_wt.is_valid()) id(et_last_water_time) = _et_wt.timestamp; }
+                  id(push_et_sensors).execute();
+                } else {
+                  ESP_LOGI("irrigation", "🌱 ET: %ds watered so far — need %ds to clear deficit of %.1fmm",
+                           id(et_session_watered_seconds), ${et_reset_min_run_sec}, id(et_soil_moisture_deficit));
+                }
               }
             }
           } else {
@@ -21059,6 +21652,14 @@ sprinkler:
       on_turn_off:
         - lambda: |-
 
+            // Guard: during start_single_valve shutdown+restart (direct zone toggle with
+            // optimistic: true), on_turn_off fires between the shutdown and restart phases.
+            // Skip all cleanup so the restart can proceed with the correct timer.
+            if (id(valve_start_in_progress)) {
+              ESP_LOGD("irrigation", "Main switch OFF during valve restart — skipping cleanup");
+              return;
+            }
+
             // Don't interfere with diagnostics — valve switches are opened/closed directly
             // during zone tests, which causes the sprinkler component to auto-close the main
             // switch when the last enabled zone turns off. Without this guard that would
@@ -21066,6 +21667,40 @@ sprinkler:
             if (id(test_mode_active)) {
               ESP_LOGD("irrigation", "Main switch OFF during diagnostics — state reset skipped");
               return;
+            }
+
+            // PREMATURE VALVE STOP DETECTION — BUG FIX for base-duration mode.
+            // When the user toggles a public zone switch, ESPHome's sprinkler component
+            // auto-starts the valve with timer = slider × CURRENT multiplier BEFORE
+            // turn_on_action runs. In base-duration mode, turn_on_action sets multiplier
+            // to 1.0 and then request_zone_start → run_zone_with_cycles calls
+            // start_single_valve(zone, correct_duration). But start_single_valve()
+            // early-returns for the already-active valve, so the WRONG (short) timer
+            // from the auto-start remains. When that short timer expires, the component
+            // turns off the valve, firing this on_turn_off. But run_zone_with_cycles is
+            // still running (waiting on its delay). Detect this and restart the valve
+            // for the remaining time — at this point active_valve() is empty so
+            // start_single_valve() will NOT early-return.
+            if (!id(valve_start_in_progress) &&
+                id(run_zone_with_cycles).is_running() &&
+                id(normal_run_duration_seconds) > 0 &&
+                id(total_cycles) == 0) {
+              int _zone = id(active_zone_number);
+              auto _now = id(homeassistant_time).now();
+              if (_zone >= 0 && _now.is_valid() && id(last_zone_start_epoch) > 0) {
+                int _elapsed = (int)(_now.timestamp - id(last_zone_start_epoch));
+                int _remaining = id(normal_run_duration_seconds) - _elapsed;
+                if (_elapsed > 3 && _remaining > 5) {
+                  ESP_LOGW("irrigation", "⚡ Premature valve stop detected for zone %d — %ds elapsed, %ds remaining — restarting valve",
+                           _zone + 1, _elapsed, _remaining);
+                  id(valve_start_in_progress) = true;
+                  id(last_zone_start_epoch) = _now.timestamp;
+                  id(normal_run_duration_seconds) = _remaining;
+                  id($devicename1).start_single_valve(_zone, _remaining);
+                  id(valve_start_in_progress) = false;
+                  return;
+                }
+              }
             }
 
             // Don't stop run_zone_with_cycles during cycle/soak mode with multiple cycles
@@ -21104,28 +21739,35 @@ sprinkler:
               id(current_cycle) = 0;
               id(total_cycles) = 0;
               id(last_cycle_seconds) = 0;
-              id(cycle_soak_total_duration) = 0;
-              id(cycle_soak_elapsed_time) = 0;
+              // Guard grand total for program runs — run_program set a multi-zone
+              // total that must survive between zones. Without this, on_turn_off
+              // zeros it after zone 1 and the timer resets to per-zone only.
+              if (!id(in_program_run)) {
+                id(cycle_soak_total_duration) = 0;
+                id(cycle_soak_elapsed_time) = 0;
+              }
               id(cycle_start_epoch) = 0;
               id(station_delay_active) = false;
               id(last_active_zone) = -1;
               id(last_zone_start_epoch) = 0;
               id(normal_run_duration_seconds) = 0;
 
-              // unconditionally (clearing restore_multiplier_after_run), which made
-              // the second (correctly guarded) block dead code that never executed.
-              //     this block sees restore_multiplier_after_run=false and does nothing.
-              //   - Normal mode natural completion: flag still set → restore here.
-              //   - C&S completion: C&S completion block already restored; flag=false → skip.
-              if (id(restore_multiplier_after_run)) {
-                float saved_mult = id(saved_multiplier_for_base_run);
-                float vac_mult = id(vacation_mode_active) ? saved_mult * 0.5f : saved_mult;
-                id($devicename1).set_multiplier(vac_mult);
-                ESP_LOGI("irrigation", "🔄 MULTIPLIER RESTORED: %.2fx (main switch off)", vac_mult);
-                id(restore_multiplier_after_run) = false;
-                id(saved_multiplier_for_base_run) = 1.0f;
+              // Restore base-duration multiplier — but NOT during a program run,
+              // because the program needs the same multiplier for all remaining
+              // zones. Program completion handles its own restore.
+              if (!id(in_program_run)) {
+                if (id(restore_multiplier_after_run)) {
+                  float saved_mult = id(saved_multiplier_for_base_run);
+                  float vac_mult = id(vacation_mode_active) ? saved_mult * 0.5f : saved_mult;
+                  id($devicename1).set_multiplier(vac_mult);
+                  ESP_LOGI("irrigation", "🔄 MULTIPLIER RESTORED: %.2fx (main switch off)", vac_mult);
+                  id(restore_multiplier_after_run) = false;
+                  id(saved_multiplier_for_base_run) = 1.0f;
+                }
               }
               if (id(irrigation_busy) && !id(in_program_run)) {
+                if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) { id(et_duration_multiplier) = 1.0f; float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+                id(et_session_watered_seconds) = 0; id(push_et_sensors).execute();
                 id(irrigation_busy) = false;
                 id(drain_queue).execute();
               }
@@ -21139,7 +21781,7 @@ sprinkler:
             // runs (the sprinkler component closes the valve which fires this handler before
             // run_zone_with_cycles reaches its own completion lambda). Without this,
             // watering_trigger_source stays stale and current_watering_trigger never clears.
-            if (!in_cycle_soak) {
+            if (!in_cycle_soak && !id(in_program_run)) {
               // Pre-save the trigger BEFORE clearing watering_trigger_source.
               // main switch on_turn_off fires before zone on_turn_off, so if we clear
               // watering_trigger_source first the zone on_turn_off records "Idle" as the
@@ -21447,6 +22089,7 @@ button:
           id(et_soil_moisture_deficit) = 0.0f;
           id(et_pending_irrigation) = false;
           id(et_duration_multiplier) = 1.0f;
+          id(et_session_watered_seconds) = 0;  // BUG FIX ET-7: reset session on manual deficit reset
           id(et_last_accumulation_day) = -1;  // Allow re-accumulation today after manual reset
           { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
           ESP_LOGI("irrigation", "🌱 Smart ET: Deficit manually reset to 0mm");
@@ -21789,21 +22432,29 @@ button:
                                             id(watering_trigger_source) = "Manual: All Zones Normal (Base 1.0x)";
                                             ESP_LOGI("irrigation", "📍 TRIGGER: Manual: All Zones Normal (Base 1.0x)");
                                             
-                                            // SAVE CURRENT MULTIPLIER
-                                            float current_mult = id($devicename1).multiplier();
-                                            if (id(vacation_mode_active)) {
-                                              current_mult = current_mult * 2.0f;
+                                            // SAVE CURRENT MULTIPLIER (use PW baseline if ET is active,
+                                            // not the combined value — zone on_turn_off clears ET, so
+                                            // restoring the ET-elevated value would leave the multiplier
+                                            // permanently inflated after the run.)
+                                            float current_mult;
+                                            if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                                              current_mult = id(pw_current_multiplier);
+                                            } else {
+                                              current_mult = id($devicename1).multiplier();
+                                              if (id(vacation_mode_active)) {
+                                                current_mult = current_mult * 2.0f;
+                                              }
                                             }
                                             id(saved_multiplier_for_base_run) = current_mult;
                                             id(restore_multiplier_after_run) = true;
                                             ESP_LOGI("irrigation", "💾 SAVED multiplier: %.2fx (will restore after run)", current_mult);
-                                            
+
                                             // SET MULTIPLIER TO 1.0 (with vacation discount if active)
                                             float base_mult = id(vacation_mode_active) ? 0.5f : 1.0f;
                                             id($devicename1).set_multiplier(base_mult);
                                             ESP_LOGI("irrigation", "🎯 MULTIPLIER SET TO: %.2fx%s (base duration)",
                                                      base_mult, id(vacation_mode_active) ? " (1.0 × 0.5 vacation)" : "");
-                                            
+
                                             id(irrigation_busy) = true;
                                             id(pending_normal_start) = true;
                                             id(normal_start_attempts) = 0;
@@ -22057,8 +22708,42 @@ button:
                 id(last_cycle_seconds) = 0;
                 id(cycle_soak_is_soaking) = false;
                 id(cycle_soak_soak_end_time) = 0;
+                // BUG FIX: Pause-on-nothing must clear all C&S and paused state to match
+                // other abort paths (freeze, budget, watchdog). Without these, stale values
+                // confuse the timer display or a subsequent resume attempt.
+                id(cycle_soak_total_duration) = 0;
+                id(cycle_soak_elapsed_time) = 0;
+                id(cycle_start_epoch) = 0;
+                id(soak_countdown_seconds) = 0;
+                id(station_delay_active) = false;
+                id(normal_run_duration_seconds) = 0;
+                id(paused_zone) = -1;
+                id(paused_cycle) = 0;
+                id(time_remaining_when_paused) = 0;
+                id(paused_was_soaking) = false;
+                id(paused_soak_remaining_seconds) = 0;
+                id(paused_total_cycles) = 0;
+                id(paused_cycle_soak_total_duration) = 0;
+                id(paused_cycle_soak_elapsed_time) = 0;
+                id(cycle_soak_switch).turn_off();
+                id(dev1_auto_advance).turn_on();
+                if (id(restore_multiplier_after_run)) {
+                  float _sm = id(saved_multiplier_for_base_run);
+                  id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm);
+                  id(restore_multiplier_after_run) = false;
+                  id(saved_multiplier_for_base_run) = 1.0f;
+                }
                 id(watering_trigger_source) = "Idle";
                 id(dev1_valve_status).publish_state("Idle");
+                // BUG FIX ET-15: Pause-on-nothing race must clean up ET state.
+                if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                  id(et_duration_multiplier) = 1.0f;
+                  float _r = id(pw_current_multiplier);
+                  id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                  ESP_LOGW("irrigation", "⚠️ Pause-on-nothing: ET multiplier reset, PW %.2fx restored", _r);
+                }
+                id(et_session_watered_seconds) = 0;
+                id(push_et_sensors).execute();
                 id(valve_remaining_seconds).publish_state(0.0f);
                 id(dev1_time_remaining).publish_state("0:00:00");
                 id(dev1_progress_percent).publish_state("0%");
@@ -22132,6 +22817,17 @@ button:
                     id(cycle_soak_total_duration) = 0;
                     id(cycle_soak_elapsed_time) = 0;
                     id(normal_run_duration_seconds) = 0;
+                    id(soak_countdown_seconds) = 0;
+                    id(station_delay_active) = false;
+                    if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                    // BUG FIX ET-16a: Resume blocked — clean up ET state
+                    if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                      id(et_duration_multiplier) = 1.0f;
+                      float _r = id(pw_current_multiplier);
+                      id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                    }
+                    id(et_session_watered_seconds) = 0;
+                    id(push_et_sensors).execute();
                     id(cycle_soak_switch).turn_off();
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
@@ -22162,6 +22858,17 @@ button:
                     id(cycle_soak_total_duration) = 0;
                     id(cycle_soak_elapsed_time) = 0;
                     id(normal_run_duration_seconds) = 0;
+                    id(soak_countdown_seconds) = 0;
+                    id(station_delay_active) = false;
+                    if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                    // BUG FIX ET-16b: Resume blocked — clean up ET state
+                    if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                      id(et_duration_multiplier) = 1.0f;
+                      float _r = id(pw_current_multiplier);
+                      id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                    }
+                    id(et_session_watered_seconds) = 0;
+                    id(push_et_sensors).execute();
                     id(cycle_soak_switch).turn_off();
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
@@ -22192,6 +22899,17 @@ button:
                     id(cycle_soak_total_duration) = 0;
                     id(cycle_soak_elapsed_time) = 0;
                     id(normal_run_duration_seconds) = 0;
+                    id(soak_countdown_seconds) = 0;
+                    id(station_delay_active) = false;
+                    if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                    // BUG FIX ET-16c: Resume blocked — clean up ET state
+                    if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                      id(et_duration_multiplier) = 1.0f;
+                      float _r = id(pw_current_multiplier);
+                      id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                    }
+                    id(et_session_watered_seconds) = 0;
+                    id(push_et_sensors).execute();
                     id(cycle_soak_switch).turn_off();
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
@@ -22224,6 +22942,17 @@ button:
                     id(cycle_soak_total_duration) = 0;
                     id(cycle_soak_elapsed_time) = 0;
                     id(normal_run_duration_seconds) = 0;
+                    id(soak_countdown_seconds) = 0;
+                    id(station_delay_active) = false;
+                    if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                    // BUG FIX ET-16d: Resume blocked — clean up ET state
+                    if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                      id(et_duration_multiplier) = 1.0f;
+                      float _r = id(pw_current_multiplier);
+                      id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                    }
+                    id(et_session_watered_seconds) = 0;
+                    id(push_et_sensors).execute();
                     id(cycle_soak_switch).turn_off();
                     id(dev1_auto_advance).turn_on();
                     id(drain_queue).execute();
@@ -22258,6 +22987,17 @@ button:
                       id(cycle_soak_total_duration) = 0;
                       id(cycle_soak_elapsed_time) = 0;
                       id(normal_run_duration_seconds) = 0;
+                      id(soak_countdown_seconds) = 0;
+                      id(station_delay_active) = false;
+                      if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                      // BUG FIX ET-16e: Resume blocked — clean up ET state
+                      if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                        id(et_duration_multiplier) = 1.0f;
+                        float _r = id(pw_current_multiplier);
+                        id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                      }
+                      id(et_session_watered_seconds) = 0;
+                      id(push_et_sensors).execute();
                       id(cycle_soak_switch).turn_off();
                       id(dev1_auto_advance).turn_on();
                       id(drain_queue).execute();
@@ -22293,6 +23033,17 @@ button:
                         id(cycle_soak_total_duration) = 0;
                         id(cycle_soak_elapsed_time) = 0;
                         id(normal_run_duration_seconds) = 0;
+                        id(soak_countdown_seconds) = 0;
+                        id(station_delay_active) = false;
+                        if (id(restore_multiplier_after_run)) { float _sm = id(saved_multiplier_for_base_run); id($devicename1).set_multiplier(id(vacation_mode_active) ? _sm * 0.5f : _sm); id(restore_multiplier_after_run) = false; id(saved_multiplier_for_base_run) = 1.0f; }
+                        // BUG FIX ET-16f: Resume blocked — clean up ET state
+                        if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                          id(et_duration_multiplier) = 1.0f;
+                          float _r = id(pw_current_multiplier);
+                          id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+                        }
+                        id(et_session_watered_seconds) = 0;
+                        id(push_et_sensors).execute();
                         id(cycle_soak_switch).turn_off();
                         id(dev1_auto_advance).turn_on();
                         id(drain_queue).execute();
@@ -22560,8 +23311,9 @@ button:
             if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
               id(et_duration_multiplier) = 1.0f;
               { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
-              id(push_et_sensors).execute();
             }
+            id(et_session_watered_seconds) = 0;
+            id(push_et_sensors).execute();
 
         # Turn OFF Cycle & Soak when stopping
         - switch.turn_off: cycle_soak_switch
@@ -22604,8 +23356,8 @@ button:
               // Calling .update() here runs each sensor lambda once immediately,
               // which returns 0 / "0%" / "Idle" now that all state is cleared.
               id(valve_remaining_seconds).publish_state(0.0f);
-              id(dev1_time_remaining).update();
-              id(dev1_progress_percent).update();
+              id(dev1_time_remaining).publish_state("0:00:00");
+              id(dev1_progress_percent).publish_state("0%");
               id(cycle_soak_detailed_status).update();
               // Reset valve status to Idle immediately — the 1s interval only
               // pushes it while irrigation_busy is true, so without this the
@@ -22906,23 +23658,27 @@ button:
                                             ESP_LOGI("irrigation", "📍 TRIGGER: Manual: C&S All Zones (Base 1.0x)");
                                             ESP_LOGI("irrigation", "▶️ STARTING C&S Base immediately (system idle)");
                                             
-                                            // SAVE CURRENT MULTIPLIER
-                                            float current_mult = id($devicename1).multiplier();
-                                            // Undo vacation discount if active to get the true base multiplier
-                                            if (id(vacation_mode_active)) {
-                                              current_mult = current_mult * 2.0f;  // Reverse the 0.5x vacation discount
+                                            // SAVE CURRENT MULTIPLIER (use PW baseline if ET is active)
+                                            float current_mult;
+                                            if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                                              current_mult = id(pw_current_multiplier);
+                                            } else {
+                                              current_mult = id($devicename1).multiplier();
+                                              if (id(vacation_mode_active)) {
+                                                current_mult = current_mult * 2.0f;
+                                              }
                                             }
                                             id(saved_multiplier_for_base_run) = current_mult;
                                             id(restore_multiplier_after_run) = true;
-                                            
+
                                             ESP_LOGI("irrigation", "💾 SAVED multiplier: %.2fx (will restore after run)", current_mult);
-                                            
+
                                             // SET MULTIPLIER TO 1.0 (accounting for vacation mode if active)
                                             float base_mult = id(vacation_mode_active) ? 0.5f : 1.0f;
                                             id($devicename1).set_multiplier(base_mult);
                                             ESP_LOGI("irrigation", "🎯 MULTIPLIER SET TO: %.2fx%s",
                                                      base_mult, id(vacation_mode_active) ? " (1.0 × 0.5 vacation)" : " (base duration)");
-                                            
+
                                             id(irrigation_busy) = true;
                                             id(cycle_soak_switch).turn_on();
                                             id(run_all_zones_cycle_soak_script).execute();
