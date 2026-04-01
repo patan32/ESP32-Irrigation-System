@@ -5408,7 +5408,13 @@ interval:
               float _offline_mult = id(vacation_mode_active) ? id(fallback_multiplier) * 0.5f : id(fallback_multiplier);
               ESP_LOGW("irrigation", "📡 Using fallback multiplier: %.2f%s", _offline_mult,
                        id(vacation_mode_active) ? " (×0.5 vacation)" : "");
-              id($devicename1).set_multiplier(_offline_mult);
+              if (id(restore_multiplier_after_run)) {
+                ESP_LOGW("irrigation", "📡 Base duration run active — fallback multiplier deferred");
+              } else if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+                ESP_LOGW("irrigation", "📡 ET boost active — fallback multiplier deferred");
+              } else {
+                id($devicename1).set_multiplier(_offline_mult);
+              }
             }
           } else {
             sensor_fail_count = 0;
@@ -10822,6 +10828,11 @@ script:
           // mid-run — only update pw_current_multiplier for the restore path to use later.
           if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
             ESP_LOGI("irrigation", "💧 PW: ET boost active (%.2fx) — skipping multiplier override, pw_current_multiplier updated to %.2fx for restore", id(et_duration_multiplier), combined_multiplier);
+          } else if (id(restore_multiplier_after_run)) {
+            // Base duration run active — multiplier is locked to 1.0x.
+            // pw_current_multiplier is already updated (line above) for the restore path.
+            id(saved_multiplier_for_base_run) = combined_multiplier;
+            ESP_LOGI("irrigation", "💧 PW: Base duration run active — skipping multiplier override, saved %.2fx for restore after run", combined_multiplier);
           } else if (id(vacation_mode_active)) {
             id($devicename1).set_multiplier(combined_multiplier * 0.5f);
             id(normal_multiplier) = combined_multiplier;  // Keep saved value current
@@ -10873,10 +10884,16 @@ script:
 
           float pw_mult = id(pw_current_multiplier);
           float _restore_final = id(vacation_mode_active) ? pw_mult * 0.5f : pw_mult;
-          id($devicename1).set_multiplier(_restore_final);
 
-          ESP_LOGI("irrigation", "   ✅ Multiplier restored to %.2fx (Predictive Watering%s)",
+          if (id(restore_multiplier_after_run)) {
+            // Base duration run active — multiplier locked to 1.0x, save new PW value for restore
+            id(saved_multiplier_for_base_run) = pw_mult;
+            ESP_LOGI("irrigation", "   ⏸ Base duration run active — PW restore deferred (saved %.2fx)", pw_mult);
+          } else {
+            id($devicename1).set_multiplier(_restore_final);
+            ESP_LOGI("irrigation", "   ✅ Multiplier restored to %.2fx (Predictive Watering%s)",
                    _restore_final, id(vacation_mode_active) ? ", ×0.5 vacation" : "");
+          }
           id(push_et_sensors).execute();
 
   - id: calculate_smart_et
@@ -17879,8 +17896,12 @@ switch:
           } else {
             id(normal_multiplier) = id($devicename1).multiplier();
           }
-          // Reduce watering by 50%
-          id($devicename1).set_multiplier(id(normal_multiplier) * 0.5f);
+          // Reduce watering by 50% — but respect base-duration lock
+          if (id(restore_multiplier_after_run)) {
+            ESP_LOGI("irrigation", "Vacation: Base duration run active — 0.5x will apply after run completes");
+          } else {
+            id($devicename1).set_multiplier(id(normal_multiplier) * 0.5f);
+          }
           // Save zone schedule states before disabling (so we can restore them on exit)
           id(vacation_saved_zone1_sched) = id(zone1_schedule_enabled);
           id(vacation_saved_zone2_sched) = id(zone2_schedule_enabled);
@@ -17912,7 +17933,10 @@ switch:
           // Restore multiplier — if Smart ET has an active boost the combined value
           // must include the ET factor; restoring to normal_multiplier alone would
           // silently drop the ET boost mid-run, leaving remaining zones too short.
-          if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
+          if (id(restore_multiplier_after_run)) {
+            // Base duration run active — multiplier locked to 1.0x, vacation flag cleared for restore path
+            ESP_LOGI("irrigation", "Vacation mode deactivated — base duration run active, multiplier stays at 1.0x");
+          } else if (id(smart_et_enabled) && fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
             // ET run in progress — restore to PW × ET combined (without vacation discount)
             float combined = id(pw_current_multiplier) * id(et_duration_multiplier);
             if (combined > ${max_et_multiplier}f) combined = ${max_et_multiplier}f;
