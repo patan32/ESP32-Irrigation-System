@@ -248,8 +248,8 @@ substitutions:
   # ═══════════════════════════════════════════════════════════
   # TESTING & DIAGNOSTICS
   # ═══════════════════════════════════════════════════════════
-  test_master_valve_sec: "10"         # Master valve test duration (seconds)
-  test_zone_sec: "7"                  # Individual zone test duration (seconds)
+  test_master_valve_sec: "8"          # Master valve test duration (seconds)
+  test_zone_sec: "8"                  # Individual zone test duration (seconds)
   default_quick_run_min: "5"          # Default quick-run duration shown in HA (minutes)
   # Note: pause watchdog timeout is ${seconds_per_day} (24h) — see 30s watchdog interval
   
@@ -4994,13 +4994,15 @@ interval:
             // Auto-extend total when elapsed reaches it but valve is still active.
             // Handles the case where deferred_zone_restart added time that wasn't in the
             // original grand total (e.g. full-cycle restart instead of remaining-cycle).
-            // Auto-extend: only fire when a C&S script is actively running.
-            // Guarding on irrigation_busy alone was too broad — busy stays true during
-            // the brief cleanup window after the last cycle, causing a spurious extend
-            // that inflated total_duration and left the timer showing stale minutes.
-            bool _cs_active = id(run_zone_with_cycles).is_running() ||
-                              id(run_all_zones_cycle_soak_script).is_running() ||
+            // Auto-extend: only fire for C&S runs or all-zones scripts — NOT for normal-mode
+            // single-zone runs where the component timer mismatch is expected and handled by
+            // the shutdown code at script completion. Without this guard, the auto-extend fires
+            // when elapsed=total but the component has remaining time due to the multiplier
+            // mismatch, causing the timer to jump back from 0 and progress to drop from 100%.
+            bool _cs_active = id(run_all_zones_cycle_soak_script).is_running() ||
                               id(continue_cycle_soak_after_resume).is_running();
+            // Also extend during C&S single-zone (total_cycles > 0 means C&S mode)
+            if (id(total_cycles) > 0 && id(run_zone_with_cycles).is_running()) _cs_active = true;
             if (id(cycle_soak_elapsed_time) >= id(cycle_soak_total_duration) &&
                 id(cycle_soak_total_duration) > 0 && id(irrigation_busy) && _cs_active) {
               auto remaining_opt = id($devicename1).time_remaining_active_valve();
@@ -5209,7 +5211,8 @@ interval:
               id(cycle_soak_detailed_status).update();
               id(current_watering_trigger).publish_state("Idle");
               id(queue_status_display).update();
-              
+              id(drain_queue).execute();
+
               ESP_LOGW("irrigation", "❄️ ═══════════════════════════════════════════════");
               ESP_LOGW("irrigation", "");
               
@@ -5376,9 +5379,10 @@ interval:
               id(cycle_soak_detailed_status).update();
               id(current_watering_trigger).publish_state("Idle");
               id(queue_status_display).update();
+              id(drain_queue).execute();
             }
           }
-          
+
           // 4b. RAIN DELAY EXPIRY CHECK
           // via side-effects. Now that the lambda is read-only (safe), the watchdog is the
           // sole expiry authority. This also fixes the missing rain_delay_days_input.publish_state(0)
@@ -12618,7 +12622,14 @@ script:
             case 7: _qr_base = id(zone8_quick_run_base); break;
           }
           float multiplier = id($devicename1).multiplier();
-          if (_qr_base) {
+          // Base duration ONLY applies to individual zone switch activations.
+          // All-zones (normal/C&S) and program runs use the system multiplier for
+          // all zones — per-zone base-duration toggles must NOT override mid-run
+          // or the grand total becomes wrong and timer/progress desyncs.
+          bool _in_multi_zone = id(in_program_run) ||
+                                id(run_all_zones_cycle_soak_script).is_running() ||
+                                id(run_all_zones_normal_script).is_running();
+          if (_qr_base && !_in_multi_zone) {
             // BASE DURATION: Force the sprinkler component's multiplier to 1.0 so
             // valve_run_duration_adjusted() (slider × multiplier) returns the raw
             // slider value. Without this, the component applies its own multiplier
@@ -12672,6 +12683,15 @@ script:
             id(normal_run_duration_seconds) = adjusted_duration;
 
             // Start valve — relay fires here, all checks already passed above.
+            // NOTE: When a user toggles a zone switch in HA, the sprinkler component
+            // may auto-start the valve BEFORE turn_on_action sets the multiplier.
+            // If the auto-start timer differs from adjusted_duration:
+            //   - Timer too LONG (multiplier > 1.0 at auto-start): the completion code
+            //     below detects the over-running valve and shuts it down at script end.
+            //   - Timer too SHORT (multiplier < 1.0 at auto-start): the premature stop
+            //     detection in main switch on_turn_off restarts with relay keepalive
+            //     so the physical valve never interrupts.
+            // start_single_valve early-returns for already-active valve (harmless no-op).
             id(valve_start_in_progress) = true;
             {
               auto _ep = id(homeassistant_time).now();
@@ -12745,7 +12765,7 @@ script:
             # +2s safety margin: allows valve to physically close before next zone opens.
             - delay: !lambda 'return (id(normal_run_duration_seconds) + 2) * 1000;'
             - lambda: |-
-                ESP_LOGI("irrigation", "Zone %d COMPLETE (normal mode)", zone);
+                ESP_LOGI("irrigation", "Zone %d COMPLETE (normal mode)", zone + 1);
 
                 // Stop valve if still running — the component's auto-start timer may
                 // exceed our intended duration when base-duration mode lowered the
@@ -13025,6 +13045,7 @@ script:
             id(paused_total_cycles) = 0;
             id(paused_cycle_soak_total_duration) = 0;
             id(paused_cycle_soak_elapsed_time) = 0;
+            id(paused_was_all_zones_normal) = false;
             id(cycle_soak_switch).turn_off();
             id(dev1_auto_advance).turn_on();
             // Restore base-duration multiplier if saved before this blocked resume
@@ -16513,8 +16534,13 @@ switch:
           auto now = id(homeassistant_time).now();
           if (!now.is_valid()) {
             // Time unavailable — apply safe 1.0 default, halved for vacation
-            float _safe = id(vacation_mode_active) ? 0.5f : 1.0f;
-            id($devicename1).set_multiplier(_safe);
+            if (id(restore_multiplier_after_run)) {
+              id(saved_multiplier_for_base_run) = 1.0f;
+              ESP_LOGI("irrigation", "✓ PW disabled — base-duration run active, saved 1.0x for restore");
+            } else {
+              float _safe = id(vacation_mode_active) ? 0.5f : 1.0f;
+              id($devicename1).set_multiplier(_safe);
+            }
             return;
           }
           
@@ -16540,9 +16566,14 @@ switch:
           float _final = id(vacation_mode_active) ? multiplier * 0.5f : multiplier;
           id(normal_multiplier) = multiplier;  // Save undiscounted value for vacation exit
           id(seasonal_multiplier).update();  // Push seasonal display
-          id($devicename1).set_multiplier(_final);
-          ESP_LOGI("irrigation", "✓ Multiplier set to %.2f (basic seasonal%s)",
-                   _final, id(vacation_mode_active) ? ", ×0.5 vacation" : "");
+          if (id(restore_multiplier_after_run)) {
+            id(saved_multiplier_for_base_run) = multiplier;
+            ESP_LOGI("irrigation", "✓ PW disabled — base-duration run active, saved %.2fx for restore", multiplier);
+          } else {
+            id($devicename1).set_multiplier(_final);
+            ESP_LOGI("irrigation", "✓ Multiplier set to %.2f (basic seasonal%s)",
+                     _final, id(vacation_mode_active) ? ", ×0.5 vacation" : "");
+          }
 
   # ═══════════════════════════════════════════════════════════
   # MASTER VALVE ENABLE (Hunter Pro-C Style)
@@ -21645,6 +21676,7 @@ sprinkler:
             // for the remaining time — at this point active_valve() is empty so
             // start_single_valve() will NOT early-return.
             if (!id(valve_start_in_progress) &&
+                !id(station_delay_active) &&
                 id(run_zone_with_cycles).is_running() &&
                 id(normal_run_duration_seconds) > 0 &&
                 id(total_cycles) == 0) {
@@ -21656,6 +21688,20 @@ sprinkler:
                 if (_elapsed > 3 && _remaining > 5) {
                   ESP_LOGW("irrigation", "⚡ Premature valve stop detected for zone %d — %ds elapsed, %ds remaining — restarting valve",
                            _zone + 1, _elapsed, _remaining);
+                  // RELAY KEEPALIVE: Re-energize the relay IMMEDIATELY via GPIO before
+                  // the sprinkler component restarts. Solenoid valves take 50-100ms to
+                  // physically close — by re-energizing within microseconds the valve
+                  // never actually shuts off. The component restart is purely internal.
+                  switch(_zone) {
+                    case 0: id(relay_zone_1_out).turn_on(); break;
+                    case 1: id(relay_zone_2_out).turn_on(); break;
+                    case 2: id(relay_zone_3_out).turn_on(); break;
+                    case 3: id(relay_zone_4_out).turn_on(); break;
+                    case 4: id(relay_zone_5_out).turn_on(); break;
+                    case 5: id(relay_zone_6_out).turn_on(); break;
+                    case 6: id(relay_zone_7_out).turn_on(); break;
+                    case 7: id(relay_zone_8_out).turn_on(); break;
+                  }
                   id(valve_start_in_progress) = true;
                   id($devicename1).start_single_valve(_zone, _remaining);
                   id(valve_start_in_progress) = false;
@@ -22052,7 +22098,10 @@ button:
           id(et_duration_multiplier) = 1.0f;
           id(et_session_watered_seconds) = 0;  // Reset ET session on manual deficit reset
           id(et_last_accumulation_day) = -1;  // Allow re-accumulation today after manual reset
-          { float _r = id(pw_current_multiplier); id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r); }
+          if (!id(restore_multiplier_after_run)) {
+            float _r = id(pw_current_multiplier);
+            id($devicename1).set_multiplier(id(vacation_mode_active) ? _r * 0.5f : _r);
+          }
           ESP_LOGI("irrigation", "🌱 Smart ET: Deficit manually reset to 0mm");
           id(push_et_sensors).execute();
 
@@ -22594,6 +22643,9 @@ button:
         - lambda: |-
             // Save current state if a valve is active
             if (id($devicename1).active_valve().has_value()) {
+              // Set is_paused FIRST — blocks the 1s timer from incrementing elapsed
+              // between snapshot and valve shutdown (race condition fix)
+              id(is_paused) = true;
               id(paused_zone) = id($devicename1).active_valve().value();
               id(paused_cycle) = id(current_cycle);
               // All modes now use the elapsed counter (cycle_soak_total_duration/elapsed_time).
@@ -22603,7 +22655,6 @@ button:
                 int _pr = id(cycle_soak_total_duration) - id(cycle_soak_elapsed_time);
                 id(time_remaining_when_paused) = (_pr > 0) ? _pr : 0;
               }
-              id(is_paused) = true;
 
               // Snapshot cycle/soak state for resume
               id(paused_total_cycles) = id(total_cycles);
@@ -22692,6 +22743,7 @@ button:
                 id(paused_total_cycles) = 0;
                 id(paused_cycle_soak_total_duration) = 0;
                 id(paused_cycle_soak_elapsed_time) = 0;
+                id(paused_was_all_zones_normal) = false;
                 id(cycle_soak_switch).turn_off();
                 id(dev1_auto_advance).turn_on();
                 if (id(restore_multiplier_after_run)) {
