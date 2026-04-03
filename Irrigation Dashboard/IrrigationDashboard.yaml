@@ -246,6 +246,17 @@ sections:
         badge_color: orange
         tap_action:
           action: toggle
+      - type: custom:mushroom-template-card
+        entity: switch.irrigation_controller_holiday_override_bypass_nz_holidays
+        primary: Holiday Override
+        secondary: "{{ 'Active' if is_state(entity, 'on') else 'Inactive' }}"
+        icon: mdi:clock-edit
+        badge_icon: "{{ 'mdi:alert' if is_state(entity, 'on') else '' }}"
+        badge_color: orange
+        tap_action:
+          action: toggle
+        color: "{{ 'orange' if is_state(entity, 'on') else 'cyan' }}"
+        features_position: bottom
   - type: grid
     columns: 4
     cards:
