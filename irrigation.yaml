@@ -1961,6 +1961,10 @@ globals:
     type: bool
     restore_value: True  # USER SETTING - must persist across reboots
     initial_value: 'false'
+  - id: manual_holiday_override
+    type: bool
+    restore_value: True  # USER SETTING - must persist across reboots
+    initial_value: 'false'
   - id: last_weather_log_time
     type: int64_t
     restore_value: False  # Log throttle timer — ok to reset on reboot
@@ -2203,6 +2207,27 @@ globals:
     type: bool
     restore_value: False
     initial_value: 'false'
+  # True when the paused run was a C&S All Zones run.
+  # Used by continue_cycle_soak_after_resume to restart the orchestrator
+  # for remaining zones instead of doing full cleanup after one zone.
+  - id: paused_was_all_zones_cs
+    type: bool
+    restore_value: False
+    initial_value: 'false'
+  # When > 0, tells run_all_zones_cycle_soak_script to skip zones before
+  # this 0-based index (used after pause/resume completes one zone).
+  - id: all_zones_cs_resume_from_zone
+    type: int
+    restore_value: False
+    initial_value: '0'
+  # Current cycle's remaining water time at pause (seconds).
+  # In C&S mode, time_remaining_when_paused stores the GRAND TOTAL remaining
+  # across all zones, but continue_cycle_soak_after_resume needs just the
+  # current cycle's remaining valve run time. Computed from cycle_start_epoch.
+  - id: paused_cycle_water_remaining
+    type: int
+    restore_value: False
+    initial_value: '0'
   - id: soak_countdown_seconds
     type: int
     restore_value: False  # Runtime counter — cleared on reboot
@@ -3294,7 +3319,8 @@ time:
               bool is_active = id($devicename1).active_valve().has_value();
               bool mid_soak = id(irrigation_busy) && id(cycle_soak_is_soaking);
               
-              if (!is_active && !mid_soak && !id(is_paused) && !id(test_mode_active) && id(dev1_valve_status).state != "Idle") {
+              if (!is_active && !mid_soak && !id(is_paused) && !id(test_mode_active) &&
+                  !id(station_delay_active) && id(dev1_valve_status).state != "Idle") {
                 ESP_LOGI("irrigation", "No active valve detected - resetting status to Idle");
                 id(dev1_valve_status).publish_state("Idle");
               }
@@ -4666,7 +4692,7 @@ interval:
               id(soak_countdown_seconds) = 0;
               id(paused_zone) = -1;
               id(paused_cycle) = 0;
-              id(time_remaining_when_paused) = 0;
+              id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
               id(paused_was_soaking) = false;
               id(paused_soak_remaining_seconds) = 0;
               id(paused_total_cycles) = 0;
@@ -5187,7 +5213,7 @@ interval:
               id(soak_countdown_seconds) = 0;
               id(paused_zone) = -1;
               id(paused_cycle) = 0;
-              id(time_remaining_when_paused) = 0;
+              id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
               id(paused_was_soaking) = false;
               id(paused_soak_remaining_seconds) = 0;
               id(paused_total_cycles) = 0;
@@ -5352,7 +5378,7 @@ interval:
               id(soak_countdown_seconds) = 0;
               id(paused_zone) = -1;
               id(paused_cycle) = 0;
-              id(time_remaining_when_paused) = 0;
+              id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
               id(paused_was_soaking) = false;
               id(paused_soak_remaining_seconds) = 0;
               id(paused_total_cycles) = 0;
@@ -5451,7 +5477,7 @@ interval:
 
               id(paused_zone) = -1;
               id(paused_cycle) = 0;
-              id(time_remaining_when_paused) = 0;
+              id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
               id(paused_was_soaking) = false;
               id(paused_soak_remaining_seconds) = 0;
               id(paused_total_cycles) = 0;
@@ -5596,7 +5622,7 @@ interval:
             id(normal_start_attempts) = 0;
             id(paused_zone) = -1;
             id(paused_cycle) = 0;
-            id(time_remaining_when_paused) = 0;
+            id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
             id(paused_was_soaking) = false;
             id(paused_soak_remaining_seconds) = 0;
             id(paused_total_cycles) = 0;
@@ -5682,7 +5708,7 @@ interval:
               id(is_paused) = false;
               id(paused_zone) = -1;
               id(paused_cycle) = 0;
-              id(time_remaining_when_paused) = 0;
+              id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
               id(paused_was_soaking) = false;
               id(paused_soak_remaining_seconds) = 0;
               id(paused_total_cycles) = 0;
@@ -8229,7 +8255,9 @@ binary_sensor:
       }
 
       // CHECK 2: NZ Public Holidays — compare char buffers directly for minimal stack use
-      if (!is_blackout) {
+      // Skipped when Holiday Override is active — holidays only block when added to
+      // blackout slots via NZ Holiday Quick Add (CHECK 1 handles those).
+      if (!is_blackout && !id(manual_holiday_override)) {
         struct { const char* name; bool has; const char* state; } holidays[] = {
           { "Good Friday",    id(nz_good_friday_date).has_state(),   id(nz_good_friday_date).has_state()   ? id(nz_good_friday_date).state.c_str()   : "" },
           { "Easter Monday",  id(nz_easter_monday_date).has_state(), id(nz_easter_monday_date).has_state() ? id(nz_easter_monday_date).state.c_str() : "" },
@@ -12683,22 +12711,34 @@ script:
             id(normal_run_duration_seconds) = adjusted_duration;
 
             // Start valve — relay fires here, all checks already passed above.
-            // NOTE: When a user toggles a zone switch in HA, the sprinkler component
-            // may auto-start the valve BEFORE turn_on_action sets the multiplier.
-            // If the auto-start timer differs from adjusted_duration:
-            //   - Timer too LONG (multiplier > 1.0 at auto-start): the completion code
-            //     below detects the over-running valve and shuts it down at script end.
-            //   - Timer too SHORT (multiplier < 1.0 at auto-start): the premature stop
-            //     detection in main switch on_turn_off restarts with relay keepalive
-            //     so the physical valve never interrupts.
-            // start_single_valve early-returns for already-active valve (harmless no-op).
-            id(valve_start_in_progress) = true;
-            {
-              auto _ep = id(homeassistant_time).now();
-              if (_ep.is_valid()) id(last_zone_start_epoch) = _ep.timestamp;
+            // AUTO-START HANDLING: When a user toggles a zone switch in HA, the
+            // sprinkler component calls start_single_valve(zone) BEFORE turn_on_action,
+            // using timer = slider_state × current_multiplier. The component's
+            // run_duration_number takes precedence over any explicit duration passed
+            // to start_single_valve(), so we CANNOT correct the timer by calling
+            // start_single_valve(zone, correct_duration) — it's silently ignored.
+            // Instead, let the auto-started valve run with its (possibly wrong) timer
+            // and rely on the two fallback mechanisms in main switch on_turn_off:
+            //   - PREMATURE STOP DETECTION: if component timer < intended duration,
+            //     the valve stops early; on_turn_off detects this, re-energizes the
+            //     relay (physical valve stays open), and restarts the component.
+            //   - COMPLETION SHUTDOWN: if component timer > intended duration, the
+            //     script delay below expires first and explicitly shuts down the
+            //     over-running valve.
+            if (id($devicename1).active_valve().has_value() &&
+                id($devicename1).active_valve().value() == (uint8_t)zone) {
+              ESP_LOGI("irrigation", "⚡ Zone %d: auto-started by component (component timer may differ from intended %ds) — fallbacks will correct",
+                       zone + 1, adjusted_duration);
+              // last_zone_start_epoch already set by zone on_turn_on during auto-start
+            } else {
+              {
+                auto _ep = id(homeassistant_time).now();
+                if (_ep.is_valid()) id(last_zone_start_epoch) = _ep.timestamp;
+              }
+              id(valve_start_in_progress) = true;
+              id($devicename1).start_single_valve(zone, adjusted_duration);
+              id(valve_start_in_progress) = false;
             }
-            id($devicename1).start_single_valve(zone, adjusted_duration);
-            id(valve_start_in_progress) = false;
             
           } else {
             // CYCLE & SOAK MODE — apply multiplier to total duration (same as normal mode)
@@ -13039,13 +13079,15 @@ script:
             id(normal_run_duration_seconds) = 0;
             id(paused_zone) = -1;
             id(paused_cycle) = 0;
-            id(time_remaining_when_paused) = 0;
+            id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
             id(paused_was_soaking) = false;
             id(paused_soak_remaining_seconds) = 0;
             id(paused_total_cycles) = 0;
             id(paused_cycle_soak_total_duration) = 0;
             id(paused_cycle_soak_elapsed_time) = 0;
             id(paused_was_all_zones_normal) = false;
+            id(paused_was_all_zones_cs) = false;
+            id(all_zones_cs_resume_from_zone) = 0;
             id(cycle_soak_switch).turn_off();
             id(dev1_auto_advance).turn_on();
             // Restore base-duration multiplier if saved before this blocked resume
@@ -13203,7 +13245,7 @@ script:
                 id(normal_run_duration_seconds) = 0;
                 id(paused_zone) = -1;
                 id(paused_cycle) = 0;
-                id(time_remaining_when_paused) = 0;
+                id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                 id(paused_was_soaking) = false;
                 id(paused_soak_remaining_seconds) = 0;
                 id(paused_total_cycles) = 0;
@@ -13279,8 +13321,40 @@ script:
       # ══════════════════════════════════════════════════════════════════════
       - lambda: |-
           if (id(resume_csa_blocked)) return;  // Blocked run — state already cleared
-          
-          // Normal completion cleanup
+
+          // ALL-ZONES C&S RESUME: This zone is done but the orchestrator was
+          // killed by pause. Clear per-zone state and restart it to continue
+          // with remaining zones. DON'T do full cleanup — keep irrigation_busy,
+          // multiplier, grand total timer, and cycle_soak_switch intact.
+          if (id(paused_was_all_zones_cs)) {
+            ESP_LOGI("irrigation", "✅ RESUME-CONTINUE zone %d done — restarting orchestrator for remaining zones", zone + 1);
+            id(active_zone_number) = -1;
+            id(current_cycle) = 0;
+            id(total_cycles) = 0;
+            id(last_cycle_seconds) = 0;
+            id(cycle_start_epoch) = 0;
+            id(station_delay_active) = false;
+            id(soak_countdown_seconds) = 0;
+            id(cycle_soak_is_soaking) = false;
+            id(cycle_soak_soak_end_time) = 0;
+            id(normal_run_duration_seconds) = 0;
+            id(paused_zone) = -1;
+            id(paused_cycle) = 0;
+            id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
+            id(paused_was_soaking) = false;
+            id(paused_soak_remaining_seconds) = 0;
+            id(paused_total_cycles) = 0;
+            id(paused_cycle_soak_total_duration) = 0;
+            id(paused_cycle_soak_elapsed_time) = 0;
+            // Tell orchestrator to skip zones already completed
+            id(all_zones_cs_resume_from_zone) = zone + 1;
+            id(paused_was_all_zones_cs) = false;
+            // Re-execute the orchestrator — it will skip to the next zone
+            id(run_all_zones_cycle_soak_script).execute();
+            return;
+          }
+
+          // Normal completion cleanup (single-zone C&S resume)
           ESP_LOGI("irrigation", "✅ RESUME-CONTINUE COMPLETE — all cycles done");
           id(active_zone_number) = -1;
           id(current_cycle) = 0;
@@ -13296,7 +13370,7 @@ script:
           id(cycle_soak_soak_end_time) = 0;
           id(paused_zone) = -1;
           id(paused_cycle) = 0;
-          id(time_remaining_when_paused) = 0;
+          id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
           id(paused_was_soaking) = false;
           id(paused_soak_remaining_seconds) = 0;
           id(paused_total_cycles) = 0;
@@ -13462,7 +13536,8 @@ script:
             - switch.turn_off: cycle_soak_switch
             - lambda: |-
                 ESP_LOGW("irrigation", "🚫 Cycle & Soak pre-flight BLOCKED — clearing busy and draining queue");
-                
+                id(all_zones_cs_resume_from_zone) = 0;
+
                 // BASE DURATION C&S: Restore multiplier if it was saved before blocking
                 if (id(restore_multiplier_after_run)) {
                   float saved_mult = id(saved_multiplier_for_base_run);
@@ -13505,30 +13580,37 @@ script:
           condition:
             lambda: 'return !id(cycle_soak_script_blocked);'
           then:
-            - logger.log: "Starting all enabled zones - Cycle & Soak mode"
-      
-      # Turn off Auto Advance for cycle & soak
+            - lambda: |-
+                if (id(all_zones_cs_resume_from_zone) > 0) {
+                  ESP_LOGI("irrigation", "▶️ Resuming all-zones C&S from zone %d (grand total %d, elapsed %d)",
+                           id(all_zones_cs_resume_from_zone) + 1,
+                           id(cycle_soak_total_duration), id(cycle_soak_elapsed_time));
+                } else {
+                  ESP_LOGI("irrigation", "Starting all enabled zones - Cycle & Soak mode");
+                }
+
+      # Turn off Auto Advance for cycle & soak (skip if resuming — already off)
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked);'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(all_zones_cs_resume_from_zone) <= 0;'
           then:
             - switch.turn_off: dev1_auto_advance
             - logger.log: "Auto Advance OFF for Cycle & Soak"
-      
-      # Set busy flags
+
+      # Set busy flags (skip if resuming — already set)
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked);'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(all_zones_cs_resume_from_zone) <= 0;'
           then:
             - lambda: |-
                 id(irrigation_busy) = true;
                 id(in_program_run) = false;
-      
+
       # Calculate grand total duration for ALL enabled zones (all cycles + all soaks)
-      # This gives accurate overall progress across the entire all-zones run.
+      # Skip if resuming — keep existing grand total and elapsed time from before pause.
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked);'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(all_zones_cs_resume_from_zone) <= 0;'
           then:
             - lambda: |-
                 int cycle_sec  = id(cycle_duration_minutes) * 60;
@@ -13585,7 +13667,7 @@ script:
       # Zone 1
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked) && id(zone1_enable).state;'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(zone1_enable).state && id(all_zones_cs_resume_from_zone) <= 0;'
           then:
             - script.execute:
                 id: run_zone_with_cycles
@@ -13599,7 +13681,7 @@ script:
       # Zone 2
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked) && id(zone2_enable).state;'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(zone2_enable).state && id(all_zones_cs_resume_from_zone) <= 1;'
           then:
             - script.execute:
                 id: run_zone_with_cycles
@@ -13613,7 +13695,7 @@ script:
       # Zone 3
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked) && id(zone3_enable).state;'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(zone3_enable).state && id(all_zones_cs_resume_from_zone) <= 2;'
           then:
             - script.execute:
                 id: run_zone_with_cycles
@@ -13627,7 +13709,7 @@ script:
       # Zone 4
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked) && id(zone4_enable).state;'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(zone4_enable).state && id(all_zones_cs_resume_from_zone) <= 3;'
           then:
             - script.execute:
                 id: run_zone_with_cycles
@@ -13641,7 +13723,7 @@ script:
       # Zone 5
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked) && id(zone5_enable).state;'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(zone5_enable).state && id(all_zones_cs_resume_from_zone) <= 4;'
           then:
             - script.execute:
                 id: run_zone_with_cycles
@@ -13655,7 +13737,7 @@ script:
       # Zone 6
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked) && id(zone6_enable).state;'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(zone6_enable).state && id(all_zones_cs_resume_from_zone) <= 5;'
           then:
             - script.execute:
                 id: run_zone_with_cycles
@@ -13669,7 +13751,7 @@ script:
       # Zone 7
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked) && id(zone7_enable).state;'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(zone7_enable).state && id(all_zones_cs_resume_from_zone) <= 6;'
           then:
             - script.execute:
                 id: run_zone_with_cycles
@@ -13683,7 +13765,7 @@ script:
       # Zone 8
       - if:
           condition:
-            lambda: 'return !id(cycle_soak_script_blocked) && id(zone8_enable).state;'
+            lambda: 'return !id(cycle_soak_script_blocked) && id(zone8_enable).state && id(all_zones_cs_resume_from_zone) <= 7;'
           then:
             - script.execute:
                 id: run_zone_with_cycles
@@ -13756,10 +13838,14 @@ script:
                 id(cycle_soak_detailed_status).update();
                 id(irrigation_busy) = false;
                 id(in_program_run) = false;
+                id(all_zones_cs_resume_from_zone) = 0;
                 id(watering_trigger_source) = "Idle";
                 id(current_watering_trigger).publish_state("Idle");
                 id(queue_status_display).update();
             - script.execute: drain_queue
+      # Always clear resume-from at script end — even if blocked mid-run by a
+      # zone pre-flight failure, so stale values don't skip zones on the next run.
+      - lambda: 'id(all_zones_cs_resume_from_zone) = 0;'
 
   # Run a specific program
   - id: run_program
@@ -17905,6 +17991,35 @@ switch:
           format: "✓ Weather override disabled - Normal weather checks active"
           level: INFO
 
+  # NZ Public Holiday Override - Bypass automatic holiday blackout detection
+  # NZ holidays added via Quick Add still appear in blackout slots (CHECK 1) —
+  # this only bypasses the automatic sensor-based detection (CHECK 2).
+  # Clear the blackout slot to unblock, or enable this to bypass all auto-holidays.
+  - platform: template
+    name: "Holiday Override (Bypass NZ Holidays)"
+    id: manual_holiday_override_switch
+    icon: "mdi:calendar-remove"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: "return id(manual_holiday_override);"
+    turn_on_action:
+      - lambda: |-
+          id(manual_holiday_override) = true;
+          ESP_LOGW("irrigation", "");
+          ESP_LOGW("irrigation", "⚠️ ═══════════════════════════════════════════════");
+          ESP_LOGW("irrigation", "⚠️ NZ HOLIDAY OVERRIDE ENABLED");
+          ESP_LOGW("irrigation", "⚠️ ═══════════════════════════════════════════════");
+          ESP_LOGW("irrigation", "⚠️ Automatic NZ public holiday blackouts BYPASSED");
+          ESP_LOGW("irrigation", "⚠️ Manual blackout slots still enforced");
+          ESP_LOGW("irrigation", "⚠️ ═══════════════════════════════════════════════");
+          ESP_LOGW("irrigation", "");
+    turn_off_action:
+      - lambda: |-
+          id(manual_holiday_override) = false;
+          ESP_LOGI("irrigation", "");
+          ESP_LOGI("irrigation", "✅ NZ holiday override DISABLED — automatic holiday blackouts active");
+          ESP_LOGI("irrigation", "");
+
 # Vacation Mode
   - platform: template
     name: "Vacation Mode"
@@ -18031,7 +18146,7 @@ switch:
           id(watering_trigger_source) = "Idle";
           id(paused_zone) = -1;
           id(paused_cycle) = 0;
-          id(time_remaining_when_paused) = 0;
+          id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
           id(paused_was_soaking) = false;
           id(paused_soak_remaining_seconds) = 0;
           id(paused_total_cycles) = 0;
@@ -21663,18 +21778,19 @@ sprinkler:
               return;
             }
 
-            // PREMATURE VALVE STOP DETECTION for base-duration mode.
-            // When the user toggles a public zone switch, ESPHome's sprinkler component
-            // auto-starts the valve with timer = slider × CURRENT multiplier BEFORE
-            // turn_on_action runs. In base-duration mode, turn_on_action sets multiplier
-            // to 1.0 and then request_zone_start → run_zone_with_cycles calls
-            // start_single_valve(zone, correct_duration). But start_single_valve()
-            // early-returns for the already-active valve, so the WRONG (short) timer
-            // from the auto-start remains. When that short timer expires, the component
-            // turns off the valve, firing this on_turn_off. But run_zone_with_cycles is
-            // still running (waiting on its delay). Detect this and restart the valve
-            // for the remaining time — at this point active_valve() is empty so
-            // start_single_valve() will NOT early-return.
+            // PREMATURE VALVE STOP DETECTION.
+            // The sprinkler component's internal timer = run_duration_number->state ×
+            // multiplier. The run_duration_number entity stores the slider value in
+            // MINUTES but the component uses the raw state as SECONDS. So a 1-minute
+            // slider gives a ~1-second component timer. Additionally, the explicit
+            // duration parameter of start_single_valve(zone, seconds) is IGNORED when
+            // run_duration_number is configured — the component always reads the slider.
+            // This means the component timer is often shorter than the intended run
+            // duration computed by run_zone_with_cycles.
+            // When the component timer expires, this on_turn_off fires while
+            // run_zone_with_cycles is still waiting on its delay (the authoritative
+            // timer). Detect this and restart the valve — the relay keepalive prevents
+            // the physical valve from closing during the brief component restart.
             if (!id(valve_start_in_progress) &&
                 !id(station_delay_active) &&
                 id(run_zone_with_cycles).is_running() &&
@@ -21685,13 +21801,14 @@ sprinkler:
               if (_zone >= 0 && _now.is_valid() && id(last_zone_start_epoch) > 0) {
                 int _elapsed = (int)(_now.timestamp - id(last_zone_start_epoch));
                 int _remaining = id(normal_run_duration_seconds) - _elapsed;
-                if (_elapsed > 3 && _remaining > 5) {
+                if (_elapsed >= 1 && _remaining > 5) {
                   ESP_LOGW("irrigation", "⚡ Premature valve stop detected for zone %d — %ds elapsed, %ds remaining — restarting valve",
                            _zone + 1, _elapsed, _remaining);
-                  // RELAY KEEPALIVE: Re-energize the relay IMMEDIATELY via GPIO before
-                  // the sprinkler component restarts. Solenoid valves take 50-100ms to
-                  // physically close — by re-energizing within microseconds the valve
-                  // never actually shuts off. The component restart is purely internal.
+                  // RELAY KEEPALIVE: Re-energize zone relay AND master valve IMMEDIATELY
+                  // via GPIO before the sprinkler component restarts. Solenoid valves
+                  // take 50-100ms to physically close — by re-energizing within
+                  // microseconds neither valve actually shuts off. The component
+                  // restart is purely internal.
                   switch(_zone) {
                     case 0: id(relay_zone_1_out).turn_on(); break;
                     case 1: id(relay_zone_2_out).turn_on(); break;
@@ -21701,6 +21818,11 @@ sprinkler:
                     case 5: id(relay_zone_6_out).turn_on(); break;
                     case 6: id(relay_zone_7_out).turn_on(); break;
                     case 7: id(relay_zone_8_out).turn_on(); break;
+                  }
+                  // Keep master valve open too — the 1s watchdog would re-open it
+                  // on the next tick, but the brief gap could cause a pressure drop.
+                  if (id(master_valve_relay).state) {
+                    id(master_valve_relay).turn_on();
                   }
                   id(valve_start_in_progress) = true;
                   id($devicename1).start_single_valve(_zone, _remaining);
@@ -22662,12 +22784,37 @@ button:
               id(paused_cycle_soak_elapsed_time) = id(cycle_soak_elapsed_time);
               id(paused_was_soaking) = false;
               id(paused_soak_remaining_seconds) = 0;
-              
-              ESP_LOGI("irrigation", "Paused: Zone %d, Cycle %d/%d, Time remaining: %d sec, Elapsed: %d/%d sec",
+
+              // Compute CURRENT CYCLE's remaining water time for C&S resume.
+              // time_remaining_when_paused is the GRAND TOTAL remaining (all zones/cycles).
+              // continue_cycle_soak_after_resume needs just this cycle's remaining valve time.
+              if (id(total_cycles) > 0 && id(cycle_start_epoch) > 0) {
+                auto _pcs_time = id(homeassistant_time).now();
+                if (_pcs_time.is_valid()) {
+                  int cycle_elapsed = (int)(_pcs_time.timestamp - id(cycle_start_epoch));
+                  int full_cycle = id(cycle_duration_minutes) * 60;
+                  int lcs = (id(last_cycle_seconds) > 0) ? id(last_cycle_seconds) : full_cycle;
+                  int this_cycle_dur = (id(current_cycle) + 1 >= id(total_cycles)) ? lcs : full_cycle;
+                  int cwr = this_cycle_dur - cycle_elapsed;
+                  if (cwr < 1) cwr = 1;
+                  id(paused_cycle_water_remaining) = cwr;
+                  ESP_LOGI("irrigation", "Pause: cycle water remaining=%ds (cycle_dur=%ds, cycle_elapsed=%ds)",
+                           cwr, this_cycle_dur, cycle_elapsed);
+                } else {
+                  // Time not synced — fall back to grand total (best effort)
+                  id(paused_cycle_water_remaining) = id(time_remaining_when_paused);
+                  ESP_LOGW("irrigation", "⚠️ Pause: time not synced — using grand total as cycle water remaining");
+                }
+              } else {
+                // Not C&S mode — not used by resume, but set to grand total for safety
+                id(paused_cycle_water_remaining) = id(time_remaining_when_paused);
+              }
+
+              ESP_LOGI("irrigation", "Paused: Zone %d, Cycle %d/%d, Time remaining: %d sec, Cycle water remaining: %d sec, Elapsed: %d/%d sec",
                        id(paused_zone), id(paused_cycle), id(total_cycles),
-                       id(time_remaining_when_paused),
+                       id(time_remaining_when_paused), id(paused_cycle_water_remaining),
                        id(cycle_soak_elapsed_time), id(cycle_soak_total_duration));
-              
+
               ESP_LOGI("irrigation", "Progress tracking paused — elapsed time frozen at %d seconds",
                        id(cycle_soak_elapsed_time));
               
@@ -22697,7 +22844,7 @@ button:
                 }
                 id(paused_soak_remaining_seconds) = (int) rem;
               }
-              id(time_remaining_when_paused) = 0;
+              id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
               id(paused_was_soaking) = true;
               id(is_paused) = true;
               id(paused_total_cycles) = id(total_cycles);
@@ -22737,7 +22884,7 @@ button:
                 id(normal_run_duration_seconds) = 0;
                 id(paused_zone) = -1;
                 id(paused_cycle) = 0;
-                id(time_remaining_when_paused) = 0;
+                id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                 id(paused_was_soaking) = false;
                 id(paused_soak_remaining_seconds) = 0;
                 id(paused_total_cycles) = 0;
@@ -22773,6 +22920,10 @@ button:
                 id(drain_queue).execute();
               }
             }
+        # Save all-zones-CS flag BEFORE stopping the orchestrator script.
+        # After resume, continue_cycle_soak_after_resume uses this to restart
+        # the orchestrator for remaining zones instead of doing full cleanup.
+        - lambda: 'id(paused_was_all_zones_cs) = id(run_all_zones_cycle_soak_script).is_running();'
         - sprinkler.shutdown: $devicename1
         - script.stop: run_zone_with_cycles
         - script.stop: run_all_zones_cycle_soak_script
@@ -22827,7 +22978,7 @@ button:
                     id(watering_trigger_source) = "Idle";
                     id(paused_zone) = -1;
                     id(paused_cycle) = 0;
-                    id(time_remaining_when_paused) = 0;
+                    id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                     id(paused_was_soaking) = false;
                     id(paused_soak_remaining_seconds) = 0;
                     id(paused_total_cycles) = 0;
@@ -22868,7 +23019,7 @@ button:
                     id(watering_trigger_source) = "Idle";
                     id(paused_zone) = -1;
                     id(paused_cycle) = 0;
-                    id(time_remaining_when_paused) = 0;
+                    id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                     id(paused_was_soaking) = false;
                     id(paused_soak_remaining_seconds) = 0;
                     id(paused_total_cycles) = 0;
@@ -22909,7 +23060,7 @@ button:
                     id(watering_trigger_source) = "Idle";
                     id(paused_zone) = -1;
                     id(paused_cycle) = 0;
-                    id(time_remaining_when_paused) = 0;
+                    id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                     id(paused_was_soaking) = false;
                     id(paused_soak_remaining_seconds) = 0;
                     id(paused_total_cycles) = 0;
@@ -22952,7 +23103,7 @@ button:
                     id(watering_trigger_source) = "Idle";
                     id(paused_zone) = -1;
                     id(paused_cycle) = 0;
-                    id(time_remaining_when_paused) = 0;
+                    id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                     id(paused_was_soaking) = false;
                     id(paused_soak_remaining_seconds) = 0;
                     id(paused_total_cycles) = 0;
@@ -22997,7 +23148,7 @@ button:
                       id(watering_trigger_source) = "Idle";
                       id(paused_zone) = -1;
                       id(paused_cycle) = 0;
-                      id(time_remaining_when_paused) = 0;
+                      id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                       id(paused_was_soaking) = false;
                       id(paused_soak_remaining_seconds) = 0;
                       id(paused_total_cycles) = 0;
@@ -23043,7 +23194,7 @@ button:
                         id(watering_trigger_source) = "Idle";
                         id(paused_zone) = -1;
                         id(paused_cycle) = 0;
-                        id(time_remaining_when_paused) = 0;
+                        id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                         id(paused_was_soaking) = false;
                         id(paused_soak_remaining_seconds) = 0;
                         id(paused_total_cycles) = 0;
@@ -23122,7 +23273,7 @@ button:
                         total: !lambda 'return id(total_cycles);'
                         was_soaking: !lambda 'return id(paused_was_soaking);'
                         soak_remaining: !lambda 'return id(paused_soak_remaining_seconds);'
-                        water_remaining: !lambda 'return id(time_remaining_when_paused);'
+                        water_remaining: !lambda 'return id(paused_cycle_water_remaining);'
                   else:
                     # ── NORMAL MODE RESUME ──
                     # Two sub-paths:
@@ -23179,7 +23330,7 @@ button:
                               // Clear pause globals before firing valve
                               id(paused_zone) = -1;
                               id(paused_cycle) = 0;
-                              id(time_remaining_when_paused) = 0;
+                              id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                               id(paused_was_soaking) = false;
                               id(paused_soak_remaining_seconds) = 0;
                               id(paused_total_cycles) = 0;
@@ -23209,7 +23360,7 @@ button:
                               // Clear pause globals
                               id(paused_zone) = -1;
                               id(paused_cycle) = 0;
-                              id(time_remaining_when_paused) = 0;
+                              id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
                               id(paused_was_soaking) = false;
                               id(paused_soak_remaining_seconds) = 0;
                               id(paused_total_cycles) = 0;
@@ -23301,7 +23452,7 @@ button:
             id(is_paused) = false;
             id(paused_zone) = -1;
             id(paused_cycle) = 0;
-            id(time_remaining_when_paused) = 0;
+            id(time_remaining_when_paused) = 0; id(paused_cycle_water_remaining) = 0;
             id(paused_was_soaking) = false;
             id(paused_soak_remaining_seconds) = 0;
             id(paused_total_cycles) = 0;
