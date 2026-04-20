@@ -556,17 +556,15 @@ esphome:
             }
             ESP_LOGI("irrigation", "🔄 BOOT: 3-slot queue initialized (Hunter Pro-C style)");
             
-            // pw_current_multiplier has restore_value:True — its NVS value is valid and
-            // should be used until calculate_predictive_watering recalculates from live
-            // weather (within 60 min of boot). Resetting to 1.0 discards a valid seasonal
-            // multiplier (e.g. 1.8x in summer), causing under-watering until PW recalculates.
-            // Reset pw_last_calculation_time=0 so PW knows it needs to recalculate but
-            // leave pw_current_multiplier intact.
+            // pw_current_multiplier has restore_value:False (derived value).
+            // On boot it is initialized to 1.0 from initial_value. The first
+            // calculate_predictive_watering run (triggered by boot + hourly cron)
+            // will recalculate it from live weather and push set_multiplier. Until
+            // then the sprinkler multiplier stays at 1.0 — safe (base duration).
+            // Resetting pw_last_calculation_time=0 forces PW to recalculate on its
+            // next tick rather than waiting out the post-boot interval.
             id(pw_last_calculation_time) = 0;
-            // Apply the restored multiplier to the sprinkler component on boot.
-            // (set_multiplier is not called here; calculate_predictive_watering will call
-            // it on its first run. The sprinkler defaults to 1.0 until then — safe.)
-            ESP_LOGI("irrigation", "💧 Predictive Watering™ system initialized (multiplier=%.2f from NVS)",
+            ESP_LOGI("irrigation", "💧 Predictive Watering™ system initialized (multiplier=%.2f, awaiting first recalc)",
                      id(pw_current_multiplier));
 
             // ── Flow sensor: explicit zero on boot to prevent stale display ──
@@ -1107,6 +1105,9 @@ esp32:
   board: $esphome_board
   framework:
     type: esp-idf
+    advanced:
+      minimum_chip_revision: "3.1"
+      sram1_as_iram: true
     sdkconfig_options:
       # ── TCP/IP tuning (prevents mobile browser timeouts) ───────────────────
       CONFIG_LWIP_TCP_SND_BUF_DEFAULT: "11440"      # Larger send buffer
@@ -1166,7 +1167,9 @@ globals:
     initial_value: 'false'
   - id: rain_delay_days
     type: int
-    restore_value: True
+    restore_value: False  # Display-only; source of truth is rain_delay_end_time (persisted).
+                          # Persisting this caused a mismatch after reboot — countdown shows
+                          # the full N days while end_time has already advanced.
     initial_value: '0'
   - id: rain_delay_end_time
     type: int64_t
@@ -1289,7 +1292,11 @@ globals:
     
   - id: pw_current_multiplier
     type: float
-    restore_value: True  # USER SETTING - must persist across reboots
+    restore_value: False  # DERIVED value — recalculated by calculate_predictive_watering
+                          # from temp/humidity/wind/rain/seasonal on every hourly cron and
+                          # at boot. Persisting it meant the stale post-boot value was
+                          # applied to any zone that fired in the window between boot and
+                          # the first recalc (up to ~1h after weather_sync fires).
     initial_value: '1.0'  # Current calculated multiplier
     
   - id: pw_temperature_factor
@@ -4844,6 +4851,8 @@ interval:
               id(paused_cycle_soak_elapsed_time) = 0;
               id(resume_csa_blocked) = false;
               id(paused_was_all_zones_normal) = false;
+              id(paused_was_all_zones_cs) = false;
+              id(all_zones_cs_resume_from_zone) = 0;
               id(watering_trigger_source) = "Idle";
               id(dev1_valve_status).publish_state("Idle");
               if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
@@ -5457,6 +5466,8 @@ interval:
               id(paused_cycle_soak_elapsed_time) = 0;
               id(resume_csa_blocked) = false;
               id(paused_was_all_zones_normal) = false;
+              id(paused_was_all_zones_cs) = false;
+              id(all_zones_cs_resume_from_zone) = 0;
               id(watering_trigger_source) = "Idle";
               id(dev1_valve_status).publish_state("Idle");
               if (fabsf(id(et_duration_multiplier) - 1.0f) > 0.001f) {
@@ -5623,6 +5634,8 @@ interval:
               id(paused_cycle_soak_elapsed_time) = 0;
               id(resume_csa_blocked) = false;
               id(paused_was_all_zones_normal) = false;
+              id(paused_was_all_zones_cs) = false;
+              id(all_zones_cs_resume_from_zone) = 0;
               id(watering_trigger_source) = "Idle";
               id(dev1_valve_status).publish_state("Idle");
               // Budget abort must also reset et_duration_multiplier — without this,
@@ -5747,6 +5760,8 @@ interval:
               id(soak_countdown_seconds) = 0;
               id(resume_csa_blocked) = false;
               id(paused_was_all_zones_normal) = false;
+              id(paused_was_all_zones_cs) = false;
+              id(all_zones_cs_resume_from_zone) = 0;
               id(dev1_auto_advance).turn_on();
               id(cycle_soak_switch).turn_off();
               // deferred restart to prevent it firing into a cleared system.
@@ -5871,6 +5886,8 @@ interval:
             id(paused_cycle_soak_total_duration) = 0;
             id(paused_cycle_soak_elapsed_time) = 0;
             id(paused_was_all_zones_normal) = false;
+            id(paused_was_all_zones_cs) = false;
+            id(all_zones_cs_resume_from_zone) = 0;
             if (id(restore_multiplier_after_run)) {
               float saved_mult = id(saved_multiplier_for_base_run);
               float vac_mult = id(vacation_mode_active) ? saved_mult * 0.5f : saved_mult;
@@ -5967,6 +5984,8 @@ interval:
               id(paused_cycle_soak_elapsed_time) = 0;
               id(resume_csa_blocked) = false;
               id(paused_was_all_zones_normal) = false;
+              id(paused_was_all_zones_cs) = false;
+              id(all_zones_cs_resume_from_zone) = 0;
               // Restore Auto Advance — C&S turns it OFF; must be restored so future
               // normal-mode runs can step through zones correctly.
               id(dev1_auto_advance).turn_on();
@@ -6866,7 +6885,9 @@ text_sensor:
         if (!run_active) return {"0%"};
         int elapsed = id(cycle_soak_elapsed_time);
         int total   = id(cycle_soak_total_duration);
-        int progress = (total > 0) ? (int)((elapsed / (float)total) * 100.0f) : 0;
+        // roundf prevents "stuck at 99%" — without rounding, a 3600s run spends
+        // the last 36 seconds displaying 99% before snapping to 100%.
+        int progress = (total > 0) ? (int)roundf((elapsed / (float)total) * 100.0f) : 0;
         if (progress < 0)   progress = 0;
         if (progress > 100) progress = 100;
         return {std::to_string(progress) + "%"};
@@ -7144,8 +7165,14 @@ text_sensor:
         int countdown_min = countdown_sec / 60;
         int countdown_sec_remaining = countdown_sec % 60;
         int az = id(active_zone_number);
-        int zone_display = (az >= 0) ? (az + 1) : 0;
-        return {"Zone " + std::to_string(zone_display) +
+        // If active_zone_number is stale (-1) during the brief transition between
+        // zones, don't render "Zone 0" (which is not a real zone — zones are 1..8).
+        // Drop the prefix and show just the soak countdown.
+        if (az < 0) {
+          return {"Soaking (" + std::to_string(countdown_min) + "m " +
+                  std::to_string(countdown_sec_remaining) + "s remaining)"};
+        }
+        return {"Zone " + std::to_string(az + 1) +
                 " - Soaking (" + std::to_string(countdown_min) + "m " +
                 std::to_string(countdown_sec_remaining) + "s remaining)"};
       }
@@ -7468,6 +7495,18 @@ text_sensor:
         return {"Disabled"};
       }
       if (id(queue_count) == 0) {
+        // Fall back to legacy single-slot queued_type if set — watchdog at ~line 6022
+        // checks both queue_count AND queued_type, so leaving queued_type unrendered
+        // here meant the display said "Empty (0/3)" while a drain was actually pending.
+        if (id(queued_type) != 0) {
+          switch (id(queued_type)) {
+            case 1: return {"1/3: Prg (legacy)"};
+            case 2: return {"1/3: Zone (legacy)"};
+            case 3: return {"1/3: Normal (legacy)"};
+            case 4: return {"1/3: C&S (legacy)"};
+            default: return {"1/3: ? (legacy)"};
+          }
+        }
         return {"Empty (0/3)"};
       }
       std::string result = std::to_string(id(queue_count)) + "/3: ";
@@ -11002,20 +11041,20 @@ script:
           float rain_mm = id(rain_forecast_0d_mm).state;  // Sensor reports mm precipitation (not probability %)
           
           // Validate data
-          if (isnan(temp)) {
-            ESP_LOGW("irrigation", "⚠️ Temperature unavailable, using 20°C");
+          if (isnan(temp) || temp < -50.0f || temp > 60.0f) {
+            ESP_LOGW("irrigation", "⚠️ Temperature unavailable or out-of-range (%.1f), using 20°C", temp);
             temp = 20.0f;
           }
-          if (isnan(humidity)) {
+          if (isnan(humidity) || humidity < 0.0f || humidity > 100.0f) {
             ESP_LOGW("irrigation", "⚠️ Humidity unavailable, using 50%%");
             humidity = 50.0f;
           }
-          if (isnan(wind)) {
-            ESP_LOGW("irrigation", "⚠️ Wind speed unavailable, using 10 km/h");
+          if (isnan(wind) || wind < 0.0f || wind > 300.0f) {
+            ESP_LOGW("irrigation", "⚠️ Wind speed unavailable or out-of-range (%.1f), using 10 km/h", wind);
             wind = 10.0f;
           }
-          if (isnan(rain_mm) || rain_mm < 0) {
-            ESP_LOGI("irrigation", "ℹ️ Rain forecast not available - assuming 0mm (no rain forecast)");
+          if (isnan(rain_mm) || rain_mm < 0.0f || rain_mm > 500.0f) {
+            ESP_LOGI("irrigation", "ℹ️ Rain forecast not available or out-of-range (%.1f) - assuming 0mm", rain_mm);
             rain_mm = 0.0f;
           }
           
@@ -11341,9 +11380,9 @@ script:
           float humidity = id(outside_humidity).state;
           float wind = id(wind_speed).state;
           
-          if (isnan(temp)) temp = 20.0f;
-          if (isnan(humidity)) humidity = 50.0f;
-          if (isnan(wind)) wind = 10.0f;
+          if (isnan(temp) || temp < -50.0f || temp > 60.0f) temp = 20.0f;
+          if (isnan(humidity) || humidity < 0.0f || humidity > 100.0f) humidity = 50.0f;
+          if (isnan(wind) || wind < 0.0f || wind > 300.0f) wind = 10.0f;
           
           
           float temp_et = 0.0f;
@@ -11482,6 +11521,13 @@ script:
 
           if (_should_accumulate) {
             id(et_soil_moisture_deficit) += daily_et;
+            // Guard against NaN/Inf propagation. A single NaN write would render the
+            // deficit permanently NaN (all subsequent comparisons return false, so the
+            // clamps at ~11532 won't recover it). Reset to 0 if poisoned.
+            if (isnan(id(et_soil_moisture_deficit)) || std::isinf(id(et_soil_moisture_deficit))) {
+              ESP_LOGW("irrigation", "⚠️ ET deficit NaN/Inf detected — resetting to 0");
+              id(et_soil_moisture_deficit) = 0.0f;
+            }
             // When forecast_enabled is true, the fire path below computes
             // effective_deficit = new_deficit - expected_rain, which already credits
             // forecast rain before deciding whether to water.  Subtracting rainfall here
@@ -11647,6 +11693,11 @@ script:
             float pw_mult = id(pw_current_multiplier);
             float combined = pw_mult * et_multiplier;
             if (combined > ${max_et_multiplier}f) combined = ${max_et_multiplier}f;  // Safety cap
+            if (combined < 0.1f) combined = 0.1f;  // Floor — PW can drop to 0.1× and ET can
+                                                   // drop below 1.0× in minimal-deficit cases.
+                                                   // Product could otherwise fall near 0, producing
+                                                   // a "no watering at all" run disguised as 0s duration.
+            if (isnan(combined) || std::isinf(combined)) combined = 1.0f;
             float combined_vac = id(vacation_mode_active) ? combined * 0.5f : combined;
             
             ESP_LOGI("irrigation", "   Predictive Watering: %.2fx (base, before vacation)", pw_mult);
@@ -13311,6 +13362,10 @@ script:
                   id(drain_queue).execute();
                 }
                 id(normal_run_duration_seconds) = 0;  // Run complete
+                // Zero epoch — stale value misleads the ACS712 settle guard (line ~5307)
+                // and deferred_zone_restart math on the next run. Other exit paths
+                // (stop, freeze, budget, watchdog, resume-block) all zero it.
+                id(last_zone_start_epoch) = 0;
             # Allow shutdown callbacks to process before clearing the guard flag.
             # valve_start_in_progress was set in the lambda above when an over-running
             # valve needed stopping; the 200ms lets on_turn_off fire (and return early)
@@ -13776,6 +13831,11 @@ script:
                 id(paused_total_cycles) = 0;
                 id(paused_cycle_soak_total_duration) = 0;
                 id(paused_cycle_soak_elapsed_time) = 0;
+                id(paused_was_all_zones_normal) = false;
+                id(paused_was_all_zones_cs) = false;
+                // Clear orchestrator resume pointer — without this, a fresh
+                // All Zones C&S run after a mid-resume abort skips zones 1..N.
+                id(all_zones_cs_resume_from_zone) = 0;
                 id(cycle_soak_switch).turn_off();
                 id(dev1_auto_advance).turn_on();
                 // Restore base-duration multiplier if saved before this aborted resume
@@ -14384,6 +14444,13 @@ script:
                 // these calls the timer freezes at the last positive remaining value.
                 id(cycle_soak_total_duration) = 0;
                 id(cycle_soak_elapsed_time) = 0;
+                // Zero epoch/duration state so the next run starts from a clean slate.
+                // Stale last_zone_start_epoch mis-leads the ACS712 settle guard and
+                // deferred_zone_restart math; stale cycle_start_epoch mis-leads the
+                // pause-during-C&S paused_cycle_water_remaining computation.
+                id(last_zone_start_epoch) = 0;
+                id(cycle_start_epoch) = 0;
+                id(normal_run_duration_seconds) = 0;
                 id(valve_remaining_seconds).publish_state(0.0f);
                 id(dev1_time_remaining).publish_state("0:00:00");
                 id(dev1_progress_percent).publish_state("0%");
@@ -14395,6 +14462,16 @@ script:
                 id(irrigation_busy) = false;
                 id(in_program_run) = false;
                 id(all_zones_cs_resume_from_zone) = 0;
+                // Clear paused_* so a stale C&S snapshot from a prior run cannot
+                // mislead a subsequent pause/resume. run_zone_with_cycles entry (12948)
+                // resets these for single-zone/C&S runs, but start_full_cycle /
+                // run_all_zones_cycle_soak_script do not go through that path.
+                id(paused_was_all_zones_cs) = false;
+                id(paused_was_all_zones_normal) = false;
+                id(paused_zone) = -1;
+                id(paused_cycle) = 0;
+                id(paused_was_soaking) = false;
+                id(paused_soak_remaining_seconds) = 0;
                 id(watering_trigger_source) = "Idle";
                 id(current_watering_trigger).publish_state("Idle");
                 id(queue_status_display).update();
@@ -14452,12 +14529,30 @@ script:
             id(push_et_sensors).execute();
             id(cycle_soak_total_duration) = 0;
             id(cycle_soak_elapsed_time) = 0;
+            // Match the cleanup contract of the other abort paths (freeze, budget,
+            // stuck, resume-block). Without these, a pre-flight-blocked program
+            // leaves stale epoch/soak/station values that confuse the NEXT run:
+            // the 1s watchdog's soak countdown displays the old soak_end_time,
+            // and the ACS712 settle guard sees stale last_zone_start_epoch.
+            id(last_zone_start_epoch) = 0;
+            id(cycle_start_epoch) = 0;
+            id(normal_run_duration_seconds) = 0;
+            id(cycle_soak_soak_end_time) = 0;
+            id(cycle_soak_is_soaking) = false;
+            id(soak_countdown_seconds) = 0;
+            id(station_delay_active) = false;
+            id(active_zone_number) = -1;
+            id(current_cycle) = 0;
+            id(total_cycles) = 0;
+            id(last_cycle_seconds) = 0;
             id(valve_remaining_seconds).publish_state(0.0f);
             id(dev1_time_remaining).publish_state("0:00:00");
             id(dev1_progress_percent).publish_state("0%");
             id(cycle_soak_detailed_status).update();
             id(current_watering_trigger).publish_state("Idle");
             id(queue_status_display).update();
+            // drain_queue is called by the outer - if: zone_run_blocked then block
+            // immediately after this lambda returns, so no explicit call needed here.
             // Signal all subsequent lambdas/actions in this then: block to skip.
             id(zone_run_blocked) = true;
           };
@@ -14923,6 +15018,18 @@ script:
           // Zero grand total timer (preserved through zone transitions by on_turn_off guard)
           id(cycle_soak_total_duration) = 0;
           id(cycle_soak_elapsed_time) = 0;
+          // Zero epoch/duration state so the next run starts clean. Stale epochs
+          // mislead the ACS712 settle guard (~5307) and deferred_zone_restart math.
+          id(last_zone_start_epoch) = 0;
+          id(cycle_start_epoch) = 0;
+          id(normal_run_duration_seconds) = 0;
+          // Clear paused_* so a stale snapshot cannot mislead a subsequent pause.
+          id(paused_was_all_zones_cs) = false;
+          id(paused_was_all_zones_normal) = false;
+          id(paused_zone) = -1;
+          id(paused_cycle) = 0;
+          id(paused_was_soaking) = false;
+          id(paused_soak_remaining_seconds) = 0;
           id(valve_remaining_seconds).publish_state(0.0f);
           id(dev1_time_remaining).publish_state("0:00:00");
           id(dev1_progress_percent).publish_state("0%");
@@ -14971,6 +15078,14 @@ script:
           // and bail out immediately, preventing repeated DIAGNOSTICS COMPLETE output.
           if (!id(test_mode_active)) {
             id(diagnostics_zone_phase) = 2;  // Mark as stale so delay is skipped
+            // Safety: if a zone relay is still energised (Stop pressed mid-test), close
+            // it now. Without this, the valve could remain open until the next manual run.
+            if (id($devicename1).active_valve().has_value()) {
+              ESP_LOGW("irrigation", "⚠️ Diagnostics stale instance — closing active valve");
+              id($devicename1).shutdown();
+            }
+            // Master relay may have been turned on directly in the button handler; close it.
+            id(master_valve_relay).turn_off();
             return;
           }
           int zone = id(diagnostics_zone_index);
@@ -18671,7 +18786,15 @@ switch:
             ESP_LOGI("irrigation", "Vacation mode deactivated — ET boost active, restoring %.2fx (PW:%.2fx × ET:%.2fx)",
                      combined, id(pw_current_multiplier), id(et_duration_multiplier));
           } else {
-            id($devicename1).set_multiplier(id(normal_multiplier));
+            // Prefer pw_current_multiplier when PW is enabled — calculate_predictive_watering
+            // updates it unconditionally, whereas normal_multiplier is only refreshed in the
+            // non-ET branch (line ~11269). If PW recalculated during vacation while an ET
+            // boost was active and the ET boost then cleared before vacation-off, the stale
+            // normal_multiplier would under-water until the next PW recalculation.
+            float _restore = id(predictive_watering_enabled) ? id(pw_current_multiplier) : id(normal_multiplier);
+            id($devicename1).set_multiplier(_restore);
+            ESP_LOGI("irrigation", "Vacation mode deactivated — restored multiplier to %.2fx (source=%s)",
+                     _restore, id(predictive_watering_enabled) ? "PW current" : "normal baseline");
           }
           // Restore zone schedule states that were saved when vacation mode activated
           id(zone1_schedule_enabled) = id(vacation_saved_zone1_sched);
@@ -19492,6 +19615,14 @@ switch:
           }
           int64_t duration = now_ts.timestamp - id(zone1_start_time);
           id(zone1_start_time) = 0;  // Reset for next use
+          // Clamp: guards against (a) stale start_time producing a multi-hour duration,
+          // (b) NTP rewind producing a negative duration, (c) midnight-crossing inflating
+          // runtime_today. 4h is a sane per-run ceiling for any residential zone.
+          if (duration < 0 || duration > 14400) {
+            ESP_LOGW("flow", "Zone 1 turn_off: duration %lld out of range [0..14400] — accounting skipped", (long long)duration);
+            id(zone_flow_active) = false;
+            return;
+          }
 
 
           // ── Snapshot and reset flow sensor session (always, even short runs) ──
@@ -19937,6 +20068,11 @@ switch:
           }
           int64_t duration = now_ts.timestamp - id(zone2_start_time);
           id(zone2_start_time) = 0;  // Reset for next use
+          if (duration < 0 || duration > 14400) {
+            ESP_LOGW("flow", "Zone 2 turn_off: duration %lld out of range [0..14400] — accounting skipped", (long long)duration);
+            id(zone_flow_active) = false;
+            return;
+          }
           // Compute session litres from total pulse count delta
           // This is exact: (pulses at zone end) - (pulses at zone start) / PPL
           // No timing sensitivity, no partial ticks, no accumulation drift.
@@ -20375,6 +20511,11 @@ switch:
           }
           int64_t duration = now_ts.timestamp - id(zone3_start_time);
           id(zone3_start_time) = 0;  // Reset for next use
+          if (duration < 0 || duration > 14400) {
+            ESP_LOGW("flow", "Zone 3 turn_off: duration %lld out of range [0..14400] — accounting skipped", (long long)duration);
+            id(zone_flow_active) = false;
+            return;
+          }
           // Compute session litres from total pulse count delta
           // This is exact: (pulses at zone end) - (pulses at zone start) / PPL
           // No timing sensitivity, no partial ticks, no accumulation drift.
@@ -20813,6 +20954,11 @@ switch:
           }
           int64_t duration = now_ts.timestamp - id(zone4_start_time);
           id(zone4_start_time) = 0;  // Reset for next use
+          if (duration < 0 || duration > 14400) {
+            ESP_LOGW("flow", "Zone 4 turn_off: duration %lld out of range [0..14400] — accounting skipped", (long long)duration);
+            id(zone_flow_active) = false;
+            return;
+          }
           // Compute session litres from total pulse count delta
           // This is exact: (pulses at zone end) - (pulses at zone start) / PPL
           // No timing sensitivity, no partial ticks, no accumulation drift.
@@ -21251,6 +21397,11 @@ switch:
           }
           int64_t duration = now_ts.timestamp - id(zone5_start_time);
           id(zone5_start_time) = 0;  // Reset for next use
+          if (duration < 0 || duration > 14400) {
+            ESP_LOGW("flow", "Zone 5 turn_off: duration %lld out of range [0..14400] — accounting skipped", (long long)duration);
+            id(zone_flow_active) = false;
+            return;
+          }
           // Compute session litres from total pulse count delta
           // This is exact: (pulses at zone end) - (pulses at zone start) / PPL
           // No timing sensitivity, no partial ticks, no accumulation drift.
@@ -21689,6 +21840,11 @@ switch:
           }
           int64_t duration = now_ts.timestamp - id(zone6_start_time);
           id(zone6_start_time) = 0;  // Reset for next use
+          if (duration < 0 || duration > 14400) {
+            ESP_LOGW("flow", "Zone 6 turn_off: duration %lld out of range [0..14400] — accounting skipped", (long long)duration);
+            id(zone_flow_active) = false;
+            return;
+          }
           // Compute session litres from total pulse count delta
           // This is exact: (pulses at zone end) - (pulses at zone start) / PPL
           // No timing sensitivity, no partial ticks, no accumulation drift.
@@ -22127,6 +22283,11 @@ switch:
           }
           int64_t duration = now_ts.timestamp - id(zone7_start_time);
           id(zone7_start_time) = 0;  // Reset for next use
+          if (duration < 0 || duration > 14400) {
+            ESP_LOGW("flow", "Zone 7 turn_off: duration %lld out of range [0..14400] — accounting skipped", (long long)duration);
+            id(zone_flow_active) = false;
+            return;
+          }
           // Compute session litres from total pulse count delta
           // This is exact: (pulses at zone end) - (pulses at zone start) / PPL
           // No timing sensitivity, no partial ticks, no accumulation drift.
@@ -22565,6 +22726,11 @@ switch:
           }
           int64_t duration = now_ts.timestamp - id(zone8_start_time);
           id(zone8_start_time) = 0;  // Reset for next use
+          if (duration < 0 || duration > 14400) {
+            ESP_LOGW("flow", "Zone 8 turn_off: duration %lld out of range [0..14400] — accounting skipped", (long long)duration);
+            id(zone_flow_active) = false;
+            return;
+          }
           // Compute session litres from total pulse count delta
           // This is exact: (pulses at zone end) - (pulses at zone start) / PPL
           // No timing sensitivity, no partial ticks, no accumulation drift.
@@ -23773,6 +23939,23 @@ button:
               ESP_LOGW("irrigation", "⚠️ Already paused — ignoring duplicate pause request");
               return;
             }
+            // Guard: reject Pause during the 1-2s inter-zone station delay in a
+            // multi-zone run. No valve is open, no soak in progress → the logic below
+            // would fall into "pause-on-nothing" and cancel the whole program/all-zones
+            // run rather than pausing it. Instead, leave state untouched and instruct
+            // the user to retry once the next zone opens. Subsequent shutdown/stop
+            // actions are gated on is_paused, so they skip when we return here.
+            if (id(station_delay_active) && id(irrigation_busy) &&
+                !id($devicename1).active_valve().has_value() &&
+                !id(cycle_soak_is_soaking) &&
+                (id(in_program_run) ||
+                 id(run_all_zones_cycle_soak_script).is_running() ||
+                 id(run_all_zones_normal_script).is_running())) {
+              ESP_LOGW("irrigation", "⚠️ PAUSE REJECTED — inter-zone station delay in progress (1-2s). "
+                       "Please press Pause again once the next zone starts.");
+              id(dev1_valve_status).publish_state("Pause queued — retry");
+              return;
+            }
             // Save current state if a valve is active
             if (id($devicename1).active_valve().has_value()) {
               // Set is_paused FIRST — blocks the 1s timer from incrementing elapsed
@@ -23901,6 +24084,9 @@ button:
                 id(paused_cycle_soak_total_duration) = 0;
                 id(paused_cycle_soak_elapsed_time) = 0;
                 id(paused_was_all_zones_normal) = false;
+                id(paused_was_all_zones_cs) = false;
+                // Clear orchestrator resume pointer — see stop button comment.
+                id(all_zones_cs_resume_from_zone) = 0;
                 id(cycle_soak_switch).turn_off();
                 id(dev1_auto_advance).turn_on();
                 if (id(restore_multiplier_after_run)) {
@@ -23930,23 +24116,33 @@ button:
                 id(drain_queue).execute();
               }
             }
-        # Save all-zones-CS flag BEFORE stopping the orchestrator script.
-        # After resume, continue_cycle_soak_after_resume uses this to restart
-        # the orchestrator for remaining zones instead of doing full cleanup.
-        - lambda: 'id(paused_was_all_zones_cs) = id(run_all_zones_cycle_soak_script).is_running();'
-        - sprinkler.shutdown: $devicename1
-        - script.stop: run_zone_with_cycles
-        - script.stop: run_all_zones_cycle_soak_script
-        - script.stop: run_program
-        - script.stop: run_all_zones_normal_script
-        - script.stop: continue_cycle_soak_after_resume
-        # and the user pauses within 300ms, without this stop the deferred restart fires
-        # into the paused system (irrigation_busy is still true while paused), opening
-        # the valve and showing it as active while the display says "Paused".
-        - script.stop: deferred_zone_restart
-        - text_sensor.template.publish:
-            id: dev1_valve_status
-            state: "Paused"
+        # Gate the shutdown/stop/publish actions on is_paused. This ensures:
+        #   - station-delay rejection path (is_paused stays false) skips them → program/all-zones
+        #     run continues untouched, user retries pause after next zone opens.
+        #   - pause-on-nothing path (is_paused stays false) skips them → the "Idle" status
+        #     that path just published is NOT overwritten by "Paused".
+        #   - valve-active and soaking paths (is_paused set true) still fire them normally.
+        - if:
+            condition:
+              lambda: 'return id(is_paused);'
+            then:
+              # Save all-zones-CS flag BEFORE stopping the orchestrator script.
+              # After resume, continue_cycle_soak_after_resume uses this to restart
+              # the orchestrator for remaining zones instead of doing full cleanup.
+              - lambda: 'id(paused_was_all_zones_cs) = id(run_all_zones_cycle_soak_script).is_running();'
+              - sprinkler.shutdown: $devicename1
+              - script.stop: run_zone_with_cycles
+              - script.stop: run_all_zones_cycle_soak_script
+              - script.stop: run_program
+              - script.stop: run_all_zones_normal_script
+              - script.stop: continue_cycle_soak_after_resume
+              # and the user pauses within 300ms, without this stop the deferred restart fires
+              # into the paused system (irrigation_busy is still true while paused), opening
+              # the valve and showing it as active while the display says "Paused".
+              - script.stop: deferred_zone_restart
+              - text_sensor.template.publish:
+                  id: dev1_valve_status
+                  state: "Paused"
 
 # Resume button - Restarts from saved position
   - platform: template
@@ -24477,6 +24673,10 @@ button:
             id(normal_run_duration_seconds) = 0;
             id(paused_was_all_zones_normal) = false;
             id(paused_was_all_zones_cs) = false;
+            // Clear orchestrator resume pointer. Without this, a subsequent fresh
+            // All Zones C&S run starts at zone N+1 (skipping zones 1..N) because
+            // the orchestrator uses this global to resume mid-sequence.
+            id(all_zones_cs_resume_from_zone) = 0;
             if (id(restore_multiplier_after_run)) {
               float saved_mult = id(saved_multiplier_for_base_run);
               float vac_mult = id(vacation_mode_active) ? saved_mult * 0.5f : saved_mult;
@@ -25163,9 +25363,20 @@ button:
     icon: "mdi:doctor"
     on_press:
       - lambda: |-
+          // Refuse to run diagnostics while a real irrigation run is in progress —
+          // diagnostics opens the master valve directly at ~line 25313 and would
+          // collide with the active run's valve driving.
+          if (id(irrigation_busy) || id(test_mode_active) ||
+              id($devicename1).active_valve().has_value()) {
+            ESP_LOGW("irrigation", "⚠️ Diagnostics REJECTED — irrigation in progress (busy=%d test=%d valve=%d). Stop first.",
+                     id(irrigation_busy), id(test_mode_active),
+                     id($devicename1).active_valve().has_value());
+            id(dev1_valve_status).publish_state("Diagnostics blocked (busy)");
+            return;
+          }
           // Set trigger for tracking
           id(watering_trigger_source) = "Diagnostics";
-          
+
           // Enter test mode to prevent watchdog interference
           id(test_mode_active) = true;
           
